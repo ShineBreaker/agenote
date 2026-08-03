@@ -48,12 +48,9 @@
 - "把重复工作流打包成 skill" 是 distill 的活，不是 dream 的（dream.txt:26）。
 """
 
-import glob
 import hashlib
 import math
-import os
 import re
-import sys
 import warnings
 from collections import Counter
 from dataclasses import asdict, dataclass, field
@@ -69,72 +66,41 @@ from agenote.reconcile import (
 # jieba 分词（可选优化；缺失则回退到下方 2-gram 启发式）
 # ═══════════════════════════════════════════════════════════════════════════════
 # jieba 对中文分词质量远超 2-gram 滑窗（输出"配置文件/重新启动"而非"配置/置文/文件"）。
-# 它不在 agenote 的硬依赖里（agenote 跑在 guix python3.12，jieba 装在 nix python3.14
-# profile）。这里做自动发现：扫 ~/.nix-profile/lib/python*/site-packages/jieba——
-# jieba 是纯 Python 无 C 扩展，py3.12 能直接 import py3.14 路径下的包。
-# 找不到或 import 失败则回退到 _GLUE_CHARS + 2-gram 启发式（仍是可用的兜底分词器），
+# 它是 agenote 的硬依赖（pyproject [project] dependencies = ["jieba"]）：装 agenote
+# 时随解释器 site-packages 一起进，下方 `import jieba` 直接命中。正常安装下不会触发
+# 降级；仅在 jieba 损坏/被手动移除等异常时才回退到 _GLUE_CHARS + 2-gram 兜底分词器，
 # 并通过 warnings.warn 暴露降级原因（旧实现静默回退，用户不知道分词质量降级了）。
 
 _JIEBA_CACHE: object = False  # 三态：False=未尝试, None=不可用, module=已加载
-_JIEBA_LOAD_ERROR: str = ""  # 加载失败原因（用于降级警告）
 
 
 def _get_jieba():
     """惰性加载 jieba，模块级缓存。
 
-    返回 jieba 模块或 None（不可用时）。缓存结果避免每次 _tokenize 都 glob。
+    返回 jieba 模块或 None（不可用时）。缓存结果避免每次 _tokenize 重复发现。
     首次加载失败时通过 warnings.warn 暴露原因（而非静默回退）——让用户知道
     当前走的是 2-gram 兜底分词器，中文分词质量降级了。
     """
-    global _JIEBA_CACHE, _JIEBA_LOAD_ERROR
+    global _JIEBA_CACHE
     if _JIEBA_CACHE is not False:
         return _JIEBA_CACHE if _JIEBA_CACHE is not None else None
 
-    here_major = sys.version_info[0], sys.version_info[1]
-    # 自动发现：nix profile（python3.14 site-packages）+ 用户 site-packages
-    for pattern in (
-        "~/.nix-profile/lib/python*/site-packages/jieba/__init__.py",
-        "~/.local/lib/python*/site-packages/jieba/__init__.py",
-    ):
-        for path in glob.glob(os.path.expanduser(pattern)):
-            site_dir = os.path.dirname(os.path.dirname(path))  # site-packages/
-            if site_dir not in sys.path:
-                sys.path.insert(0, site_dir)
-            try:
-                import jieba  # noqa: SUO005 — 有意动态发现，路径来自上面 glob
+    # jieba 是硬依赖，正常安装下随 agenote 一起进 site-packages。直接 import；
+    # 仅在 jieba 损坏/被移除等异常时才降级。
+    try:
+        import jieba
 
-                # 版本一致性检查：site-packages 路径里的 pythonX.Y 与当前解释器对比。
-                # jieba 纯 Python 当前能跨版本跑，但若路径含 C 扩展或 bytecode cache
-                # 版本检查，会静默炸。路径不匹配时记一条 warning（不阻止加载——
-                # 实测 jieba 跨 py3.12/py3.14 能正常工作，只是有 SyntaxWarning）。
-                m = re.search(r"python(\d+)\.(\d+)", site_dir)
-                if m:
-                    pkg_major, pkg_minor = int(m.group(1)), int(m.group(2))
-                    if (pkg_major, pkg_minor) != here_major:
-                        warnings.warn(
-                            "jieba 来自 python%d.%d site-packages，当前解释器是 "
-                            "python%d.%d。jieba 纯 Python 通常可跨版本运行，但若"
-                            "出现 SyntaxWarning 或 ImportError，此处即是原因。"
-                            % (pkg_major, pkg_minor, here_major[0], here_major[1]),
-                            RuntimeWarning,
-                            stacklevel=2,
-                        )
-                _JIEBA_CACHE = jieba
-                return jieba
-            except Exception as e:
-                # 记录失败原因，继续尝试下一个候选路径（可能有多个 pythonX.Y）
-                _JIEBA_LOAD_ERROR = "%s: %r" % (site_dir, e)
-                continue
-    _JIEBA_CACHE = None  # 标记不可用，后续直接短路
-    if not _JIEBA_LOAD_ERROR:
-        _JIEBA_LOAD_ERROR = "未找到 jieba 包（~/.nix-profile 和 ~/.local 的 site-packages 都没有）"
-    warnings.warn(
-        "jieba 不可用，dream 回退到 2-gram 兜底分词器（中文分词质量降级）。"
-        "原因: %s" % _JIEBA_LOAD_ERROR,
-        RuntimeWarning,
-        stacklevel=2,
-    )
-    return None
+        _JIEBA_CACHE = jieba
+        return jieba
+    except ImportError as e:
+        _JIEBA_CACHE = None  # 标记不可用，后续直接短路
+        warnings.warn(
+            "jieba 不可用，dream 回退到 2-gram 兜底分词器（中文分词质量降级）。"
+            "jieba 是 agenote 的硬依赖，请重新安装 agenote 以恢复。原因: %r" % e,
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

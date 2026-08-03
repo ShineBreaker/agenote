@@ -30,12 +30,10 @@ classifiers = [
     "Topic :: Text Processing :: Markup :: Markdown",
     "Topic :: Utilities",
 ]
-# 核心是纯 stdlib，无硬依赖
-dependencies = []
-
-[project.optional-dependencies]
-# jieba 中文分词，仅 dream 子命令（启发式候选发现）使用
-cn = ["jieba"]
+# 唯一硬依赖：jieba 中文分词（dream 子命令用于启发式候选发现）。
+# jieba 是纯 Python 包；找不到时 dream 会回退到 2-gram 兜底分词器，但中文分词
+# 质量降级，故这里作为硬依赖确保开箱即用。
+dependencies = ["jieba"]
 
 [project.scripts]
 # console_scripts entry points — uv tool install / pip install 后产出：
