@@ -12,6 +12,15 @@
 # 详细子命令列表请运行 agenote help。
 
 import sys
+import importlib.metadata
+
+# 从已安装包的 metadata 读取版本（pyproject.toml [project] version 是唯一真相源）。
+# 直接从源码树运行（未 pip/uv install）时 metadata 不存在，降级为 "unknown"——
+# 避免 --version 因 PackageNotFoundError 崩溃。
+try:
+    _VERSION = importlib.metadata.version("agenote")
+except importlib.metadata.PackageNotFoundError:
+    _VERSION = "unknown"
 
 from agenote.core import (
     KB_ROOT,
@@ -585,7 +594,7 @@ def main() -> None:
     parser.add_argument(
         "--version",
         action="version",
-        version="agenote 1.0",
+        version=f"agenote {_VERSION}",
     )
     subparsers = parser.add_subparsers(dest="command")
 
