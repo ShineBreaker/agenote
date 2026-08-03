@@ -23,8 +23,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from ag_lib.reconcile import ReconciledFact, RECONCILE_DEFAULT_WEIGHT
-from ag_lib.extract import resolve_xdg_path, extract_title
+from agenote.reconcile import ReconciledFact, RECONCILE_DEFAULT_WEIGHT
+from agenote.extract import resolve_xdg_path, extract_title
 
 OMP_SESSIONS_DIR = resolve_xdg_path(
     "OMP_SESSIONS_DIR",

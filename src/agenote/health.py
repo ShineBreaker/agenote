@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""ag_lib.health — 知识库健康度分析的统一真相源。
+"""agenote.health — 知识库健康度分析的统一真相源。
 
 合并自原三套实现（cards.cmd_health / agenote_mcp.agenote_health / 策展脚本
 analyze_kb+find_gaps），提供结构化的健康数据供 CLI、MCP、viz 复用。
@@ -21,8 +21,8 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from ag_lib.cards import _jaccard_similarity
-from ag_lib.core import (
+from agenote.cards import _jaccard_similarity
+from agenote.core import (
     STALE_DAYS,
     VALID_TYPES,
     _card_dict,

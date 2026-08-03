@@ -35,9 +35,9 @@ KB_DRY_RUN="${KB_DRY_RUN:-0}"
 # 操作定义
 # ═══════════════════════════════════════════════════════════════════════════════
 
-CURATE_TASK="执行 agenote 策展：通过 agenote MCP tool 检查健康度（agenote_health）、检测重复（agenote_deduplicate）、对 stale 卡片归档（agenote_archive stale=true）、重分配权重并重建索引（agenote_curate）、刷新索引（agenote_reindex）。输出策展报告摘要。"
-REVIEW_TASK="审查本次对话，检测是否有可记录的经验信号（用户纠正、踩坑、发现更优方案），并对用到的资料留痕：已有卡片用 agenote_touch，联网新知识用 agenote_add（type=note）。如有经验信号则通过 agenote MCP tool 写入（agenote_add 或 agenote_memory_add）。"
-HEALTH_TASK="通过 agenote MCP tool（agenote_health）输出 agenote 健康度报告，简要说明各项指标是否达标。"
+CURATE_TASK="执行 agenote 策展：通过 agenote CLI 检查健康度（agenote health）、检测重复（agenote deduplicate）、对 stale 卡片归档（agenote archive --stale）、重分配权重并重建索引（agenote curate）、刷新索引（agenote reindex）。输出策展报告摘要。"
+REVIEW_TASK="审查本次对话，检测是否有可记录的经验信号（用户纠正、踩坑、发现更优方案），并对用到的资料留痕：已有卡片用 agenote touch，联网新知识用 agenote add（type=note）。如有经验信号则通过 agenote CLI 写入（agenote add 或 agenote memory --add）。"
+HEALTH_TASK="通过 agenote CLI（agenote health）输出 agenote 健康度报告，简要说明各项指标是否达标。"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 后端适配器
@@ -129,14 +129,12 @@ run_direct() {
 		return
 	fi
 
-	# 直接运行 kb 命令（不经过 AI agent）
+	# 直接运行 agenote CLI（不经过 AI agent；agenote 已在 PATH 中）
 	echo "=== 直接执行模式 ==="
 	echo "任务: $task"
 	echo ""
 
-	# 使用源文件（未部署时 ~/.local/bin/agenote 可能是旧版）
-	local ag_cmd
-	ag_cmd="python3 \"$(dirname "$(readlink -f "$0")")/agenote\""
+	local ag_cmd="agenote"
 
 	case "$task" in
 	*health* | *健康*)

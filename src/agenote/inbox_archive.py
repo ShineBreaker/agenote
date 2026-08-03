@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ag_lib.core import KBContext
+    from agenote.core import KBContext
 
 
 def slugify_heading(heading: str, max_len: int = 60) -> str:
@@ -168,7 +168,7 @@ def cmd_inbox_archive(args: argparse.Namespace, ctx: "KBContext | None" = None) 
 
     输出:每条归档的文件路径,最后一行打印 reindex 结果(若未 --no-reindex)。
     """
-    from ag_lib.core import (  # 局部 import 避免循环
+    from agenote.core import (  # 局部 import 避免循环
         ensure_dirs,
         timestamp_id,
         now,

@@ -5,7 +5,7 @@
 #
 # orgfmt — 通用 org-mode 格式化 CLI（独立于 agenote）
 #
-# 底层格式化核心在 ag_lib.orgfmt（由 agenote Stow 包提供），本脚本通过
+# 底层格式化核心在 agenote.orgfmt（由 agenote Stow 包提供），本脚本通过
 # sys.path 加载它。可独立处理任意 .org 文件；--strict 启用 agenote 卡片专用规则。
 #
 # 用法:
@@ -18,12 +18,7 @@ import argparse
 import os
 import sys
 
-# ag_lib.orgfmt 与 agenote 共享部署在 ~/.local/bin/ag_lib/，加入 sys.path
-_BIN_DIR = os.path.expanduser("~/.local/bin")
-if _BIN_DIR not in sys.path:
-    sys.path.insert(0, _BIN_DIR)
-
-from ag_lib.orgfmt import format_file  # noqa: E402
+from agenote.orgfmt import format_file
 
 
 def main() -> None:

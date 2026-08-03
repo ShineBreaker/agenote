@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: 2026 BrokenShine <xchai404@gmail.com>
+#
+# SPDX-License-Identifier: MIT
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agenote"
+version = "0.1.0"
+description = "跨 Agent 经验平台 CLI — 知识卡片、记忆、策展与工作流蒸馏"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "BrokenShine", email = "xchai404@gmail.com"},
+]
+keywords = ["knowledge-base", "cli", "agent", "experience", "notes"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Text Processing :: Markup :: Markdown",
+    "Topic :: Utilities",
+]
+# 核心是纯 stdlib，无硬依赖
+dependencies = []
+
+[project.optional-dependencies]
+# jieba 中文分词，仅 dream 子命令（启发式候选发现）使用
+cn = ["jieba"]
+
+[project.scripts]
+# console_scripts entry points — uv tool install / pip install 后产出：
+#   ~/.local/bin/agenote       主 CLI（29 子命令）
+#   ~/.local/bin/agenote-cli   轻量 shim（omp-hooks 扩展调用）
+#   ~/.local/bin/orgfmt        org-mode 格式化 CLI
+agenote = "agenote.cli:main"
+agenote-cli = "agenote.shim:main"
+orgfmt = "agenote.orgfmt_cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ShineBreaker/agenote"
+Repository = "https://github.com/ShineBreaker/agenote"
+
+# ─── hatchling 构建配置 ────────────────────────────────────────────
+
+[tool.hatch.build.targets.wheel]
+# src layout：包源在 src/agenote/
+packages = ["src/agenote"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/agenote",
+    "scripts",
+    "docs",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+
+# viz/html/ 下的 .js / .css / .html 是运行时通过 Path(__file__).parent 读取的
+# 模板资源（generate_html / _SKELETON），必须随包打包。hatchling 的 packages 配置
+# 会自动包含包目录下的所有文件（含非 .py 资源），无需额外声明。

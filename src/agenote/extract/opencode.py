@@ -21,8 +21,8 @@ import json
 import os
 from pathlib import Path
 
-from ag_lib.reconcile import ReconciledFact, RECONCILE_DEFAULT_WEIGHT
-from ag_lib.extract import open_sqlite_ro, resolve_xdg_path, extract_title
+from agenote.reconcile import ReconciledFact, RECONCILE_DEFAULT_WEIGHT
+from agenote.extract import open_sqlite_ro, resolve_xdg_path, extract_title
 
 # Path resolution: env override → XDG default → ~/local/share/opencode/opencode-stable.db
 OPENCODE_DB = Path(

@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 BrokenShine <xchai404@gmail.com>
+#
+# SPDX-License-Identifier: MIT
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# 构建产物
+build/
+dist/
+*.egg-info/
+*.whl
+*.tar.gz
+
+# uv / venv
+.venv/
+.python-version
+
+# IDE
+.vscode/
+.idea/

@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from ag_lib.core import (  # noqa: E402
+from agenote.core import (  # noqa: E402
     KB_ROOT,
     KB_EXPERIENCES,
     KB_MEMORY,
@@ -328,7 +328,7 @@ def _cross_domain_search(
 
     # reconcile 事实（其他 agent 的 memory，weight 低于 KB 卡片）
     try:
-        from ag_lib.reconcile import load_reconcile_facts
+        from agenote.reconcile import load_reconcile_facts
 
         for fact in load_reconcile_facts():
             hay = fact.get("content", "")
@@ -1301,7 +1301,7 @@ def cmd_review(args: argparse.Namespace, ctx=None) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# cmd_health 已迁至 ag_lib.health（与 agenote_mcp.agenote_health / 策展脚本统一）。
+# cmd_health 已迁至 agenote.health（与 agenote_mcp.agenote_health / 策展脚本统一）。
 # cmd_curate 通过 lazy import 调用，避免 cards ↔ health 循环导入。
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1313,7 +1313,7 @@ def cmd_review(args: argparse.Namespace, ctx=None) -> None:
 
 def cmd_curate(args: argparse.Namespace, ctx=None) -> None:
     """一键策展：健康检查 + 权重重分配 + 去重 + 归档陈旧 + 重建索引。"""
-    from ag_lib.core import (
+    from agenote.core import (
         HUMAN_DEFAULT_WEIGHT,
         AGENT_DEFAULT_WEIGHT,
         WEIGHT_USAGE_BONUS,
@@ -1325,9 +1325,9 @@ def cmd_curate(args: argparse.Namespace, ctx=None) -> None:
     ctx = ctx or default_context()
     print(f"=== curate ({ctx.name}) ===")
 
-    # 1. 健康检查（cmd_health 已迁至 ag_lib.health，lazy import 避免循环）
+    # 1. 健康检查（cmd_health 已迁至 agenote.health，lazy import 避免循环）
     print("\n── 1. 健康检查 ──")
-    from ag_lib.health import cmd_health
+    from agenote.health import cmd_health
 
     cmd_health(args, ctx)
 

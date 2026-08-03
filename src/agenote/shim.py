@@ -6,7 +6,7 @@
 """agenote_cli — hooks 插件用的轻量入口（不走 MCP 协议）。
 
 pi 的 ExtensionAPI 不提供 MCP 调用接口，TS 插件只能 execSync 外部进程。
-本脚本复用 ag_lib 内核，输出人类可读文本（hooks 当前就这样解析）。
+本脚本复用 agenote 内核，输出人类可读文本（hooks 当前就这样解析）。
 纯 stdlib，零依赖，直接 python3 运行。
 
 用法:
@@ -20,15 +20,10 @@ pi 的 ExtensionAPI 不提供 MCP 调用接口，TS 插件只能 execSync 外部
 """
 
 import argparse
-import os
-import sys
 
-# 与 kb CLI 相同的 sys.path 注入
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from ag_lib.core import agenote_context, ensure_dirs  # noqa: E402
-from ag_lib.cards import cmd_curate  # noqa: E402
-from ag_lib.health import cmd_health  # noqa: E402
+from agenote.core import agenote_context, ensure_dirs
+from agenote.cards import cmd_curate
+from agenote.health import cmd_health
 
 # kb-agent review 任务的固定模板（提示 agent 执行会话后经验采集）
 REVIEW_TASK = (

@@ -26,8 +26,8 @@ import json
 import os
 from pathlib import Path
 
-from ag_lib.reconcile import ReconciledFact, RECONCILE_DEFAULT_WEIGHT
-from ag_lib.extract import resolve_xdg_path, extract_title
+from agenote.reconcile import ReconciledFact, RECONCILE_DEFAULT_WEIGHT
+from agenote.extract import resolve_xdg_path, extract_title
 
 # IMPORTANT: transcripts lives under XDG_DATA_HOME, NOT CLAUDE_CONFIG_DIR
 CLAUDE_TRANSCRIPTS_DIR = resolve_xdg_path(

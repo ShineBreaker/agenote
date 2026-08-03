@@ -12,7 +12,7 @@ import sys
 from collections import Counter
 from datetime import datetime
 
-from ag_lib.core import ARCHIVE_THRESHOLD_DAYS, KB_ROOT
+from agenote.core import ARCHIVE_THRESHOLD_DAYS, KB_ROOT
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # --filter 字段白名单（与索引卡片字段对齐）

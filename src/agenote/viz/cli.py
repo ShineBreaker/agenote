@@ -19,10 +19,10 @@ import time
 import urllib.request
 from pathlib import Path
 
-from ag_lib.core import KB_ROOT, agenote_context, default_context, _load_index
+from agenote.core import KB_ROOT, agenote_context, default_context, _load_index
 
-from ag_lib.viz.data import compute_stats, parse_filter, top_techs
-from ag_lib.viz.html import generate_html
+from agenote.viz.data import compute_stats, parse_filter, top_techs
+from agenote.viz.html import generate_html
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 常量

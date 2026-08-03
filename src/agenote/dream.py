@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MIT
 #
-"""ag_lib.dream — memory consolidation（启发式候选发现，只读 + 溯源）。
+"""agenote.dream — memory consolidation（启发式候选发现，只读 + 溯源）。
 
 把 reconcile 拉取的其他 agent memory 中**高频出现、但 KB 尚未记录**的事实，
 启发式地提为候选清单，由 agent 读完后用 agenote_add 综合写入 KB。
@@ -59,8 +59,8 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from ag_lib.core import is_noise_fact
-from ag_lib.reconcile import (
+from agenote.core import is_noise_fact
+from agenote.reconcile import (
     AGENOTE_ROOT,
     load_reconcile_facts,
 )

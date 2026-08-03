@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 BrokenShine <xchai404@gmail.com>
 #
 # SPDX-License-Identifier: MIT
-"""ag_lib.extract — cross-agent conversation extraction common layer.
+"""agenote.extract — cross-agent conversation extraction common layer.
 
 Provide XDG-aware path resolution, SQLite read-only open helper, title extractor.
 Each source (opencode/crush/codex/claude/omp) lives in its own file with signature:
@@ -81,13 +81,13 @@ def extract_title(content: str, max_len: int = 60) -> str:
 # ── Orchestration ──────────────────────────────────────────────
 # run_extract 是 extract 子命令/ag_note_extract MCP tool 的单一真相源。
 # 抽取器在函数内 lazy import，与 reconcile.py 的 KNOWN_SOURCES 模式一致，
-# 避免 ag_lib.extract.* 在模块加载时拉起整条 sqlite/reconcile 依赖链。
+# 避免 agenote.extract.* 在模块加载时拉起整条 sqlite/reconcile 依赖链。
 
 # source 名 → extractor 解析器（lazy 解析，避免顶层 import 循环）
 def _resolve_extractors() -> dict:
     """返回 source → extractor callable 的映射。lazy import。"""
-    from ag_lib.extract import opencode, crush, codex, claude, omp, zcode
-    from ag_lib.reconcile import extract_hermes
+    from agenote.extract import opencode, crush, codex, claude, omp, zcode
+    from agenote.reconcile import extract_hermes
 
     return {
         "opencode": opencode.extract_opencode,

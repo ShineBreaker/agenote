@@ -3,20 +3,17 @@
 #
 # SPDX-License-Identifier: MIT
 #
-# agenote — 人类域知识库 CLI（agenote 体系的人类入口）
-# 人机协作经验卡片的增删查改，供人类在终端直接调用。
-# agent 域由 agenote_mcp.py（MCP server）暴露，TS 插件由 agenote_cli.py 桥接。
+# agenote — 跨 Agent 经验平台 CLI（agenote 体系的主入口）
+# 人机协作经验卡片的增删查改，供人类在终端与 cron 直接调用。
+# agent 侧由 agenote-cli shim + omp-hooks 扩展桥接（TS 插件 execSync 调用）。
 #
 # 用法: agenote <子命令> [参数]
 #
 # 详细子命令列表请运行 agenote help。
 
 import sys
-import os
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from ag_lib.core import (  # noqa: E402
+from agenote.core import (
     KB_ROOT,
     KB_EXPERIENCES,
     KB_MEMORIES,
@@ -38,7 +35,7 @@ from ag_lib.core import (  # noqa: E402
     default_context,
     agenote_context,
 )
-from ag_lib.cards import (  # noqa: E402
+from agenote.cards import (
     cmd_add,
     cmd_get,
     cmd_list,
@@ -57,22 +54,22 @@ from ag_lib.cards import (  # noqa: E402
     cmd_review,
     cmd_curate,
 )
-from ag_lib.inbox_archive import cmd_inbox_archive  # noqa: E402
-from ag_lib.memory import cmd_memory  # noqa: E402
-from ag_lib.lint import cmd_lint  # noqa: E402
-from ag_lib.orgfmt import cmd_format  # noqa: E402
-from ag_lib.health import cmd_health, cmd_gaps  # noqa: E402
-from ag_lib.viz.cli import add_viz_parser, cmd_viz  # noqa: E402
+from agenote.inbox_archive import cmd_inbox_archive
+from agenote.memory import cmd_memory
+from agenote.lint import cmd_lint
+from agenote.orgfmt import cmd_format
+from agenote.health import cmd_health, cmd_gaps
+from agenote.viz.cli import add_viz_parser, cmd_viz
 
 # 跨 agent 协同 4 件套（lazy import 到 wrapper 内，避免顶层拉起 sqlite/JSONL 依赖）
-from ag_lib.reconcile import reconcile_source, trace_fact  # noqa: E402
-from ag_lib.dream import run_dream  # noqa: E402
-from ag_lib.distill import run_distill  # noqa: E402
-from ag_lib.extract import run_extract  # noqa: E402
+from agenote.reconcile import reconcile_source, trace_fact
+from agenote.dream import run_dream
+from agenote.distill import run_distill
+from agenote.extract import run_extract
 
 # 本 CLI 默认操作 agenote 域（~/Documents/Org/agenote/），与 MCP server 对齐。
 # --domain human 切到人类知识库根（~/Documents/Org/）。
-# 三入口共享 ag_lib 内核：本 CLI（通用）、agenote_mcp.py（MCP server）、
+# 三入口共享 agenote 内核：本 CLI（通用）、agenote_mcp.py（MCP server）、
 # agenote_cli.py（TS hooks 桥，已默认 agenote 域）。
 
 import argparse
@@ -253,7 +250,7 @@ def cmd_reindex(args: argparse.Namespace, ctx=None) -> None:
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 跨 agent 协同 4 件套：reconcile / dream / distill / extract
-# 均为薄 wrapper：读 args → 调 ag_lib 函数 → 格式化输出。
+# 均为薄 wrapper：读 args → 调 agenote 函数 → 格式化输出。
 # 这 4 个函数内部自建 agenote_context（与 KB 卡片同库），不接受外部 ctx，
 # 但为保持 dispatch 签名统一 (args, ctx) 仍接受并忽略 ctx。
 # ═══════════════════════════════════════════════════════════════════════════════

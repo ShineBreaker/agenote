@@ -19,8 +19,8 @@ import json
 import os
 from pathlib import Path
 
-from ag_lib.reconcile import ReconciledFact, RECONCILE_DEFAULT_WEIGHT
-from ag_lib.extract import open_sqlite_ro, resolve_xdg_path, extract_title
+from agenote.reconcile import ReconciledFact, RECONCILE_DEFAULT_WEIGHT
+from agenote.extract import open_sqlite_ro, resolve_xdg_path, extract_title
 
 CRUSH_GLOBAL_DB = resolve_xdg_path(
     "CRUSH_GLOBAL_DB", "~/.config/crush/.crush/crush.db"

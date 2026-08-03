@@ -11,7 +11,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from ag_lib.core import (
+from agenote.core import (
     STALE_DAYS,
     MEMORY_ARCHIVE_DAYS,
     die,

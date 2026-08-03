@@ -96,9 +96,9 @@ def cmd_format(args, ctx=None) -> None:
     """
     import argparse  # 局部 import，避免顶层依赖
 
-    # 延迟 import ctx，避免 orgfmt.py 顶层依赖 ag_lib.core（保持零内部依赖）
+    # 延迟 import ctx，避免 orgfmt.py 顶层依赖 agenote.core（保持零内部依赖）
     if ctx is None:
-        from ag_lib.core import default_context
+        from agenote.core import default_context
 
         ctx = default_context()
 

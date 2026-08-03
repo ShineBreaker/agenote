@@ -22,8 +22,8 @@ import json
 import os
 from pathlib import Path
 
-from ag_lib.reconcile import ReconciledFact, RECONCILE_DEFAULT_WEIGHT
-from ag_lib.extract import resolve_xdg_path, extract_title
+from agenote.reconcile import ReconciledFact, RECONCILE_DEFAULT_WEIGHT
+from agenote.extract import resolve_xdg_path, extract_title
 
 CODEX_HOME = resolve_xdg_path("CODEX_HOME", "$XDG_CONFIG_HOME/codex")
 HISTORY_JSONL = CODEX_HOME / "history.jsonl"

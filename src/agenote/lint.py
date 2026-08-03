@@ -5,7 +5,7 @@
 """agenote lint — 知识库格式与语义校验（纯检查器）。
 
 与 format 的分工：
-  - format（ag_lib.orgfmt）：执行可安全自动化的格式化（属性对齐、block 大小写、
+  - format（agenote.orgfmt）：执行可安全自动化的格式化（属性对齐、block 大小写、
     空行、表格、MD→Org、标记间距），默认直接写盘。
   - lint（本模块）：报告**全部**问题——格式问题（调 format_org 做 diff）+
     语义问题（枚举漂移、缺失字段、fingerprint 字段数、卡片骨架）。
@@ -22,7 +22,7 @@ import os
 import re
 import sys
 
-from ag_lib.core import (
+from agenote.core import (
     VALID_TYPES,
     VALID_OWNERS,
     VALID_ENTRY_TYPES,
@@ -30,7 +30,7 @@ from ag_lib.core import (
     default_context,
     parse_org_prop,
 )
-from ag_lib.orgfmt import format_org
+from agenote.orgfmt import format_org
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
