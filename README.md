@@ -34,11 +34,11 @@ pip install --user git+https://github.com/ShineBreaker/agenote.git
 
 安装后获得三个命令：
 
-| 命令 | 用途 |
-| ---- | ---- |
-| `agenote` | 主 CLI（29 个子命令）：卡片 CRUD、检索、记忆、策展、健康度、跨 agent 协同 |
-| `agenote-cli` | 轻量 shim，供 omp-hooks 扩展 execSync 调用（health/curate/review） |
-| `orgfmt` | 通用 org-mode 格式化 CLI（共享 agenote 库） |
+| 命令          | 用途                                                                      |
+| ------------- | ------------------------------------------------------------------------- |
+| `agenote`     | 主 CLI（29 个子命令）：卡片 CRUD、检索、记忆、策展、健康度、跨 agent 协同 |
+| `agenote-cli` | 轻量 shim，供 omp-hooks 扩展 execSync 调用（health/curate/review）        |
+| `orgfmt`      | 通用 org-mode 格式化 CLI（共享 agenote 库）                               |
 
 运行 `agenote --help` 查看完整子命令清单。主要命令分组：
 
