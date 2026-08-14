@@ -21,8 +21,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from agenote.extract import extract_title, resolve_xdg_path
-from agenote.extract.base import Turn, pair_turns, register
-from agenote.reconcile import RECONCILE_DEFAULT_WEIGHT
+from agenote.extract.base import SOURCES, Turn, pair_turns, register
+from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
 
 OMP_SESSIONS_DIR = resolve_xdg_path(
     "OMP_SESSIONS_DIR",
@@ -160,7 +160,7 @@ def extract_omp() -> tuple[list, list[str]]:
                     _iter_turns(jsonl_path),
                     source="omp",
                     weight=RECONCILE_DEFAULT_WEIGHT,
-                    categorize=lambda session: "general",
+                    categorize=lambda session, user_text, assistant_text: "general",
                 )
             )
         except OSError as e:
@@ -209,3 +209,7 @@ def trace_session(session_id: str) -> dict:
         "session": session_meta,
         "messages": msgs_out,
     }
+
+
+# 注册 trace 能力（trace_session 定义在 @register 之后，此处补挂到 Source 上）
+SOURCES["omp"].trace = trace_session

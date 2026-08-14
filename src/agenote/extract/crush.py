@@ -7,20 +7,22 @@ Schema (verified ~/.config/crush/.crush/crush.db):
   sessions(id, title, parent_session_id, message_count, ...)
   messages(id, session_id, role, parts JSON list, model, created_at, ...)
     parts: [{"type": "text", "data": {"text": "..."}}, {"type": "finish", ...}]
-  files, read_files, goose_db_version
 
-Project-level DBs discovered via scan: ~/Documents, ~/Documents/Repo,
-~/Documents/Org, ~/.emacs.d, /data/Documents 下 .crush/crush.db。
+与 opencode/zcode 的三表 schema 不同（crush 是 sessions/messages 两表 +
+parts 内嵌 JSON 列），故不走 run_sqlite_extractor，但配对仍共享框架
+pair_turns。adapter 提供：多 DB 发现、parts 解析、内容关键词分类。
 """
 
 from __future__ import annotations
 
 import json
-import os
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
-from agenote.reconcile import ReconciledFact, RECONCILE_DEFAULT_WEIGHT
-from agenote.extract import open_sqlite_ro, resolve_xdg_path, extract_title
+from agenote.extract import open_sqlite_ro, resolve_xdg_path
+from agenote.extract.base import Turn, pair_turns, register
+from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
 
 CRUSH_GLOBAL_DB = resolve_xdg_path(
     "CRUSH_GLOBAL_DB", "~/.config/crush/.crush/crush.db"
@@ -33,9 +35,6 @@ CRUSH_SEARCH_ROOTS = [
     "~/.emacs.d",
     "/data/Documents",
 ]
-
-# parts JSON 解析：只取 type=text 的 data.text，type=finish/skip 等忽略
-_TYPE_TEXT = "text"
 
 
 def find_crush_dbs() -> list[Path]:
@@ -69,7 +68,7 @@ def _parts_to_text(parts_raw: str) -> str:
     for part in parts:
         if not isinstance(part, dict):
             continue
-        if part.get("type") != _TYPE_TEXT:
+        if part.get("type") != "text":
             continue
         data = part.get("data") or {}
         if isinstance(data, dict):
@@ -79,8 +78,9 @@ def _parts_to_text(parts_raw: str) -> str:
     return "\n".join(texts).strip()
 
 
-def _categorize(text: str) -> str:
-    content = (text or "").lower()[:200]
+def _categorize(session_row: dict, user_text: str = "", assistant_text: str = "") -> str:
+    """crush 分类基于对话内容关键词（user+assistant 拼合）。"""
+    content = (user_text + " " + assistant_text or "").lower()[:200]
     if any(k in content for k in ("error", "fix", "bug", "错误", "修复")):
         return "fix"
     if any(k in content for k in ("tool", "工具")):
@@ -88,74 +88,68 @@ def _categorize(text: str) -> str:
     return "general"
 
 
-def _extract_from_db(db_path: Path) -> tuple[list[ReconciledFact], list[str]]:
-    facts: list[ReconciledFact] = []
-    errors: list[str] = []
-    try:
-        conn = open_sqlite_ro(db_path)
-    except FileNotFoundError as e:
-        return [], [str(e)]
-    try:
-        # Determine project_dir: global vs project-level
-        if ".config/crush" in str(db_path):
-            project_dir = "(global)"
-        else:
-            project_dir = str(db_path).rsplit("/.crush/", 1)[0]
+def _iter_turns_crush(conn: Any, sess: Any, db_name: str, project_dir: str) -> Iterator[Turn]:
+    """一个 crush session → Turn 流。
 
-        sessions = conn.execute(
-            "SELECT id, title, created_at, updated_at FROM sessions"
-        ).fetchall()
-        for sess in sessions:
-            try:
-                messages = conn.execute(
-                    "SELECT id, role, parts, created_at FROM messages "
-                    "WHERE session_id = ? ORDER BY created_at",
-                    (sess["id"],),
-                ).fetchall()
-                current_user: str | None = None
-                current_user_ts: str = ""
-                for msg in messages:
-                    role = msg["role"] or ""
-                    content = _parts_to_text(msg["parts"] or "")
-                    if role == "user":
-                        current_user = content
-                        current_user_ts = str(msg["created_at"] or "")
-                    elif role == "assistant" and current_user and content:
-                        tag = (
-                            project_dir.split("/")[-1]
-                            if project_dir != "(global)"
-                            else "crush-global"
-                        )
-                        facts.append(
-                            ReconciledFact(
-                                id=f'crush:{db_path.name}:{sess["id"]}:{msg["id"]}',
-                                source="crush",
-                                native_id=str(msg["id"]),
-                                title=extract_title(current_user)
-                                or (sess["title"] or "Untitled"),
-                                category=_categorize(current_user + " " + content),
-                                content=f"USER: {current_user[:1000]}\n\nASSISTANT: {content[:2000]}",
-                                trust_score=0.5,
-                                weight=RECONCILE_DEFAULT_WEIGHT,
-                                tags=[tag],
-                                timestamp=current_user_ts,
-                            )
-                        )
-                        current_user = None
-                        current_user_ts = ""
-            except Exception as e:
-                errors.append(f"session={sess['id']}: {e}")
-    finally:
-        conn.close()
-    return facts, errors
+    session["id"] 带 db 文件名前缀，保证多 project DB 之间 session id 不碰撞
+    （fact id 三段式 crush:{db}:{session}:{message} 与旧格式一致）。
+    """
+    # global DB 没有项目目录，directory 用 "crush-global" 作为 tag 代理值
+    directory = project_dir if project_dir != "(global)" else "crush-global"
+    session = {
+        "id": f"{db_name}:{sess['id']}",
+        "title": sess["title"] or "Untitled",
+        "directory": directory,
+    }
+    messages = conn.execute(
+        "SELECT id, role, parts, created_at FROM messages "
+        "WHERE session_id = ? ORDER BY created_at",
+        (sess["id"],),
+    ).fetchall()
+    for msg in messages:
+        role = msg["role"] or ""
+        if role not in ("user", "assistant"):
+            continue
+        yield Turn(
+            role=role,
+            text=_parts_to_text(msg["parts"] or ""),
+            timestamp=str(msg["created_at"] or ""),
+            native_id=str(msg["id"]),
+            session=session,
+        )
 
 
-def extract_crush() -> tuple[list[ReconciledFact], list[str]]:
+@register("crush")
+def extract_crush() -> tuple[list, list[str]]:
     """Extract from all Crush databases (global + project-level)."""
-    all_facts: list[ReconciledFact] = []
-    all_errors: list[str] = []
+    facts = []
+    errors: list[str] = []
     for db_path in find_crush_dbs():
-        facts, errors = _extract_from_db(db_path)
-        all_facts.extend(facts)
-        all_errors.extend(errors)
-    return all_facts, all_errors
+        try:
+            conn = open_sqlite_ro(db_path)
+        except FileNotFoundError as e:
+            errors.append(str(e))
+            continue
+        try:
+            if ".config/crush" in str(db_path):
+                project_dir = "(global)"
+            else:
+                project_dir = str(db_path).rsplit("/.crush/", 1)[0]
+            sessions = conn.execute(
+                "SELECT id, title, created_at, updated_at FROM sessions"
+            ).fetchall()
+            for sess in sessions:
+                try:
+                    facts.extend(
+                        pair_turns(
+                            _iter_turns_crush(conn, sess, db_path.name, project_dir),
+                            source="crush",
+                            weight=RECONCILE_DEFAULT_WEIGHT,
+                            categorize=_categorize,
+                        )
+                    )
+                except Exception as e:  # 单个 session 失败不中断整库
+                    errors.append(f"session={sess['id']}: {e}")
+        finally:
+            conn.close()
+    return facts, errors

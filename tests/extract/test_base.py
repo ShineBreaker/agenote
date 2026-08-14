@@ -25,7 +25,7 @@ def _turn(role: str, text: str, *, ts: str = "2026-01-01T00:00:00", nid: str = "
 def test_pair_turns_basic_pairing():
     """user → assistant 配对产出一条 fact，content 格式正确。"""
     turns = iter([_turn("user", "hello"), _turn("assistant", "hi there")])
-    facts = list(pair_turns(turns, source="opencode", weight=0.7, categorize=lambda s: "general"))
+    facts = list(pair_turns(turns, source="opencode", weight=0.7, categorize=lambda s, u, a: "general"))
 
     assert len(facts) == 1
     f = facts[0]
@@ -40,14 +40,14 @@ def test_pair_turns_basic_pairing():
 def test_pair_turns_orphan_assistant_skipped():
     """没有前置 user 的 assistant 回合被丢弃。"""
     turns = iter([_turn("assistant", "lonely")])
-    facts = list(pair_turns(turns, source="opencode", weight=0.7, categorize=lambda s: "general"))
+    facts = list(pair_turns(turns, source="opencode", weight=0.7, categorize=lambda s, u, a: "general"))
     assert facts == []
 
 
 def test_pair_turns_orphan_user_no_fact():
     """末尾孤立的 user 不产出 fact（等下一个 assistant）。"""
     turns = iter([_turn("user", "unanswered")])
-    facts = list(pair_turns(turns, source="opencode", weight=0.7, categorize=lambda s: "general"))
+    facts = list(pair_turns(turns, source="opencode", weight=0.7, categorize=lambda s, u, a: "general"))
     assert facts == []
 
 
@@ -59,24 +59,24 @@ def test_pair_turns_multiple_pairs():
         _turn("user", "q2", nid="m3"),
         _turn("assistant", "a2", nid="m4"),
     ])
-    facts = list(pair_turns(turns, source="opencode", weight=0.7, categorize=lambda s: "general"))
+    facts = list(pair_turns(turns, source="opencode", weight=0.7, categorize=lambda s, u, a: "general"))
     assert len(facts) == 2
     assert "USER: q1" in facts[0].content
     assert "ASSISTANT: a1" in facts[0].content
     assert "USER: q2" in facts[1].content
 
 
-def test_pair_turns_categorize_called_with_session():
-    """categorize 回调收到 session 元数据。"""
+def test_pair_turns_categorize_called_with_context():
+    """categorize 回调收到 session 元数据 + user/assistant 文本。"""
     seen = []
 
-    def cat(s):
-        seen.append(s["id"])
+    def cat(s, user_text, assistant_text):
+        seen.append((s["id"], user_text, assistant_text))
         return "fix"
 
     turns = iter([_turn("user", "x"), _turn("assistant", "y")])
     facts = list(pair_turns(turns, source="opencode", weight=0.7, categorize=cat))
-    assert seen == ["s1"]
+    assert seen == [("s1", "x", "y")]
     assert facts[0].category == "fix"
 
 
@@ -85,7 +85,7 @@ def test_pair_turns_content_truncation():
     big_user = "U" * 1500
     big_asst = "A" * 2500
     turns = iter([_turn("user", big_user), _turn("assistant", big_asst)])
-    f = list(pair_turns(turns, source="opencode", weight=0.7, categorize=lambda s: "general"))[0]
+    f = list(pair_turns(turns, source="opencode", weight=0.7, categorize=lambda s, u, a: "general"))[0]
     assert "U" * 1000 in f.content
     assert "U" * 1001 not in f.content
     assert "A" * 2000 in f.content
@@ -99,7 +99,7 @@ def test_pair_turns_two_users_replaces():
         _turn("user", "second", nid="m2"),
         _turn("assistant", "reply", nid="m3"),
     ])
-    f = list(pair_turns(turns, source="opencode", weight=0.7, categorize=lambda s: "general"))[0]
+    f = list(pair_turns(turns, source="opencode", weight=0.7, categorize=lambda s, u, a: "general"))[0]
     assert "USER: second" in f.content
     assert "first" not in f.content
 
@@ -223,7 +223,7 @@ def test_run_sqlite_extractor_happy_path(db_factory):
             {"id": "m2", "role": "assistant", "parts": [{"type": "text", "text": "检查 cookie"}]},
         ],
     )
-    facts, errors = run_sqlite_extractor(db, source="opencode", weight=0.7, categorize=lambda s: "fix")
+    facts, errors = run_sqlite_extractor(db, source="opencode", weight=0.7, categorize=lambda s, u, a: "fix")
 
     assert len(facts) == 1
     assert errors == []
@@ -235,7 +235,7 @@ def test_run_sqlite_extractor_happy_path(db_factory):
 def test_run_sqlite_extractor_missing_db(tmp_path):
     """DB 不存在时返回 ([], [error])，不抛异常。"""
     facts, errors = run_sqlite_extractor(
-        tmp_path / "nope.db", source="opencode", weight=0.7, categorize=lambda s: "general"
+        tmp_path / "nope.db", source="opencode", weight=0.7, categorize=lambda s, u, a: "general"
     )
     assert facts == []
     assert len(errors) == 1
@@ -278,7 +278,7 @@ def test_run_sqlite_extractor_per_session_isolation(db_factory):
     conn.commit()
     conn.close()
 
-    facts, errors = run_sqlite_extractor(db, source="opencode", weight=0.7, categorize=lambda s: "general")
+    facts, errors = run_sqlite_extractor(db, source="opencode", weight=0.7, categorize=lambda s, u, a: "general")
     # s1 只有 user（无配对）→ 0 facts；s2 有 pair → 1 fact
     assert len(facts) == 1
     assert "USER: 问题" in facts[0].content

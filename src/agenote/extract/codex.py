@@ -9,21 +9,24 @@ XDG path (from source/config.org:1837):
 Schema:
   - history.jsonl: each line {session_id, ts, text, cwd, ...}
     → builds session_id → {title, cwd, ts} index
-  - sessions/YYYY/MM/rollout-*.jsonl: each line {type, message, timestamp, ...}
-    type ∈ session | user | assistant | tool | response
-    → rebuild user→assistant pairs by timestamp order (NOT parentId like omp)
+  - sessions/YYYY/MM/rollout-*.jsonl: each line {timestamp, type, payload, ...}
+    type ∈ session_meta | response_item ...
+    response_item → payload.{type:"message", role, content:[...]}
 
-Read-only: JSONL read-only, never constructs writes.
+消息顺序按 timestamp 排序（NOT parentId like omp）。配对/构造事实走框架
+pair_turns；adapter 提供：history 索引、payload 解析、时间排序。
 """
 
 from __future__ import annotations
 
 import json
-import os
+from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
 
-from agenote.reconcile import ReconciledFact, RECONCILE_DEFAULT_WEIGHT
-from agenote.extract import resolve_xdg_path, extract_title
+from agenote.extract import resolve_xdg_path
+from agenote.extract.base import Turn, pair_turns, register
+from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
 
 CODEX_HOME = resolve_xdg_path("CODEX_HOME", "$XDG_CONFIG_HOME/codex")
 HISTORY_JSONL = CODEX_HOME / "history.jsonl"
@@ -82,53 +85,41 @@ def _normalize_message(msg) -> str:
     return str(msg).strip()
 
 
-def _extract_session_file(
-    jsonl_path: Path, history_idx: dict[str, dict]
-) -> tuple[list[ReconciledFact], list[str]]:
-    """Extract from one rollout-*.jsonl file."""
-    facts: list[ReconciledFact] = []
-    errors: list[str] = []
+def _ts_key(evt: dict) -> float:
+    """timestamp（ms 或 ISO 字符串）→ 排序键；无法解析回退 0.0。"""
+    ts = evt.get("timestamp", evt.get("ts", 0))
+    if isinstance(ts, (int, float)):
+        return float(ts)
+    if isinstance(ts, str):
+        try:
+            ts = ts.replace("Z", "+00:00")
+            return datetime.fromisoformat(ts).timestamp()
+        except (ValueError, TypeError):
+            return 0.0
+    return 0.0
+
+
+def _iter_turns(jsonl_path: Path, history_idx: dict[str, dict]) -> Iterator[Turn]:
+    """一个 rollout-*.jsonl → Turn 流（timestamp 排序后的 user/assistant 回合）。"""
     # Filename: rollout-<uuid>.jsonl → session_id = uuid
     session_id = jsonl_path.stem.replace("rollout-", "")
     meta = history_idx.get(session_id, {})
-    title = meta.get("title", "Untitled")
-    cwd = meta.get("cwd", "")
 
     events: list[dict] = []
-    try:
-        with open(jsonl_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    events.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-    except OSError as e:
-        return [], [str(e)]
-
-    # Sort by timestamp (ms or ISO string); fallback to insertion order
-    def _ts_key(e: dict) -> float:
-        ts = e.get("timestamp", e.get("ts", 0))
-        if isinstance(ts, (int, float)):
-            return float(ts)
-        if isinstance(ts, str):
+    with open(jsonl_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
             try:
-                from datetime import datetime
-                ts = ts.replace("Z", "+00:00")
-                return datetime.fromisoformat(ts).timestamp()
-            except (ValueError, TypeError):
-                return 0.0
-        return 0.0
-
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
     events.sort(key=_ts_key)
-# Real codex schema: {timestamp, type, payload}; session_meta→payload.{id,cwd},
-    # response_item→payload.{type:"message", role, content:[{type:"input_text"|"output_text", text}]}
+
     session_id_evt: str | None = None
     cwd_evt: str | None = None
-    current_user: str | None = None
-    for evt in events:
+    for i, evt in enumerate(events):
         etype = evt.get("type", "")
         payload = evt.get("payload") if isinstance(evt.get("payload"), dict) else {}
 
@@ -141,42 +132,39 @@ def _extract_session_file(
                 cwd_evt = cwd_meta
 
         elif etype == "response_item" and payload.get("type") == "message":
-            role = payload.get("role", "")
-            content = _normalize_message(payload.get("content", ""))
-            if role == "user" and content:
-                current_user = content
-            elif role == "assistant" and current_user and content:
-                tag = (cwd_evt or cwd).split("/")[-1] if (cwd_evt or cwd) else "codex"
-                sid = session_id_evt or session_id
-                evt_ts = str(evt.get("timestamp", ""))
-                facts.append(
-                    ReconciledFact(
-                        id=f'codex:{sid}:{evt_ts or events.index(evt)}',
-                        source="codex",
-                        native_id=evt_ts or str(events.index(evt)),
-                        title=extract_title(current_user) or title,
-                        category="general",
-                        content=f"USER: {current_user[:1000]}\n\nASSISTANT: {content[:2000]}",
-                        trust_score=0.5,
-                        weight=EXTERNAL_RECONCILE_WEIGHT,
-                        tags=[tag],
-                        timestamp=evt_ts,
-                    )
-                )
-                current_user = None
-    return facts, errors
+            evt_ts = str(evt.get("timestamp", ""))
+            yield Turn(
+                role=payload.get("role", ""),
+                text=_normalize_message(payload.get("content", "")),
+                timestamp=evt_ts,
+                native_id=evt_ts or str(i),
+                session={
+                    "id": session_id_evt or session_id,
+                    "title": meta.get("title", "Untitled"),
+                    "directory": cwd_evt or meta.get("cwd", ""),
+                },
+            )
 
 
-def extract_codex() -> tuple[list[ReconciledFact], list[str]]:
+@register("codex")
+def extract_codex() -> tuple[list, list[str]]:
     """Extract from codex history + sessions/YYYY/MM (read-only)."""
-    all_facts: list[ReconciledFact] = []
-    all_errors: list[str] = []
+    facts = []
+    errors: list[str] = []
     if not CODEX_HOME.exists():
         return [], [f"CODEX_HOME 不存在: {CODEX_HOME}"]
     history_idx = _load_history_index()
     if SESSIONS_ROOT.exists():
         for jsonl_path in sorted(SESSIONS_ROOT.rglob("rollout-*.jsonl")):
-            facts, errors = _extract_session_file(jsonl_path, history_idx)
-            all_facts.extend(facts)
-            all_errors.extend(errors)
-    return all_facts, all_errors
+            try:
+                facts.extend(
+                    pair_turns(
+                        _iter_turns(jsonl_path, history_idx),
+                        source="codex",
+                        weight=EXTERNAL_RECONCILE_WEIGHT,
+                        categorize=lambda session, user_text, assistant_text: "general",
+                    )
+                )
+            except OSError as e:
+                errors.append(str(e))
+    return facts, errors

@@ -23,8 +23,8 @@ import os
 from pathlib import Path
 
 from agenote.extract import resolve_xdg_path
-from agenote.extract.base import register, run_sqlite_extractor
-from agenote.reconcile import RECONCILE_DEFAULT_WEIGHT
+from agenote.extract.base import SOURCES, register, run_sqlite_extractor
+from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
 
 # Path resolution: env override → ~/.zcode/cli/db/db.sqlite
 ZCODE_DB = Path(
@@ -35,7 +35,7 @@ ZCODE_DB = Path(
 ).expanduser()
 
 
-def _categorize(session_row: dict) -> str:
+def _categorize(session_row: dict, user_text: str = "", assistant_text: str = "") -> str:
     """Derive category from session.title heuristics."""
     title = (session_row.get("title") or "").lower()
     if any(k in title for k in ("chat", "对话")):
@@ -130,3 +130,7 @@ def trace_session(session_id: str) -> dict:
         }
     finally:
         conn.close()
+
+
+# 注册 trace 能力（trace_session 定义在 @register 之后，此处补挂到 Source 上）
+SOURCES["zcode"].trace = trace_session

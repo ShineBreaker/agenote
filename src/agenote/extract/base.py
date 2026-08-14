@@ -14,7 +14,8 @@
   - categorize(session) 启发式（zcode 比 opencode 多一个 "config" 类别）
   - （可选）trace_session
 
-ReconciledFact 仍从 agenote.reconcile 导入；迁到 extract/models.py 是后续阶段的事。
+ReconciledFact 定义在 agenote.extract.models（零依赖纯 dataclass 模块），
+adapter/framework/reconcile 三方共享；reconcile.py re-export 保持旧路径兼容。
 """
 
 from __future__ import annotations
@@ -25,6 +26,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+from agenote.extract.models import ReconciledFact
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 数据模型
@@ -52,22 +55,25 @@ def pair_turns(
     *,
     source: str,
     weight: float,
-    categorize: Callable[[dict[str, Any]], str],
+    categorize: Callable[[dict[str, Any], str, str], str],
 ) -> Iterator[ReconciledFact]:
     """配对状态机：user 回合累积，assistant 回合到达时配对产出一条 ReconciledFact。
+
+    空 text 的回合不参与配对（对齐 7 个源的原版语义）。
+    categorize(session, user_text, assistant_text)：按需用 session 元数据
+    （opencode/zcode 的 title 启发式）或对话内容（crush 的关键词启发式）分类。
 
     配对逻辑 7 个源里有 6 个完全相同，故由 framework 拥有，消除 ~60 处 current_user 重复。
     事实型源（hermes）不走此函数，直接产出。
     """
-    # lazy：避免 import agenote.extract 时拉 reconcile 链（保持 __init__.py 的懒加载设计）
+    # lazy：import agenote.extract 会回到本模块（循环），故运行时再取 extract_title
     from agenote.extract import extract_title
-    from agenote.reconcile import ReconciledFact
 
     current_user: Turn | None = None
     for turn in turns:
-        if turn.role == "user":
+        if turn.role == "user" and turn.text:
             current_user = turn
-        elif turn.role == "assistant" and current_user:
+        elif turn.role == "assistant" and current_user and turn.text:
             sess_title = turn.session.get("title") or "Untitled"
             directory = turn.session.get("directory") or ""
             yield ReconciledFact(
@@ -75,7 +81,7 @@ def pair_turns(
                 source=source,
                 native_id=turn.native_id,
                 title=extract_title(current_user.text) or sess_title[:80],
-                category=categorize(turn.session),
+                category=categorize(turn.session, current_user.text, turn.text),
                 content=f"USER: {current_user.text[:1000]}\n\nASSISTANT: {turn.text[:2000]}",
                 trust_score=0.5,
                 weight=weight,
@@ -155,7 +161,7 @@ def run_sqlite_extractor(
     *,
     source: str,
     weight: float,
-    categorize: Callable[[dict[str, Any]], str],
+    categorize: Callable[[dict[str, Any], str, str], str],
 ) -> tuple[list[ReconciledFact], list[str]]:
     """通用 SQLite 抽取：打开 DB → 遍历 session → pair_turns → (facts, errors)。
 
@@ -231,29 +237,22 @@ def register(name: str, *, trace: Callable[[str], dict] | None = None) -> Callab
 
 
 def _resolve_extractors() -> dict[str, Callable]:
-    """返回 source → extract callable 的映射。
+    """返回 source → extract callable 的映射（全部来自 SOURCES registry）。
 
-    优先从 SOURCES registry 读取（已迁移的 adapter），剩余走 legacy 导入
-    （尚未迁移的 crush/codex/claude 与 reconcile.extract_hermes）。
-    随着每个源迁移进 SOURCES，legacy 分支自然收缩，最终可删除。
+    import 全部 adapter 模块以触发 @register 注册；SOURCES 是三套分发表
+    （extract 编排 / reconcile KNOWN_SOURCES / trace 分发）的唯一真相源。
     """
-    from agenote.reconcile import extract_hermes
+    from agenote.extract import (  # noqa: F401  (import 即注册)
+        claude,
+        codex,
+        crush,
+        hermes,
+        omp,
+        opencode,
+        zcode,
+    )
 
-    # 显式 import 带 @register 的 adapter，触发注册到 SOURCES
-    from agenote.extract import omp, opencode, zcode  # noqa: F401
-
-    extractors: dict[str, Callable] = {name: src.extract for name, src in SOURCES.items()}
-    registered = set(SOURCES)
-
-    # legacy 适配器（尚未迁移进 SOURCES）
-    from agenote.extract import claude, codex, crush
-
-    for mod, key in [(crush, "crush"), (codex, "codex"), (claude, "claude")]:
-        if key not in registered:
-            extractors[key] = getattr(mod, f"extract_{key}")
-
-    extractors["hermes"] = extract_hermes
-    return extractors
+    return {name: src.extract for name, src in SOURCES.items()}
 
 
 def run_extract(

@@ -30,6 +30,18 @@ user→assistant 配对 + 构造，事实型源（hermes，无 turn 概念）直
 - 引入 pytest：framework 单测（pair_turns / 聚合 / 过滤 / 截断 / 错误收集）+ 每个 adapter 小 fixture 烟雾测试。
 - 迁移顺序：framework 骨架 → opencode+zcode（验证设计）→ omp → codex/claude/crush/hermes。
 
+## 实施记录
+
+- **2026-08-14 阶段 1a/1b/1c 全部完成**：7 源全部 @register 进 `extract.base.SOURCES`；
+  `pi.py` 已删除；`extract_hermes` 迁至 `extract/hermes.py`（`_extract_hermes_title`
+  与 `extract_title` 的重复实现合并）；`ReconciledFact`/`RECONCILE_DEFAULT_WEIGHT`
+  迁至 `extract/models.py`（reconcile re-export 兼容旧路径）；reconcile 的
+  `KNOWN_SOURCES`（7 项 lambda `__import__` 分发）与 trace_fact 的局部
+  `_TRACE_DISPATCH` 均已删除，改由 SOURCES 派生——新增源只写一个 adapter 文件。
+- 实施中追加的框架语义：`pair_turns` 的 categorize 回调签名定为
+  `(session, user_text, assistant_text)`（crush 的内容关键词分类需要文本）；
+  空 text 回合不参与配对（对齐 7 源原版行为）。
+
 ## 关联
 
 候选 2（cards 拆分）与候选 3（core 拆分 + orgserde）尚未立 ADR；其共识见架构评审报告。

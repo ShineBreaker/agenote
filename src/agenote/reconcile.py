@@ -32,7 +32,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from agenote.core import KB_ROOT, KNOWN_AGENTS, is_noise_fact
+from agenote.core import KB_ROOT, is_noise_fact
+from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT, ReconciledFact
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # reconcile 索引落盘位置（与 experiences/ 平级，独立目录，绝不混入权威 KB）
@@ -43,36 +44,12 @@ RECONCILE_DIR = AGENOTE_ROOT / ".reconcile"
 RECONCILE_INDEX = RECONCILE_DIR / "index.json"
 
 # reconcile 来源卡片默认权重（低于 KB 卡片 1.0/1.5，避免淹没权威经验）
-RECONCILE_DEFAULT_WEIGHT = 0.7
+# 定义已迁至 agenote.extract.models（adapter/framework/reconcile 三方共享）
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 数据模型
 # ═══════════════════════════════════════════════════════════════════════════════
-
-
-@dataclass
-class ReconciledFact:
-    """从外部 agent memory 抽取的一条只读事实（reconcile 索引项）。
-
-    字段对齐 agenote _card_dict 的结构，便于 agenote_search 统一处理。
-    但 reconcile 卡片**没有对应 .org 文件**（file 字段为空），只活在
-    .reconcile/index.json 里，是纯检索辅助。
-    """
-
-    id: str  # 跨源唯一：f"{source}:{native_id}"
-    source: str  # 来源 agent 名（hermes / crush / claude-code …）
-    native_id: str  # 源系统的原始 id（hermes 的 fact_id）
-    title: str  # 提取的标题（hermes 的【...】）
-    category: str  # 映射后的 kb category
-    content: str  # 完整正文
-    trust_score: float  # 原始信任度（影响 weight）
-    weight: float  # 检索权重（trust 越低 weight 越低）
-    tags: list[str] = field(default_factory=list)
-    retrieved_at: str = ""  # 本次 reconcile 拉取时间
-    timestamp: str = (
-        ""  # 对话发生时间（ISO 8601，extractor 能取到就填；空=未知，不过滤）
-    )
 
 
 @dataclass
@@ -92,152 +69,25 @@ class ReconcileReport:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# hermes 抽取器（真实 schema）
+# hermes 抽取器 — 已迁至 agenote/extract/hermes.py（@register 注册进 SOURCES）
 # ═══════════════════════════════════════════════════════════════════════════════
 
-HERMES_DB = Path.home() / ".local" / "share" / "hermes" / "memory_store.db"
-
-# hermes category → kb category 映射（目前 hermes 只有 general/project/tool）
-_HERMES_CATEGORY_MAP = {
-    "general": "general",
-    "project": "project",
-    "tool": "tool",
-    "user": "reference",  # 预留：hermes 未来若有 user 类
-    "feedback": "feedback",
-}
-
-# hermes content 多以【...】开头作为标题，无【】时取首句
-_TITLE_BRACKET_RE = re.compile(r"^【([^】]+)】")
-_TITLE_SENT_RE = re.compile(r"[^。\n!?:;]+")
-
-
-def _extract_hermes_title(content: str) -> str:
-    """从 hermes fact content 提取简短标题。
-
-    优先【...】括号内容；否则取首句（≤40 字）；兜底截断前 40 字。
-    """
-    m = _TITLE_BRACKET_RE.match(content.strip())
-    if m:
-        return m.group(1).strip()[:60]
-    first = _TITLE_SENT_RE.match(content.strip())
-    raw = (first.group(0).strip() if first else content.strip())[:40]
-    return raw or "(hermes fact)"
-
-
-def _hermes_to_fact(row: sqlite3.Row) -> ReconciledFact:
-    """把 hermes facts 一行转成 ReconciledFact。
-
-    row 列：fact_id, content, category, tags, trust_score, retrieval_count,
-            helpful_count（hrr_vector 不取，体积大且检索用不到）
-    """
-    fact_id = row["fact_id"]
-    content = row["content"] or ""
-    category = _HERMES_CATEGORY_MAP.get(row["category"] or "general", "general")
-    trust = float(row["trust_score"] or 0.5)
-    # weight：trust 0.5 → 0.7；trust 越高 weight 越高（封顶 1.0，不超过 KB 卡片）
-    weight = round(min(1.0, RECONCILE_DEFAULT_WEIGHT + (trust - 0.5)), 2)
-    tags_raw = row["tags"] or ""
-    tags = [t.strip() for t in re.split(r"[,，]", tags_raw) if t.strip()]
-    return ReconciledFact(
-        id=f"hermes:{fact_id}",
-        source="hermes",
-        native_id=str(fact_id),
-        title=_extract_hermes_title(content),
-        category=category,
-        content=content,
-        trust_score=trust,
-        weight=weight,
-        tags=tags,
-    )
-
-
-def _open_hermes_ro(db_path: Path) -> sqlite3.Connection:
-    """以只读方式打开 hermes memory_store.db。
-
-    三重只读保护（任一失效都能挡住误写）：
-    1. file: URI + mode=ro（SQLite 层面拒绝写）
-    2. pragma query_only=1（连接层面拒绝 DML/DDL）
-    3. 只 SELECT，从不构造写语句
-    """
-    if not db_path.exists():
-        raise FileNotFoundError(f"hermes memory_store.db 不存在: {db_path}")
-    uri = f"file:{db_path}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA query_only = 1")  # 连接级写锁
-    return conn
-
-
-def extract_hermes() -> tuple[list[ReconciledFact], list[str]]:
-    """从 hermes memory_store.db 抽取全部 facts（只读）。
-
-    返回 (facts, errors)。errors 是非致命问题（如某行解析失败）。
-    """
-    facts: list[ReconciledFact] = []
-    errors: list[str] = []
-    try:
-        conn = _open_hermes_ro(HERMES_DB)
-    except FileNotFoundError as e:
-        # hermes 未运行/未初始化 → 返回空 + 一条说明（不算 fatal error）
-        return [], [str(e)]
-    try:
-        rows = conn.execute(
-            "SELECT fact_id, content, category, tags, trust_score, "
-            "retrieval_count, helpful_count FROM facts ORDER BY fact_id"
-        ).fetchall()
-        for row in rows:
-            try:
-                facts.append(_hermes_to_fact(row))
-            except Exception as e:  # 单行解析失败不中断整体
-                errors.append(f"fact_id={row['fact_id']}: {e}")
-    finally:
-        conn.close()
-    return facts, errors
+from agenote.extract.hermes import HERMES_DB, extract_hermes  # noqa: F401  (re-export)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 已注册的 source 表（新增 source 在此登记）
+# source 分发 — 统一由 agenote.extract.base.SOURCES registry 提供
 # ═══════════════════════════════════════════════════════════════════════════════
+# 原 KNOWN_SOURCES（7 项 lambda __import__ 分发）已删除：新增 source 只需在
+# agenote/extract/<name>.py 写 @register 装饰的 adapter，extract/reconcile/
+# dream trace 三条路径自动可用。三重只读保护由 open_sqlite_ro() 保证。
 
-# 每个 source：name → (extractor_fn, 描述)。extractor 返回 (facts, errors)。
-# agenote.extract.* 5 个抽取器独立模块，三重只读保护由 open_sqlite_ro() 保证。
-KNOWN_SOURCES: dict[str, tuple] = {
-    "hermes": (extract_hermes, "hermes holographic memory_store.db (FTS5)"),
-    "opencode": (
-        lambda: __import__(
-            "agenote.extract.opencode", fromlist=["extract_opencode"]
-        ).extract_opencode(),
-        "opencode sqlite session/message/part (opencode-stable.db)",
-    ),
-    "crush": (
-        lambda: __import__(
-            "agenote.extract.crush", fromlist=["extract_crush"]
-        ).extract_crush(),
-        "crush sqlite (global + project-level DBs)",
-    ),
-    "codex": (
-        lambda: __import__(
-            "agenote.extract.codex", fromlist=["extract_codex"]
-        ).extract_codex(),
-        "codex XDG (history.jsonl + sessions/YYYY/MM)",
-    ),
-    "claude": (
-        lambda: __import__(
-            "agenote.extract.claude", fromlist=["extract_claude"]
-        ).extract_claude(),
-        "claude XDG (CLAUDE_CONFIG_DIR + XDG_DATA_HOME/claude/transcripts)",
-    ),
-    "omp": (
-        lambda: __import__("agenote.extract.omp", fromlist=["extract_omp"]).extract_omp(),
-        "omp JSONL 事件流 (parentId 重建, 递归子目录)",
-    ),
-    "zcode": (
-        lambda: __import__(
-            "agenote.extract.zcode", fromlist=["extract_zcode"]
-        ).extract_zcode(),
-        "zcode sqlite session/message/part (~/.zcode/cli/db/db.sqlite)",
-    ),
-}
+
+def _known_extractors() -> dict:
+    """source → extract callable（从 SOURCES registry 派生，注册即生效）。"""
+    from agenote.extract.base import _resolve_extractors
+
+    return _resolve_extractors()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -297,7 +147,7 @@ def reconcile_source(source: str = "hermes", dry_run: bool = False) -> Reconcile
     """对单个 source 跑一次只读 reconcile。
 
     Args:
-        source: KNOWN_SOURCES 中的 source 名（或 "all" 跑全部）
+        source: SOURCES registry 中的 source 名（或 "all" 跑全部）
         dry_run: True 只返回报告不落盘（首次/审核场景）
 
     Returns:
@@ -305,13 +155,11 @@ def reconcile_source(source: str = "hermes", dry_run: bool = False) -> Reconcile
     """
     if source == "all":
         return reconcile_all(dry_run=dry_run)
-    if source not in KNOWN_SOURCES:
-        raise ValueError(f"未知 source: {source}；已注册: {sorted(KNOWN_SOURCES)}")
-    if source not in KNOWN_AGENTS:
-        # 非 agent 白名单的 source（如 hermes 已在白名单，此处主要是防御）
-        pass
+    extractors = _known_extractors()
+    if source not in extractors:
+        raise ValueError(f"未知 source: {source}；已注册: {sorted(extractors)}")
 
-    extractor, _desc = KNOWN_SOURCES[source]
+    extractor = extractors[source]
     facts, extract_errors = extractor()
 
     report = ReconcileReport(source=source)
@@ -387,7 +235,7 @@ def reconcile_all(dry_run: bool = False) -> ReconcileReport:
     indexed_items 是各 source 前 5 条的合并摘要。
     """
     merged = ReconcileReport(source="all")
-    for src in KNOWN_SOURCES:
+    for src in _known_extractors():
         sub = reconcile_source(src, dry_run=dry_run)
         merged.indexed += sub.indexed
         merged.skipped += sub.skipped
@@ -434,17 +282,14 @@ def trace_fact(fact_id: str) -> dict:
     source = parts[0]
     session_id = parts[1] if len(parts) >= 2 else ""
 
-    # 已实现 trace_session 的 source 分发
-    _TRACE_DISPATCH = {
-        "opencode": "agenote.extract.opencode",
-        "zcode": "agenote.extract.zcode",
-        "omp": "agenote.extract.omp",
-    }
-    mod_name = _TRACE_DISPATCH.get(source)
-    if mod_name:
+    # trace 能力分发：Source.trace 由各 adapter 模块注册（opencode/zcode/omp）
+    _known_extractors()  # 确保 adapter 模块已 import（@register 已触发）
+    from agenote.extract.base import SOURCES
+
+    src_entry = SOURCES.get(source)
+    if src_entry is not None and src_entry.trace is not None:
         try:
-            mod = __import__(mod_name, fromlist=["trace_session"])
-            result = mod.trace_session(session_id)
+            result = src_entry.trace(session_id)
             result.setdefault("fact_id", fact_id)
             return result
         except Exception as e:
