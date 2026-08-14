@@ -7,7 +7,6 @@
 import json
 import os
 import re
-import shlex
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -501,80 +500,6 @@ def _upsert_card(index: dict, filepath: Path, ctx: "KBContext | None" = None) ->
             break
     else:
         index["cards"].insert(0, d)
-
-
-def _iter_search_targets(ctx: "KBContext | None" = None) -> list[Path]:
-    """返回全文检索目标文件。"""
-    ctx = ctx or default_context()
-    targets = []
-    if ctx.experiences.exists():
-        targets.extend(
-            f
-            for f in sorted(ctx.experiences.rglob("*.org"))
-            if f.is_file() and not f.is_symlink()
-        )
-    if ctx.memory_org.exists():
-        targets.append(ctx.memory_org)
-    return targets
-
-
-def _query_terms(query: str) -> list[str]:
-    """把用户查询拆成适合模糊检索的关键词。"""
-    try:
-        pieces = shlex.split(query)
-    except ValueError:
-        pieces = query.split()
-
-    terms = []
-    for piece in pieces:
-        for term in re.split(r"[/,，、]+", piece):
-            term = term.strip()
-            if term:
-                terms.append(term)
-    if not terms and query.strip():
-        terms = [query.strip()]
-
-    unique = []
-    seen = set()
-    for term in terms:
-        key = term.casefold()
-        if key not in seen:
-            seen.add(key)
-            unique.append(term)
-    return unique
-
-
-def _line_contains_any(line: str, needles: list[str], case_sensitive: bool) -> bool:
-    """判断一行是否包含任一关键词。"""
-    haystack = line if case_sensitive else line.casefold()
-    return any(needle in haystack for needle in needles)
-
-
-def _merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    """合并上下文行号范围。"""
-    if not ranges:
-        return []
-    ranges = sorted(ranges)
-    merged = [ranges[0]]
-    for start, end in ranges[1:]:
-        last_start, last_end = merged[-1]
-        if start <= last_end + 1:
-            merged[-1] = (last_start, max(last_end, end))
-        else:
-            merged.append((start, end))
-    return merged
-
-
-def _range_score(
-    lines: list[str], start: int, end: int, needles: list[str], case_sensitive: bool
-) -> int:
-    """计算上下文块与查询词的相关度。"""
-    block = "\n".join(lines[start : end + 1])
-    haystack = block if case_sensitive else block.casefold()
-    matched_terms = [needle for needle in needles if needle in haystack]
-    return len(matched_terms) * 100 + sum(
-        haystack.count(needle) for needle in matched_terms
-    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

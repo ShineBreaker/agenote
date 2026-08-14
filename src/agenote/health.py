@@ -21,7 +21,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from agenote.cards import _jaccard_similarity
+from agenote.curator import _jaccard_similarity
 from agenote.core import (
     STALE_DAYS,
     VALID_TYPES,

@@ -22,7 +22,7 @@ pi 的 ExtensionAPI 不提供 MCP 调用接口，TS 插件只能 execSync 外部
 import argparse
 
 from agenote.core import agenote_context, ensure_dirs
-from agenote.cards import cmd_curate
+from agenote.curator import cmd_curate
 from agenote.health import cmd_health
 
 # kb-agent review 任务的固定模板（提示 agent 执行会话后经验采集）

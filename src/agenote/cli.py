@@ -48,7 +48,6 @@ from agenote.cards import (
     cmd_add,
     cmd_get,
     cmd_list,
-    cmd_search,
     cmd_fields,
     cmd_tags,
     cmd_inbox,
@@ -57,6 +56,9 @@ from agenote.cards import (
     cmd_update,
     cmd_touch,
     cmd_merge,
+)
+from agenote.search import cmd_search
+from agenote.curator import (
     cmd_archive,
     cmd_restore,
     cmd_deduplicate,
