@@ -234,21 +234,21 @@ def _resolve_extractors() -> dict[str, Callable]:
     """返回 source → extract callable 的映射。
 
     优先从 SOURCES registry 读取（已迁移的 adapter），剩余走 legacy 导入
-    （尚未迁移的 crush/codex/claude/omp/pi 与 reconcile.extract_hermes）。
+    （尚未迁移的 crush/codex/claude 与 reconcile.extract_hermes）。
     随着每个源迁移进 SOURCES，legacy 分支自然收缩，最终可删除。
     """
     from agenote.reconcile import extract_hermes
 
     # 显式 import 带 @register 的 adapter，触发注册到 SOURCES
-    from agenote.extract import opencode, zcode  # noqa: F401
+    from agenote.extract import omp, opencode, zcode  # noqa: F401
 
     extractors: dict[str, Callable] = {name: src.extract for name, src in SOURCES.items()}
     registered = set(SOURCES)
 
     # legacy 适配器（尚未迁移进 SOURCES）
-    from agenote.extract import claude, codex, crush, omp, pi
+    from agenote.extract import claude, codex, crush
 
-    for mod, key in [(crush, "crush"), (codex, "codex"), (claude, "claude"), (omp, "omp"), (pi, "pi")]:
+    for mod, key in [(crush, "crush"), (codex, "codex"), (claude, "claude")]:
         if key not in registered:
             extractors[key] = getattr(mod, f"extract_{key}")
 

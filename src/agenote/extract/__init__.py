@@ -4,9 +4,9 @@
 """agenote.extract — cross-agent conversation extraction common layer.
 
 Provide XDG-aware path resolution, SQLite read-only open helper, title extractor.
-Each source (opencode/zcode/crush/codex/claude/omp/pi) lives in its own file.
+Each source (opencode/zcode/crush/codex/claude/omp) lives in its own file.
 
-已迁移到 framework 的 adapter（opencode/zcode）通过 @register 注册到
+已迁移到 framework 的 adapter（opencode/zcode/omp）通过 @register 注册到
 agenote.extract.base.SOURCES；编排（run_extract）与分发表（_resolve_extractors）
 现在由 base.py 拥有。本模块保留三个公共 helper 并 re-export 编排函数，
 保持对外接口（from agenote.extract import run_extract）不变。

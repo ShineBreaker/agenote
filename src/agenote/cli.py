@@ -345,7 +345,7 @@ def cmd_trace(args: argparse.Namespace, ctx=None) -> None:
         role = m.get("role", "?")
         ts = m.get("ts", "")
         print(f"\n--- [{role}] {ts} ---")
-        # opencode/zcode: parts 列表；pi: content 字段
+        # opencode/zcode: parts 列表；omp/其他: content 字段
         if "parts" in m:
             for p in m.get("parts", []):
                 ptype = p.get("type", "")
@@ -886,7 +886,7 @@ def main() -> None:
     reconcile_parser.add_argument(
         "--source",
         default="all",
-        help="hermes|opencode|crush|codex|claude|pi|zcode|all（默认 all）",
+        help="hermes|opencode|zcode|omp|crush|codex|claude|all（默认 all）",
     )
     reconcile_parser.add_argument("--dry-run", action="store_true", help="只预览不落盘")
     reconcile_parser.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
@@ -946,7 +946,7 @@ def main() -> None:
     extract_parser.add_argument(
         "--source",
         default="all",
-        help="opencode|crush|codex|claude|pi|hermes|zcode|all（默认 all）",
+        help="opencode|zcode|omp|crush|codex|claude|hermes|all（默认 all）",
     )
     extract_parser.add_argument(
         "--date",
