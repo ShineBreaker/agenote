@@ -19,14 +19,18 @@ from agenote.core import (
     ARCHIVE_THRESHOLD_DAYS,
     die,
     now,
+    _resolve_card,
+    default_context,
+)
+from agenote.orgserde import (
     parse_org_prop,
     read_org_title,
+)
+from agenote.index import (
     _load_index,
     _save_index,
     _upsert_card,
     _rebuild_index,
-    _resolve_card,
-    default_context,
 )
 
 

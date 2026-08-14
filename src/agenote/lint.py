@@ -28,6 +28,8 @@ from agenote.core import (
     VALID_ENTRY_TYPES,
     die,
     default_context,
+)
+from agenote.orgserde import (
     parse_org_prop,
 )
 from agenote.orgfmt import format_org

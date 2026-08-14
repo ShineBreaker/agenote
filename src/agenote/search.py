@@ -20,10 +20,12 @@ from pathlib import Path
 
 from agenote.core import (
     die,
-    parse_org_prop,
-    read_org_title,
     default_context,
     agenote_context,
+)
+from agenote.orgserde import (
+    parse_org_prop,
+    read_org_title,
 )
 
 

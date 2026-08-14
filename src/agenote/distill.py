@@ -25,7 +25,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from agenote.core import _load_index, agenote_context
+from agenote.core import agenote_context
+from agenote.index import _load_index
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 常量

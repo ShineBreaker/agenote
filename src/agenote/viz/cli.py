@@ -19,7 +19,8 @@ import time
 import urllib.request
 from pathlib import Path
 
-from agenote.core import KB_ROOT, agenote_context, default_context, _load_index
+from agenote.core import KB_ROOT, agenote_context, default_context
+from agenote.index import _load_index
 
 from agenote.viz.data import compute_stats, parse_filter, top_techs
 from agenote.viz.html import generate_html

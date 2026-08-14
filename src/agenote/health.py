@@ -25,12 +25,16 @@ from agenote.curator import _jaccard_similarity
 from agenote.core import (
     STALE_DAYS,
     VALID_TYPES,
-    _card_dict,
-    _load_index,
     default_context,
     ensure_dirs,
+)
+from agenote.orgserde import (
     parse_org_prop,
     read_org_title,
+)
+from agenote.index import (
+    _card_dict,
+    _load_index,
 )
 
 # 卡片陈旧阈值（时间维度）。区别于 core.STALE_DAYS（=30，memory 语义）。

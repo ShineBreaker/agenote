@@ -172,12 +172,14 @@ def cmd_inbox_archive(args: argparse.Namespace, ctx: "KBContext | None" = None) 
         ensure_dirs,
         timestamp_id,
         now,
+        die,
+        default_context as _default_context,
+    )
+    from agenote.index import (
         _load_index,
         _save_index,
         _rebuild_index,
         _upsert_card,
-        die,
-        default_context as _default_context,
     )
 
     ctx = ctx or _default_context()

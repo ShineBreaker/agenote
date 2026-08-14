@@ -322,28 +322,12 @@ def run_extract(
             shown = facts if effective_limit is None else facts[:effective_limit]
             truncated = len(facts) - len(shown) if effective_limit else 0
             src_file = out_path / f"{src}.org"
-            lines: list[str] = [
-                f"#+TITLE: {src} conversations",
-                f"#+DATE: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                f"#+SOURCE: {src}",
-                f"#+TOTAL: {len(shown)}",
-                f"#+FILTERED_BY_DATE: {date or 'no'}",
-                f"#+LIMIT: {effective_limit if effective_limit else 'unlimited'}",
-                "",
-            ]
-            for f in shown:
-                lines.append(f"* {f.title}")
-                lines.append(":PROPERTIES:")
-                lines.append(f":ID: {f.id}")
-                lines.append(f":CATEGORY: {f.category}")
-                lines.append(f":WEIGHT: {f.weight}")
-                if f.timestamp:
-                    lines.append(f":TIMESTAMP: {f.timestamp}")
-                lines.append(":END:")
-                lines.append("")
-                lines.append(f.content[:3000])
-                lines.append("")
-            src_file.write_text("\n".join(lines), encoding="utf-8")
+            from agenote.orgserde import render_facts_org  # lazy：避免包初始化链拉 orgserde
+
+            src_file.write_text(
+                render_facts_org(shown, source=src, date=date, limit=effective_limit),
+                encoding="utf-8",
+            )
             files.append(str(src_file))
             if truncated:
                 errors.append(f"{src}: 截断 {truncated} 条（达 limit={effective_limit}）")

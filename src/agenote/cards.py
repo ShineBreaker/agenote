@@ -13,7 +13,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from agenote.core import (  # noqa: E402
+from agenote.core import (
     KB_ROOT,
     KB_EXPERIENCES,
     KB_MEMORY,
@@ -31,18 +31,22 @@ from agenote.core import (  # noqa: E402
     now,
     today,
     timestamp_id,
-    parse_org_prop,
-    read_org_title,
-    _card_dict,
-    _load_index,
-    _save_index,
-    _upsert_card,
     _build_template,
     ensure_dirs,
     touch_card,
     _resolve_card,
     default_context,
     agenote_context,
+)
+from agenote.orgserde import (
+    parse_org_prop,
+    read_org_title,
+)
+from agenote.index import (
+    _card_dict,
+    _load_index,
+    _save_index,
+    _upsert_card,
 )
 
 

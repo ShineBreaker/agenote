@@ -37,12 +37,14 @@ from agenote.core import (
     die,
     now,
     today,
-    _load_index,
-    _save_index,
-    _rebuild_index,
     ensure_dirs,
     default_context,
     agenote_context,
+)
+from agenote.index import (
+    _load_index,
+    _save_index,
+    _rebuild_index,
 )
 from agenote.cards import (
     cmd_add,
