@@ -35,6 +35,9 @@ classifiers = [
 # 质量降级，故这里作为硬依赖确保开箱即用。
 dependencies = ["jieba"]
 
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
 [project.scripts]
 # console_scripts entry points — uv tool install / pip install 后产出：
 #   ~/.local/bin/agenote       主 CLI（29 子命令）
