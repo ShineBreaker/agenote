@@ -22,6 +22,7 @@ try:
 except importlib.metadata.PackageNotFoundError:
     _VERSION = "unknown"
 
+from agenote import config
 from agenote.core import (
     KB_ROOT,
     KB_EXPERIENCES,
@@ -34,6 +35,7 @@ from agenote.core import (
     VALID_ENTRY_TYPES,
     VALID_STATUSES,
     STALE_DAYS,
+    DEDUP_THRESHOLD,
     die,
     now,
     today,
@@ -71,14 +73,16 @@ from agenote.inbox_archive import cmd_inbox_archive
 from agenote.memory import cmd_memory
 from agenote.lint import cmd_lint
 from agenote.orgfmt import cmd_format
-from agenote.health import cmd_health, cmd_gaps
+from agenote.health import CARD_STALE_DAYS, cmd_health, cmd_gaps
 from agenote.viz.cli import add_viz_parser, cmd_viz
 
 # 跨 agent 协同 4 件套（lazy import 到 wrapper 内，避免顶层拉起 sqlite/JSONL 依赖）
 from agenote.reconcile import reconcile_source, trace_fact
-from agenote.dream import run_dream
-from agenote.distill import run_distill
+from agenote.dream import DEFAULT_LIMIT as DEFAULT_DREAM_LIMIT, run_dream
+from agenote.dream import DEFAULT_WINDOW_DAYS as DEFAULT_DREAM_WINDOW_DAYS
+from agenote.distill import DEFAULT_WINDOW_DAYS as DEFAULT_DISTILL_WINDOW_DAYS, run_distill
 from agenote.extract import run_extract
+from agenote.extract.base import EXTRACT_LIMIT
 
 # 本 CLI 默认操作 agenote 域（~/Documents/Org/agenote/），与 MCP server 对齐。
 # --domain human 切到人类知识库根（~/Documents/Org/）。
@@ -118,7 +122,7 @@ def cmd_init(args: argparse.Namespace, ctx=None) -> None:
         if not git_bin:
             print("提示: 未找到 git，跳过版本控制初始化。")
             print(
-                f"安装 git 后可手动运行: cd {root} && git init && git add -A && git commit -m 'agenote init'"
+                f"安装 git 后可手动运行: cd {root} && git init && git add -A && git commit -m 'chore(init): 初始化知识库'"
             )
             return
 
@@ -143,7 +147,7 @@ def cmd_init(args: argparse.Namespace, ctx=None) -> None:
         # git init + 初始 commit
         _run_git(["init"], cwd=root)
         _run_git(["add", ".gitignore", "MEMORY.org", "inbox.org"], cwd=root)
-        _run_git(["commit", "-m", "agenote init: 初始化知识库"], cwd=root)
+        _run_git(["commit", "-m", "chore(init): 初始化知识库"], cwd=root)
         print("git 仓库已初始化，初始 commit 已创建。")
 
 
@@ -157,7 +161,7 @@ def cmd_commit(args: argparse.Namespace, ctx=None) -> None:
         （~/Documents/Org/），用 git rev-parse --show-toplevel 找真实根。
       - **commit.template**：默认走仓库 commit.gpgsign + commit.template 配置，
         不强制 --no-gpg-sign（除非显式 --no-gpg-sign）。
-      - **message 规范**：建议用「策展: (组件) 描述」前缀（对齐 gitmessage 模板），
+      - **message 规范**：建议用 Conventional Commits 前缀（chore(curate)/feat(card) 等），
         但不强校验——agent 可传任意 message。
     """
     ctx = ctx or default_context()
@@ -181,19 +185,9 @@ def cmd_commit(args: argparse.Namespace, ctx=None) -> None:
     if args.all:
         add_targets: list[str] = ["-A"]
     else:
-        # 策展产物清单（相对 repo_root）：experiences/ + index.json +
-        # conversations/ + kb-viz.html。用 git ls-files --others + 已跟踪变更交集。
-        # 简化实现：显式列出策展相关路径，git add 对不存在的路径会报错，故逐个探测。
-        candidates = [
-            "agenote/experiences",
-            "agenote/index.json",
-            "agenote/.reconcile",
-            "conversations",
-            "kb-viz.html",
-            "MEMORY.org",
-            "agenote/MEMORY.org",
-            "agenda",
-        ]
+        # 策展产物清单（相对 repo_root）：由 config [commit].curated_paths 提供，
+        # 默认跟随 paths.agenote_dir 动态生成。git add 对不存在的路径会报错，故逐个探测。
+        candidates = [str(c) for c in config.get("commit", "curated_paths")]
         add_targets = [c for c in candidates if (repo_root_path / c).exists()]
         if not add_targets:
             print("未发现策展产物路径（experiences/index.json/conversations 等）。")
@@ -224,6 +218,28 @@ def cmd_commit(args: argparse.Namespace, ctx=None) -> None:
         commit_cmd = ["-c", "commit.gpgsign=false"] + commit_cmd
     _run_git(commit_cmd, cwd=repo_root_path)
     print(f"已提交 ({ctx.name} @ {repo_root}): {message}")
+
+
+def cmd_config(args: argparse.Namespace, ctx=None) -> None:
+    """配置管理：init 生成带注释模板 / show 打印当前生效配置及来源。"""
+    if args.config_cmd == "init":
+        if config.CONFIG_PATH.exists():
+            die(f"配置文件已存在: {config.CONFIG_PATH}（不覆盖；如需重新生成请先手动删除）")
+        config.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        config.CONFIG_PATH.write_text(config.render_template(), encoding="utf-8")
+        print(f"已生成配置模板: {config.CONFIG_PATH}")
+        print("全部键默认注释掉——取消注释需要定制的键即可启用。")
+        print("查看当前生效配置: agenote config show")
+    elif args.config_cmd == "show":
+        current_section = None
+        for key, val, src in config.iter_resolved():
+            # 节名 = SCHEMA 节（如 "extract.sources"），键名 = 最后一段
+            section, name = key.rsplit(".", 1)
+            if section != current_section:
+                print(f"[{section}]")
+                current_section = section
+            print(f"  {name} = {val!r}  ({src})")
+        print(f"\n配置文件: {config.CONFIG_PATH}")
 
 
 def _run_git(args: list[str], cwd: Path) -> str:
@@ -501,11 +517,15 @@ def print_help() -> None:
             agenote init            创建目录结构 + git 仓库 + 初始 commit
             agenote init --no-git   仅创建目录结构，跳过 git
 
+  config   配置管理（~/.config/agenote/config.toml，优先级 env > 文件 > 默认）
+            agenote config init     生成带注释的配置模板
+            agenote config show     打印当前生效配置及来源（env/file/default）
+
   commit   提交知识库变更（默认只 add 策展产物：experiences/index.json/conversations/kb-viz.html）
-            agenote commit -m "策展: (agenote) 新增 K 张 / 更新 M 张"
+            agenote commit -m "chore(curate): 新增 K 张 / 更新 M 张"
             agenote commit --all -m "..."              提交全部变更（git add -A）
             agenote commit --no-gpg-sign -m "..."      跳过 GPG 签名（cron 等无 pinentry 场景）
-            message 建议「策展: (组件) 描述」前缀，对齐 ~/.config/git/gitmessage 模板
+            message 建议 Conventional Commits 格式（chore(curate)/feat(card) 前缀）
 
   touch    更新卡片时间戳
             agenote touch <卡片ID>              更新 LAST_USED + LAST_VERIFIED
@@ -523,7 +543,7 @@ def print_help() -> None:
             agenote restore <卡片ID> [--status stable]
 
   deduplicate 检测重复卡片
-            agenote deduplicate [--threshold 0.7] [--json]
+            agenote deduplicate [--threshold {DEDUP_THRESHOLD}] [--json]
 
   review   审查卡片
             agenote review <卡片ID> [--fix]
@@ -532,18 +552,18 @@ def print_help() -> None:
             agenote health [--duplicates] [--quality]
 
   gaps     知识空白检测（类别×类型矩阵）
-            agenote gaps [--stale-days 90] [--json]
+            agenote gaps [--stale-days {CARD_STALE_DAYS}] [--json]
 
   curate   一键策展（健康检查+权重重分配+去重+归档陈旧+重建索引）
-            agenote curate [--threshold 0.7]
-            策展后建议运行: agenote commit -m "策展: <一句话总结>"
+            agenote curate [--threshold {DEDUP_THRESHOLD}]
+            策展后建议运行: agenote commit -m "chore(curate): <一句话总结>"
 
   reconcile 跨 agent memory 只读 reconcile（抽取事实到 .reconcile/，不写回源）
             agenote reconcile [--source all] [--dry-run]
             agenote reconcile --source hermes --dry-run
 
   dream    从 reconcile 事实启发式提炼候选新卡片（只读，不调 LLM，零候选即成功）
-            agenote dream [--window-days 90] [--offset N] [--limit N]
+            agenote dream [--window-days {DEFAULT_DREAM_WINDOW_DAYS}] [--offset N] [--limit N]
             候选含 source_trace 字段——用 trace 命令回查完整原始对话
 
   trace    回查 dream 候选的原始完整对话（溯源，不截断，含工具调用/推理/补丁）
@@ -551,7 +571,7 @@ def print_help() -> None:
             --id 取自 dream 候选的 source_trace（如 opencode:ses_x:msg_y）
 
   distill  工作流蒸馏：把反复使用的经验打包成 skill 草稿（写 .distill/，不进 skills/）
-            agenote distill [--window-days 30] [--dry-run]
+            agenote distill [--window-days {DEFAULT_DISTILL_WINDOW_DAYS}] [--dry-run]
 
   extract  跨 agent 对话抽取为 Org 文件（输出到 conversations/<date>/）
             agenote extract [--source all] [--date YYYY-MM-DD] [--limit N] [--dry-run]
@@ -641,10 +661,23 @@ def main() -> None:
     # ── search ────────────────────────────────────────────────────────────
     search_parser = subparsers.add_parser("search", help="全文检索")
     search_parser.add_argument("query", help="关键词；默认按多关键词相关度检索")
-    search_parser.add_argument("--context", type=int, default=3, help="上下文行数")
-    search_parser.add_argument("--limit", type=int, default=20, help="最多显示的文件数")
     search_parser.add_argument(
-        "--max-blocks", type=int, default=4, help="每个文件最多显示的上下文块数"
+        "--context",
+        type=int,
+        default=int(config.get("search", "context_lines")),
+        help="上下文行数",
+    )
+    search_parser.add_argument(
+        "--limit",
+        type=int,
+        default=int(config.get("search", "limit")),
+        help="最多显示的文件数",
+    )
+    search_parser.add_argument(
+        "--max-blocks",
+        type=int,
+        default=int(config.get("search", "max_blocks")),
+        help="每个文件最多显示的上下文块数",
     )
     search_parser.add_argument(
         "--all-terms", action="store_true", help="只显示包含所有关键词的文件"
@@ -792,7 +825,7 @@ def main() -> None:
         "-m",
         "--message",
         required=True,
-        help="commit message（建议「策展: (组件) 描述」前缀）",
+        help="commit message（建议 Conventional Commits 格式，如 chore(curate): …）",
     )
     commit_parser.add_argument(
         "--all",
@@ -848,7 +881,12 @@ def main() -> None:
 
     # ── deduplicate ─────────────────────────────────────────────────────────
     dedup_parser = subparsers.add_parser("deduplicate", help="检测重复卡片")
-    dedup_parser.add_argument("--threshold", type=float, default=0.7, help="相似度阈值")
+    dedup_parser.add_argument(
+        "--threshold",
+        type=float,
+        default=DEDUP_THRESHOLD,
+        help=f"相似度阈值（默认 {DEDUP_THRESHOLD}）",
+    )
     dedup_parser.add_argument("--json", action="store_true", help="JSON 输出")
     dedup_parser.add_argument("--merge", action="store_true", help="自动合并")
 
@@ -871,13 +909,19 @@ def main() -> None:
         "curate", help="一键策展（健康+权重+去重+归档陈旧+重建索引）"
     )
     curate_parser.add_argument(
-        "--threshold", type=float, default=0.7, help="去重相似度阈值"
+        "--threshold",
+        type=float,
+        default=DEDUP_THRESHOLD,
+        help=f"去重相似度阈值（默认 {DEDUP_THRESHOLD}）",
     )
 
     # ── gaps ────────────────────────────────────────────────────────────────
     gaps_parser = subparsers.add_parser("gaps", help="知识空白检测（类别×类型矩阵）")
     gaps_parser.add_argument(
-        "--stale-days", type=int, default=90, help="陈旧阈值（天，默认 90）"
+        "--stale-days",
+        type=int,
+        default=CARD_STALE_DAYS,
+        help=f"陈旧阈值（天，默认 {CARD_STALE_DAYS}）",
     )
     gaps_parser.add_argument("--json", action="store_true", help="JSON 格式输出")
 
@@ -901,7 +945,10 @@ def main() -> None:
         help="从 reconcile 事实启发式提炼候选新卡片（只读，不调 LLM，不写 KB）",
     )
     dream_parser.add_argument(
-        "--window-days", type=int, default=90, help="回看窗口（天，默认 90；0=不过滤）"
+        "--window-days",
+        type=int,
+        default=DEFAULT_DREAM_WINDOW_DAYS,
+        help=f"回看窗口（天，默认 {DEFAULT_DREAM_WINDOW_DAYS}；0=不过滤）",
     )
     dream_parser.add_argument(
         "--offset",
@@ -910,7 +957,10 @@ def main() -> None:
         help="跳过前 N 个候选（多轮抽取用）。注意排序随索引更新漂移，见 report.snapshot_hash",
     )
     dream_parser.add_argument(
-        "--limit", type=int, default=5, help="本次最多返回 N 个候选（默认 5）"
+        "--limit",
+        type=int,
+        default=DEFAULT_DREAM_LIMIT,
+        help=f"本次最多返回 N 个候选（默认 {DEFAULT_DREAM_LIMIT}）",
     )
     dream_parser.add_argument(
         "--dry-run",
@@ -936,7 +986,10 @@ def main() -> None:
         "distill", help="工作流蒸馏：把反复使用的经验打包成 skill 草稿"
     )
     distill_parser.add_argument(
-        "--window-days", type=int, default=30, help="回看窗口（天）"
+        "--window-days",
+        type=int,
+        default=DEFAULT_DISTILL_WINDOW_DAYS,
+        help=f"回看窗口（天，默认 {DEFAULT_DISTILL_WINDOW_DAYS}）",
     )
     distill_parser.add_argument(
         "--dry-run", action="store_true", default=True, help="只预览不写 .distill/"
@@ -961,7 +1014,10 @@ def main() -> None:
         "--output-dir", default="", help="输出目录（默认 conversations/<date>/）"
     )
     extract_parser.add_argument(
-        "--limit", type=int, default=500, help="每源最大抽取条数（默认 500；0=不限制）"
+        "--limit",
+        type=int,
+        default=EXTRACT_LIMIT,
+        help=f"每源最大抽取条数（默认 {EXTRACT_LIMIT}；0=不限制）",
     )
     extract_parser.add_argument(
         "--dry-run",
@@ -970,6 +1026,18 @@ def main() -> None:
         help="只预览不落盘（默认会真写盘；传 --dry-run 才不写）",
     )
     extract_parser.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+
+    # ── config ──────────────────────────────────────────────────────────────
+    config_parser = subparsers.add_parser(
+        "config", help="配置管理（config.toml 生成与查看）"
+    )
+    config_sub = config_parser.add_subparsers(dest="config_cmd", required=True)
+    config_sub.add_parser(
+        "init", help=f"生成带注释的配置模板到 {config.CONFIG_PATH}"
+    )
+    config_sub.add_parser(
+        "show", help="打印当前生效配置及来源（env / file / default）"
+    )
 
     args = parser.parse_args()
 
@@ -995,6 +1063,7 @@ def main() -> None:
         "update": cmd_update,
         "init": cmd_init,
         "commit": cmd_commit,
+        "config": cmd_config,
         # 新命令
         "touch": cmd_touch,
         "merge": cmd_merge,
@@ -1024,7 +1093,7 @@ def main() -> None:
             args._cross_domain = True
         else:
             ctx = agenote_context()
-        if ctx is not None and args.command != "init":
+        if ctx is not None and args.command not in ("init", "config"):
             ensure_dirs(ctx)
         commands[args.command](args, ctx)
     else:
