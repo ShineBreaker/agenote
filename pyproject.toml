@@ -30,17 +30,21 @@ classifiers = [
     "Topic :: Text Processing :: Markup :: Markdown",
     "Topic :: Utilities",
 ]
-# 唯一硬依赖：jieba 中文分词（dream 子命令用于启发式候选发现）。
-# jieba 是纯 Python 包；找不到时 dream 会回退到 2-gram 兜底分词器，但中文分词
-# 质量降级，故这里作为硬依赖确保开箱即用。
-dependencies = ["jieba"]
+# 硬依赖仅两个：
+# - jieba 中文分词（dream 子命令用于启发式候选发现）。纯 Python 包；找不到时
+#   dream 会回退到 2-gram 兜底分词器，但中文分词质量降级，故确保开箱即用。
+# - tomli 仅 Python 3.10 需要（3.11+ 内置 tomllib），解析 config.toml 用。
+dependencies = [
+    "jieba",
+    "tomli>=2.0; python_version < '3.11'",
+]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
 
 [project.scripts]
 # console_scripts entry points — uv tool install / pip install 后产出：
-#   ~/.local/bin/agenote       主 CLI（29 子命令）
+#   ~/.local/bin/agenote       主 CLI
 #   ~/.local/bin/agenote-cli   轻量 shim（omp-hooks 扩展调用）
 #   ~/.local/bin/orgfmt        org-mode 格式化 CLI
 agenote = "agenote.cli:main"
@@ -60,9 +64,12 @@ packages = ["src/agenote"]
 [tool.hatch.build.targets.sdist]
 include = [
     "src/agenote",
-    "scripts",
     "docs",
+    "tests",
+    ".github",
     "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
     "LICENSE",
     "pyproject.toml",
 ]
