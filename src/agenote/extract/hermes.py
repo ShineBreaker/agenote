@@ -16,11 +16,19 @@ import re
 import sqlite3
 from pathlib import Path
 
-from agenote.extract import extract_title
+from agenote import config
+from agenote.extract import extract_title, resolve_xdg_path
 from agenote.extract.base import register
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT, ReconciledFact
 
-HERMES_DB = Path.home() / ".local" / "share" / "hermes" / "memory_store.db"
+# 与其余 6 源统一：env HERMES_DB > config [extract.sources].hermes_db > 默认路径
+HERMES_DB = resolve_xdg_path(
+    "HERMES_DB", "~/.local/share/hermes/memory_store.db"
+)
+
+# hermes trust→weight 公式参数（config [weights] 覆盖）
+_TRUST_BASE = float(config.get("weights", "default_trust"))
+_WEIGHT_CAP = float(config.get("weights", "hermes_weight_cap"))
 
 # hermes category → kb category 映射（目前 hermes 只有 general/project/tool）
 _HERMES_CATEGORY_MAP = {
@@ -58,9 +66,9 @@ def _hermes_to_fact(row: sqlite3.Row) -> ReconciledFact:
     fact_id = row["fact_id"]
     content = row["content"] or ""
     category = _HERMES_CATEGORY_MAP.get(row["category"] or "general", "general")
-    trust = float(row["trust_score"] or 0.5)
-    # weight：trust 0.5 → 0.7；trust 越高 weight 越高（封顶 1.0，不超过 KB 卡片）
-    weight = round(min(1.0, RECONCILE_DEFAULT_WEIGHT + (trust - 0.5)), 2)
+    trust = float(row["trust_score"] or _TRUST_BASE)
+    # weight：trust 基准 → reconcile_default；trust 越高 weight 越高（封顶，不超过 KB 卡片）
+    weight = round(min(_WEIGHT_CAP, RECONCILE_DEFAULT_WEIGHT + (trust - _TRUST_BASE)), 2)
     tags_raw = row["tags"] or ""
     tags = [t.strip() for t in re.split(r"[,，]", tags_raw) if t.strip()]
     return ReconciledFact(

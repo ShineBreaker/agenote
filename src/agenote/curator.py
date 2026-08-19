@@ -13,7 +13,11 @@ import json
 import re
 from datetime import datetime
 
+from agenote import config
 from agenote.core import (
+    DEDUP_CATEGORY_BONUS,
+    DEDUP_TECH_BONUS,
+    DEDUP_THRESHOLD,
     VALID_STATUSES,
     STALE_DAYS,
     ARCHIVE_THRESHOLD_DAYS,
@@ -32,6 +36,9 @@ from agenote.index import (
     _upsert_card,
     _rebuild_index,
 )
+
+# 权重重分配的变化判定 epsilon（小于此差异跳过，减少无意义 churn）
+WEIGHT_EPSILON = float(config.get("weights", "weight_epsilon"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -220,7 +227,7 @@ def _jaccard_similarity(s1: str, s2: str) -> float:
 def cmd_deduplicate(args: argparse.Namespace, ctx=None) -> None:
     """基于标题相似度和 category/tech 匹配检测重复卡片。"""
     ctx = ctx or default_context()
-    threshold = args.threshold or 0.7
+    threshold = args.threshold or DEDUP_THRESHOLD
     index = _load_index(ctx)
     cards_list = [c for c in index["cards"] if c.get("status") != "archived"]
 
@@ -230,9 +237,9 @@ def cmd_deduplicate(args: argparse.Namespace, ctx=None) -> None:
             a, b = cards_list[i], cards_list[j]
             sim = _jaccard_similarity(a.get("title", ""), b.get("title", ""))
             if a.get("category") == b.get("category"):
-                sim += 0.15
+                sim += DEDUP_CATEGORY_BONUS
             if a.get("tech") and a.get("tech") == b.get("tech"):
-                sim += 0.1
+                sim += DEDUP_TECH_BONUS
             sim = min(sim, 1.0)
             if sim >= threshold:
                 pairs.append((a, b, sim))
@@ -391,7 +398,7 @@ def cmd_curate(args: argparse.Namespace, ctx=None) -> None:
             except (ValueError, IndexError):
                 pass
         new_weight = round(base_weight * usage_factor * stale_factor, 3)
-        if abs(new_weight - card.get("weight", base_weight)) > 0.001:
+        if abs(new_weight - card.get("weight", base_weight)) > WEIGHT_EPSILON:
             reassigned += 1
         card["weight"] = new_weight
     _save_index(index, ctx)

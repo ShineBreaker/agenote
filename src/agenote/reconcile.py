@@ -32,16 +32,21 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from agenote.core import KB_ROOT, is_noise_fact
+from agenote.core import AGENOTE_ROOT, is_noise_fact
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT, ReconciledFact
+from agenote import config
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # reconcile 索引落盘位置（与 experiences/ 平级，独立目录，绝不混入权威 KB）
 # ═══════════════════════════════════════════════════════════════════════════════
 
-AGENOTE_ROOT = KB_ROOT / "agenote"
-RECONCILE_DIR = AGENOTE_ROOT / ".reconcile"
+_reconcile_cfg = str(config.get("paths", "reconcile_dir"))
+RECONCILE_DIR = (
+    config.get_path("paths", "reconcile_dir") if _reconcile_cfg else AGENOTE_ROOT / ".reconcile"
+)
 RECONCILE_INDEX = RECONCILE_DIR / "index.json"
+REPORT_ITEMS = int(config.get("reconcile", "report_items"))  # 报告摘要条数
+REPORT_ITEMS_ALL = int(config.get("reconcile", "report_items_all"))  # --all 合并报告每源条数
 
 # reconcile 来源卡片默认权重（低于 KB 卡片 1.0/1.5，避免淹没权威经验）
 # 定义已迁至 agenote.extract.models（adapter/framework/reconcile 三方共享）
@@ -213,7 +218,7 @@ def reconcile_source(source: str = "hermes", dry_run: bool = False) -> Reconcile
     report.indexed = len(new_entries)
     report.indexed_items = [
         {"id": e["id"], "title": e["title"], "category": e["category"]}
-        for e in new_entries[:10]  # 报告里只放前 10 条摘要
+        for e in new_entries[:REPORT_ITEMS]  # 报告里只放前 N 条摘要
     ]
 
     if not dry_run:
@@ -242,7 +247,7 @@ def reconcile_all(dry_run: bool = False) -> ReconcileReport:
         merged.pruned += sub.pruned
         merged.errors += sub.errors
         merged.error_details.extend(sub.error_details)
-        merged.indexed_items.extend(sub.indexed_items[:5])
+        merged.indexed_items.extend(sub.indexed_items[:REPORT_ITEMS_ALL])
     return merged
 
 

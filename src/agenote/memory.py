@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from agenote.core import (
+    PROJECT_CURATE_DAYS,
     STALE_DAYS,
     MEMORY_ARCHIVE_DAYS,
     die,
@@ -781,8 +782,10 @@ def _memory_project_auto_update(name, ctx=None):
             date_str = updated_str.strip("[]")
             updated_date = datetime.strptime(date_str, "%Y-%m-%d").date()
             delta = (datetime.now().date() - updated_date).days
-            if delta > 60:
-                summary.append(f"  上次更新距今 {delta} 天 (>60)，建议策展")
+            if delta > PROJECT_CURATE_DAYS:
+                summary.append(
+                    f"  上次更新距今 {delta} 天 (>{PROJECT_CURATE_DAYS})，建议策展"
+                )
             else:
                 summary.append(f"  距上次更新 {delta} 天，尚在窗口内")
         except ValueError:

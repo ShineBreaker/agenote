@@ -12,7 +12,13 @@ import sys
 from collections import Counter
 from datetime import datetime
 
-from agenote.core import ARCHIVE_THRESHOLD_DAYS, KB_ROOT
+from agenote.core import (
+    AGENT_DEFAULT_WEIGHT,
+    AGENOTE_ROOT,
+    ARCHIVE_THRESHOLD_DAYS,
+    HUMAN_DEFAULT_WEIGHT,
+    KB_ROOT,
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # --filter 字段白名单（与索引卡片字段对齐）
@@ -109,7 +115,10 @@ def normalize_cards(cards: list[dict]) -> list[dict]:
         # 三域区分字段（缺失时给默认值，前端可统一处理）
         nc.setdefault("domain", "human")
         nc.setdefault("source_agent", "")
-        nc.setdefault("weight", 1.5 if nc["domain"] == "human" else 1.0)
+        nc.setdefault(
+            "weight",
+            HUMAN_DEFAULT_WEIGHT if nc["domain"] == "human" else AGENT_DEFAULT_WEIGHT,
+        )
         nc.setdefault("usage_count", 0)
         nc.setdefault("status", "")
         out.append(nc)
@@ -199,7 +208,7 @@ def render_card_body(file_relpath: str, domain: str = "human") -> str:
     """
     if not file_relpath:
         return ""
-    root = KB_ROOT / "agenote" if domain == "agenote" else KB_ROOT
+    root = AGENOTE_ROOT if domain == "agenote" else KB_ROOT
     p = root / file_relpath
     if not p.exists() or p.suffix != ".org":
         return ""

@@ -25,18 +25,17 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from agenote.core import agenote_context
+from agenote import config
+from agenote.core import DISTILL_DIR, agenote_context
 from agenote.index import _load_index
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 常量
+# 常量（默认值见 config.py SCHEMA [distill] / [paths] 节）
 # ═══════════════════════════════════════════════════════════════════════════════
 
-AGENOTE_ROOT = Path.home() / "Documents" / "Org" / "agenote"
-DISTILL_DIR = AGENOTE_ROOT / ".distill"
-
-MIN_CLUSTER_SIZE = 2  # 同 category+tech 至少 N 张卡片才聚类为候选（evidence）
-MIN_USAGE_FOR_ASCEND = 2  # usage_count >= N 视为"反复使用"
+MIN_CLUSTER_SIZE = int(config.get("distill", "min_cluster_size"))  # 同 category+tech 至少 N 张才聚类
+MIN_USAGE_FOR_ASCEND = int(config.get("distill", "min_usage_for_ascend"))  # usage_count >= N 视为"反复使用"
+DEFAULT_WINDOW_DAYS = int(config.get("distill", "window_days"))  # 回看窗口（天）
 ASCENDED_TYPE = "ascended"  # 经多轮试错验证的卡片类型
 
 
@@ -222,7 +221,7 @@ def _gather_candidates(cards: list[dict]) -> list[tuple[DistillCandidate, list[d
     return candidates
 
 
-def run_distill(window_days: int = 30, dry_run: bool = True) -> DistillReport:
+def run_distill(window_days: int = DEFAULT_WINDOW_DAYS, dry_run: bool = True) -> DistillReport:
     """跑一次 distill（workflow packaging）。
 
     Args:

@@ -12,9 +12,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from agenote import config
+
 # 自家 agent（opencode/zcode/omp/hermes）的统一检索权重基准；
-# 外部源（codex/claude/crush …）在此基础上减 0.1。
-RECONCILE_DEFAULT_WEIGHT = 0.7
+# 外部源（codex/claude/crush …）在此基础上加 external_delta（默认 -0.1）。
+RECONCILE_DEFAULT_WEIGHT = float(config.get("weights", "reconcile_default"))
 
 
 @dataclass

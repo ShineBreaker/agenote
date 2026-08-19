@@ -15,6 +15,11 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
+from agenote import config
+
+# Org 渲染正文截断（config [extract].trunc_org_render 覆盖）
+ORG_RENDER_TRUNC = int(config.get("extract", "trunc_org_render"))
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 读：PROPERTIES / 标题解析
@@ -71,7 +76,7 @@ def render_facts_org(
 
     原 extract/base.py run_extract 的内联渲染段；输出格式保持逐字节兼容：
     #+TITLE/#+DATE/#+SOURCE/#+TOTAL/#+FILTERED_BY_DATE/#+LIMIT 头 + 每条 fact
-    一个一级条目（PROPERTIES + 截断 3000 字的正文）。
+    一个一级条目（PROPERTIES + 截断 ORG_RENDER_TRUNC 字的正文）。
     """
     lines: list[str] = [
         f"#+TITLE: {source} conversations",
@@ -92,6 +97,6 @@ def render_facts_org(
             lines.append(f":TIMESTAMP: {f.timestamp}")
         lines.append(":END:")
         lines.append("")
-        lines.append(f.content[:3000])
+        lines.append(f.content[:ORG_RENDER_TRUNC])
         lines.append("")
     return "\n".join(lines)

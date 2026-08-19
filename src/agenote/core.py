@@ -5,7 +5,6 @@
 """kb_core — 知识库核心模块：常量、工具函数、索引管理、Org 解析、搜索辅助"""
 
 import json
-import os
 import re
 import sys
 from collections import Counter, defaultdict
@@ -13,14 +12,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from agenote import config
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# 配置常量 — 所有可变参数集中在此，修改时只需改这里
+# 配置常量 — 默认值与覆盖入口见 agenote/config.py SCHEMA 与 ~/.config/agenote/config.toml
+# 优先级：环境变量 > config.toml > SCHEMA 默认
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── 路径 ──────────────────────────────────────────────────────────────────────
-KB_ROOT = Path(
-    os.environ.get("KB_ROOT", str(Path.home() / "Documents" / "Org"))
-)  # 知识库根目录
+KB_ROOT = config.get_path("paths", "kb_root")  # 知识库根目录
+AGENOTE_DIR_NAME = str(config.get("paths", "agenote_dir"))  # agent 域子目录名
 KB_EXPERIENCES = KB_ROOT / "experiences"  # 经验卡片存储目录
 KB_MEMORY = KB_ROOT / "MEMORY.org"  # 记忆文件（feedback/project/reference）
 KB_MEMORIES = KB_ROOT / "memories"  # 记忆子目录
@@ -28,6 +29,16 @@ KB_PROJECTS = KB_MEMORIES / "projects"  # 项目记忆文件目录
 KB_INDEX = KB_ROOT / "index.json"  # JSON 查询索引
 KB_INBOX = KB_ROOT / "inbox.org"  # 快速捕获收件箱
 KB_MEMORY_ARCHIVE = KB_ROOT / "MEMORY-ARCHIVE.org"  # feedback 归档文件
+# 运行时产物目录（空配置 = 默认挂载位置；均不进 experiences/）
+_conv_root = str(config.get("paths", "conversations_root"))
+CONVERSATIONS_ROOT = (  # extract 对话输出（extract/base.py 用）
+    config.get_path("paths", "conversations_root") if _conv_root else KB_ROOT / "conversations"
+)
+AGENOTE_ROOT = KB_ROOT / AGENOTE_DIR_NAME  # agent 域根（reconcile/distill/viz 共用）
+_distill_cfg = str(config.get("paths", "distill_dir"))
+DISTILL_DIR = (  # distill skill 草稿目录（agenote.distill 用）
+    config.get_path("paths", "distill_dir") if _distill_cfg else AGENOTE_ROOT / ".distill"
+)
 
 VALID_TYPES = {"debug", "refactor", "research", "workflow", "feature", "config"}
 VALID_OWNERS = {"human", "ai", "collab"}
@@ -51,17 +62,18 @@ KNOWN_AGENTS = {
 
 # AGENOTE_AGENT 环境变量名（各 agent 的 MCP 启动入口需设置）
 AGENT_ENV_VAR = "AGENOTE_AGENT"
-# 兜底默认值：未设置环境变量时（如人类直接 kb add）记为 omp，保持向后兼容
-DEFAULT_AGENT = "omp"
+# 兜底默认值：未设置环境变量时（如人类直接 kb add）记为 omp，保持向后兼容。
+# strip + or 兜底：配置/env 给了纯空白时回落 "omp"，避免 SOURCE_AGENT 写成空白串。
+DEFAULT_AGENT = str(config.get("agent", "default_name")).strip() or "omp"
 
 
 def default_agent() -> str:
     """读取当前调用者所属 agent 名。
 
-    优先取 AGENOTE_AGENT 环境变量；缺失时回退 DEFAULT_AGENT（"omp"）。
+    优先取 AGENOTE_AGENT 环境变量；缺失时回退配置 [agent].default_name（默认 "omp"）。
     空/只空白视为未设置（回退默认值），避免 SOURCE_AGENT 写成空串。
     """
-    val = os.environ.get(AGENT_ENV_VAR, "").strip()
+    val = str(config.get("agent", "default_name")).strip()
     return val or DEFAULT_AGENT
 
 
@@ -83,7 +95,8 @@ NOISE_MARKERS = re.compile(
     r"load_skills|checkpoint|MANDATORY",
     re.IGNORECASE,
 )
-NOISE_MIN_LEN = 15  # <15 字符的事实视为无信息量（沿用 dream.py 旧 MIN_FACT_LEN）
+NOISE_MIN_LEN = int(config.get("reconcile", "min_fact_len"))  # <此长度的事实视为无信息量
+NOISE_SCAN_CHARS = int(config.get("reconcile", "noise_scan_chars"))  # 噪声标记扫描窗口（USER 提问区）
 
 
 def is_noise_fact(fact: dict) -> bool:
@@ -97,7 +110,7 @@ def is_noise_fact(fact: dict) -> bool:
     判定规则（任一即噪声）：
     1. content+title 总长 < NOISE_MIN_LEN（信息量不足）
     2. title 本身命中 NOISE_MARKERS（纯元消息标题，如 `[search-mode]`）
-    3. content 的**开头 250 字符**（USER 提问区）命中 ≥1 个 NOISE_MARKERS
+    3. content 的**开头 NOISE_SCAN_CHARS 字符**（USER 提问区）命中 ≥1 个 NOISE_MARKERS
        ——真实对话的 marker 常出现在 assistant 回复中段（被保留），只有用户提问
        本身是元消息时才判噪。
     """
@@ -107,19 +120,18 @@ def is_noise_fact(fact: dict) -> bool:
         return True
     if NOISE_MARKERS.search(title):
         return True
-    return bool(NOISE_MARKERS.search(content[:250]))
+    return bool(NOISE_MARKERS.search(content[:NOISE_SCAN_CHARS]))
 
 
 # ── 阈值 ──────────────────────────────────────────────────────────────────────
-STALE_DAYS = 30  # 记忆条目超过此天数未更新视为陈旧
-DEFAULT_LIST_COUNT = 20  # kb list 默认显示条数
+DEFAULT_LIST_COUNT = 20  # kb list 默认显示条数（CLI --limit 覆盖，不进配置文件）
 
 # ── agenote 权重系统 ──────────────────────────────────────────────────────────
-HUMAN_DEFAULT_WEIGHT = 1.5  # 人类卡片默认检索权重
-AGENT_DEFAULT_WEIGHT = 1.0  # agent 卡片默认检索权重
-WEIGHT_USAGE_BONUS = 0.1  # 每次 touch 的权重提升系数
-WEIGHT_USAGE_CAP = 10  # 使用次数提升上限（×0.1 → 最多 +1.0）
-WEIGHT_STALE_PENALTY = 0.8  # 超过 STALE_DAYS 未用的权重惩罚系数
+HUMAN_DEFAULT_WEIGHT = float(config.get("weights", "human_default"))  # 人类卡片默认检索权重
+AGENT_DEFAULT_WEIGHT = float(config.get("weights", "agent_default"))  # agent 卡片默认检索权重
+WEIGHT_USAGE_BONUS = float(config.get("weights", "usage_bonus"))  # 每次 touch 的权重提升系数
+WEIGHT_USAGE_CAP = int(config.get("weights", "usage_cap"))  # 使用次数提升上限（×bonus）
+WEIGHT_STALE_PENALTY = float(config.get("weights", "stale_penalty"))  # 超 STALE_DAYS 未用的惩罚系数
 
 MEMORY_SECTIONS = ["feedback", "project", "reference", "deprecated"]
 
@@ -250,7 +262,7 @@ def agenote_context(agent_name: str | None = None) -> KBContext:
     - 否则读 AGENOTE_AGENT 环境变量（MCP 启动入口设置）
     - 都缺失时回退 DEFAULT_AGENT（"omp"），保持向后兼容
     """
-    root = KB_ROOT / "agenote"
+    root = AGENOTE_ROOT
     return KBContext(
         name="agenote",
         root=root,
@@ -379,9 +391,17 @@ def ensure_dirs(ctx: "KBContext | None" = None) -> None:
 # 状态机阈值
 # ═══════════════════════════════════════════════════════════════════════════════
 
-STALE_THRESHOLD_DAYS = 30  # stable → stale 阈值（天）
-ARCHIVE_THRESHOLD_DAYS = 90  # stale → archived 阈值（天）
-MEMORY_ARCHIVE_DAYS = 60  # feedback stale → 归档阈值（天）
+STALE_DAYS = int(config.get("curation", "stale_days"))  # memory/卡片「陈旧」统一阈值（天）
+ARCHIVE_THRESHOLD_DAYS = int(config.get("curation", "archive_days"))  # stale → archived 阈值（天）
+MEMORY_ARCHIVE_DAYS = int(config.get("curation", "memory_archive_days"))  # feedback stale → 归档阈值（天）
+DEDUP_THRESHOLD = float(config.get("curation", "dedup_threshold"))  # 去重相似度阈值（4 处硬编码的单一来源）
+DEDUP_CATEGORY_BONUS = float(config.get("weights", "dedup_category_bonus"))  # 去重：category 相同加成
+DEDUP_TECH_BONUS = float(config.get("weights", "dedup_tech_bonus"))  # 去重：tech 相同加成
+# 新卡片默认字段值（cmd_add 与 index._card_dict 共用的单一来源）
+DEFAULT_CATEGORY = str(config.get("add", "default_category"))
+DEFAULT_TYPE = str(config.get("add", "default_type"))
+DEFAULT_OWNER = str(config.get("add", "default_owner"))
+PROJECT_CURATE_DAYS = int(config.get("curation", "project_curate_days"))  # memory 项目建议策展阈值（天）
 VALID_STATUSES = {"done", "stable", "stale", "archived"}
 
 

@@ -24,8 +24,15 @@ import json
 from collections.abc import Iterator
 from pathlib import Path
 
+from agenote import config
 from agenote.extract import extract_title, resolve_xdg_path
-from agenote.extract.base import Turn, pair_turns, register
+from agenote.extract.base import (
+    TRUNC_TOOL_INPUT,
+    TRUNC_TOOL_RESULT,
+    Turn,
+    pair_turns,
+    register,
+)
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
 
 # IMPORTANT: transcripts lives under XDG_DATA_HOME, NOT CLAUDE_CONFIG_DIR
@@ -34,8 +41,10 @@ CLAUDE_TRANSCRIPTS_DIR = resolve_xdg_path(
     "$XDG_DATA_HOME/claude/transcripts",
 )
 
-# claude 外部源：trust 0.5 → weight 0.6
-EXTERNAL_RECONCILE_WEIGHT = round(RECONCILE_DEFAULT_WEIGHT - 0.1, 2)
+# claude 外部源：trust 0.5 → weight 0.6（external_delta 默认 -0.1）
+EXTERNAL_RECONCILE_WEIGHT = round(
+    RECONCILE_DEFAULT_WEIGHT + float(config.get("weights", "external_delta")), 2
+)
 
 
 def _normalize_message(msg) -> str:
@@ -53,15 +62,15 @@ def _normalize_message(msg) -> str:
                     tool_name = part.get("name", "unknown")
                     tool_input = json.dumps(
                         part.get("input", {}), ensure_ascii=False
-                    )[:300]
+                    )[:TRUNC_TOOL_INPUT]
                     texts.append(f"[tool_use: {tool_name}] {tool_input}")
                 elif ptype == "tool_result":
                     content = part.get("content", "")
                     if isinstance(content, str):
-                        texts.append(f"[tool_result] {content[:500]}")
+                        texts.append(f"[tool_result] {content[:TRUNC_TOOL_RESULT]}")
                     else:
                         texts.append(
-                            f"[tool_result] {json.dumps(content, ensure_ascii=False)[:500]}"
+                            f"[tool_result] {json.dumps(content, ensure_ascii=False)[:TRUNC_TOOL_RESULT]}"
                         )
             elif isinstance(part, str):
                 texts.append(part)
@@ -113,10 +122,14 @@ def _iter_turns(jsonl_path: Path) -> Iterator[Turn]:
         parts: list[str] = []
         for tc in tool_calls:
             tool_name = tc.get("tool_name", "unknown")
-            tool_input = json.dumps(tc.get("tool_input", {}), ensure_ascii=False)[:300]
+            tool_input = json.dumps(
+                tc.get("tool_input", {}), ensure_ascii=False
+            )[:TRUNC_TOOL_INPUT]
             parts.append(f"[tool_use: {tool_name}] {tool_input}")
         if tool_results:
-            parts.append("\n".join(f"[tool_result] {r[:500]}" for r in tool_results))
+            parts.append(
+                "\n".join(f"[tool_result] {r[:TRUNC_TOOL_RESULT]}" for r in tool_results)
+            )
         ts = tool_calls[0].get("timestamp", "")
         return Turn(role="assistant", text="\n".join(parts), timestamp=str(ts), native_id=str(ts), session=session)
 

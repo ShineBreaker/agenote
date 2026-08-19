@@ -15,7 +15,13 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from agenote.core import KBContext, default_context
+from agenote.core import (
+    DEFAULT_CATEGORY,
+    DEFAULT_OWNER,
+    DEFAULT_TYPE,
+    KBContext,
+    default_context,
+)
 from agenote.orgserde import (
     _parse_float_prop,
     _parse_int_prop,
@@ -59,10 +65,10 @@ def _card_dict(filepath: Path, ctx: "KBContext | None" = None) -> dict | None:
         "id": card_id,
         "file": str(filepath.relative_to(ctx.root)),
         "title": read_org_title(content),
-        "category": parse_org_prop(content, "CATEGORY") or "general",
+        "category": parse_org_prop(content, "CATEGORY") or DEFAULT_CATEGORY,
         "tech": parse_org_prop(content, "TECH") or "",
-        "type": parse_org_prop(content, "TYPE") or "workflow",
-        "owner": parse_org_prop(content, "OWNER") or "ai",
+        "type": parse_org_prop(content, "TYPE") or DEFAULT_TYPE,
+        "owner": parse_org_prop(content, "OWNER") or DEFAULT_OWNER,
         "entry_type": entry_type,
         "source_agent": source_agent,
         "status": parse_org_prop(content, "STATUS") or "done",

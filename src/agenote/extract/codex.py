@@ -24,6 +24,7 @@ from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 
+from agenote import config
 from agenote.extract import resolve_xdg_path
 from agenote.extract.base import Turn, pair_turns, register
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
@@ -32,8 +33,10 @@ CODEX_HOME = resolve_xdg_path("CODEX_HOME", "$XDG_CONFIG_HOME/codex")
 HISTORY_JSONL = CODEX_HOME / "history.jsonl"
 SESSIONS_ROOT = CODEX_HOME / "sessions"
 
-# codex 外部源：trust 0.5 → weight 0.6（略低于 hermes/omp 的 0.7）
-EXTERNAL_RECONCILE_WEIGHT = round(RECONCILE_DEFAULT_WEIGHT - 0.1, 2)
+# codex 外部源：trust 0.5 → weight 0.6（略低于 hermes/omp；external_delta 默认 -0.1）
+EXTERNAL_RECONCILE_WEIGHT = round(
+    RECONCILE_DEFAULT_WEIGHT + float(config.get("weights", "external_delta")), 2
+)
 
 
 def _load_history_index() -> dict[str, dict]:

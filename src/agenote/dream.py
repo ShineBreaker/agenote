@@ -56,7 +56,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from agenote.core import is_noise_fact
+from agenote.core import NOISE_MIN_LEN, is_noise_fact
 from agenote.reconcile import (
     AGENOTE_ROOT,
     load_reconcile_facts,
@@ -104,24 +104,27 @@ def _get_jieba():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 启发式阈值（集中常量，调参只改这里）
+# 启发式阈值（默认值见 config.py SCHEMA [dream] 节，可被 config.toml 覆盖）
 # ═══════════════════════════════════════════════════════════════════════════════
 
-MIN_TERM_FREQ = 5  # 词频下限（低于此直接丢弃，太稀疏不可靠）
-DEFAULT_LIMIT = 5  # 一次 dream 默认提 K 个候选（可通过 --limit 覆盖）
-DEFAULT_WINDOW_DAYS = 90  # 回看窗口默认值（7d 只剩 5% facts，词频不足；90d 剩 90%）
-MIN_FACT_LEN = 15  # 太短的事实（<15 字）不提，信息量不足
-MIN_TERM_LEN = 3  # ASCII 关键词最短长度（过滤 is/the/a 等英文虚词）
-MIN_CJK_LEN = 2  # CJK 关键词最短长度（中文真实词多为 2 字：相关/对话/避免/浪费）
+from agenote import config as _config
+
+MIN_TERM_FREQ = int(_config.get("dream", "min_term_freq"))  # 词频下限（太稀疏不可靠）
+DEFAULT_LIMIT = int(_config.get("dream", "default_limit"))  # 一次 dream 默认提 K 个候选
+DEFAULT_WINDOW_DAYS = int(_config.get("dream", "window_days"))  # 回看窗口默认值（天）
+MIN_TERM_LEN = int(_config.get("dream", "min_term_len"))  # ASCII 关键词最短长度
+MIN_CJK_LEN = int(_config.get("dream", "min_cjk_len"))  # CJK 关键词最短长度
 
 # 形态学评分权重：经验上"代码标识符"比"CJK 二字虚词"更像具体经验。
 # 这些权重乘到 IDF 上（见 _term_quality_score）。
-_MORPH_HYPHEN_BONUS = 2.0  # 含 -/_ 的标识符（host-spawn / kb-summarize）强信号
-_MORPH_LONGASCII_BONUS = 1.0  # 长全小写串（emacsclient / distrobox）中等信号
-_MORPH_CJK2_PENALTY = 0.4  # CJK 二字词（评估/提交/搜索）多为对话虚词，降权
+_MORPH_HYPHEN_BONUS = float(_config.get("dream", "morph_hyphen_bonus"))  # 含 -/_ 的标识符强信号
+_MORPH_LONGASCII_BONUS = float(_config.get("dream", "morph_longascii_bonus"))  # 长全小写串中等信号
+_MORPH_CJK2_PENALTY = float(_config.get("dream", "morph_cjk2_penalty"))  # CJK 二字虚词降权
 
 # 时间戳有效年份下限：早于此视为坏数据（epoch ms 误当秒、脏数据），忽略不过滤。
-_MIN_VALID_YEAR = 2020
+_MIN_VALID_YEAR = int(_config.get("dream", "min_valid_year"))
+# 单事实词频截断（TF 上限，防单条事实刷词频）
+_TF_CAP_PER_FACT = int(_config.get("dream", "tf_cap_per_fact"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -486,13 +489,13 @@ def _gather_candidates(
         if not title or title in ("Untitled", "---", "<system-reminder>", "TASK"):
             continue
         content = fact.get("content", "")
-        if len(content) < MIN_FACT_LEN:
+        if len(content) < NOISE_MIN_LEN:
             continue
-        # 保留 per-fact TF：content + title 合并计数，单 fact 内 min(cnt, 3) 截断
+        # 保留 per-fact TF：content + title 合并计数，单 fact 内 _TF_CAP_PER_FACT 截断
         fact_tf = Counter(_tokenize(content) + _tokenize(title))
         for tok, cnt in fact_tf.items():
             term_facts.setdefault(tok, []).append((idx, fact))
-            term_tf_total[tok] = term_tf_total.get(tok, 0) + min(cnt, 3)
+            term_tf_total[tok] = term_tf_total.get(tok, 0) + min(cnt, _TF_CAP_PER_FACT)
 
     covered = _kb_covered_titles()
     candidates: list[tuple[float, int, DreamCandidate]] = []

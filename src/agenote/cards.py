@@ -26,7 +26,10 @@ from agenote.core import (
     STALE_DAYS,
     CARD_TEMPLATES,
     ENTRY_BODY_DEFAULTS,
+    DEFAULT_CATEGORY,
     DEFAULT_LIST_COUNT,
+    DEFAULT_OWNER,
+    DEFAULT_TYPE,
     die,
     now,
     today,
@@ -59,10 +62,10 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
     """
     ctx = ctx or default_context()
     title = args.title or ""
-    category = args.category or "general"
+    category = args.category or DEFAULT_CATEGORY
     tech = args.tech or ""
-    type_ = args.type or "workflow"
-    owner = args.owner or "ai"
+    type_ = args.type or DEFAULT_TYPE
+    owner = args.owner or DEFAULT_OWNER
     entry_type = args.entry or ""
     summary = args.summary or ""
     use_stdin = args.stdin

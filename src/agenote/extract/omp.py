@@ -21,7 +21,14 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from agenote.extract import extract_title, resolve_xdg_path
-from agenote.extract.base import SOURCES, Turn, pair_turns, register
+from agenote.extract.base import (
+    SOURCES,
+    TRUNC_TOOL_INPUT,
+    TRUNC_TOOL_RESULT,
+    Turn,
+    pair_turns,
+    register,
+)
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
 
 OMP_SESSIONS_DIR = resolve_xdg_path(
@@ -44,15 +51,15 @@ def _normalize_content(content) -> str:
                 elif ptype == "tool_use":
                     texts.append(
                         f"[tool_use: {part.get('name', '?')}] "
-                        f"{json.dumps(part.get('input', {}), ensure_ascii=False)[:300]}"
+                        f"{json.dumps(part.get('input', {}), ensure_ascii=False)[:TRUNC_TOOL_INPUT]}"
                     )
                 elif ptype == "tool_result":
                     c = part.get("content", "")
                     if isinstance(c, str):
-                        texts.append(f"[tool_result] {c[:500]}")
+                        texts.append(f"[tool_result] {c[:TRUNC_TOOL_RESULT]}")
                     else:
                         texts.append(
-                            f"[tool_result] {json.dumps(c, ensure_ascii=False)[:500]}"
+                            f"[tool_result] {json.dumps(c, ensure_ascii=False)[:TRUNC_TOOL_RESULT]}"
                         )
             elif isinstance(part, str):
                 texts.append(part)

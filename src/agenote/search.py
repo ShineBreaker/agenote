@@ -18,15 +18,25 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from agenote import config
 from agenote.core import (
     die,
     default_context,
     agenote_context,
 )
+from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
 from agenote.orgserde import (
     parse_org_prop,
     read_org_title,
 )
+
+# 检索评分系数与片段参数（config [weights] / [search] 覆盖）
+SCORE_TERM_HIT = int(config.get("weights", "score_term_hit"))  # 每命中词得分
+SCORE_TITLE_BONUS = int(config.get("weights", "score_title_bonus"))  # 标题命中加分
+SCORE_PHRASE_BONUS = int(config.get("weights", "score_phrase_bonus"))  # 短语命中加分（单域）
+SEARCH_LIMIT = int(config.get("search", "limit"))  # 结果默认上限
+SNIPPET_MAX_CHARS = int(config.get("search", "snippet_max_chars"))  # 片段截断字符数
+SNIPPET_CONTEXT_LINES = int(config.get("search", "snippet_context_lines"))  # 片段窗口行数
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -103,7 +113,7 @@ def _range_score(
     block = "\n".join(lines[start : end + 1])
     haystack = block if case_sensitive else block.casefold()
     matched_terms = [needle for needle in needles if needle in haystack]
-    return len(matched_terms) * 100 + sum(
+    return len(matched_terms) * SCORE_TERM_HIT + sum(
         haystack.count(needle) for needle in matched_terms
     )
 
@@ -125,23 +135,23 @@ def _make_search_snippet(
     ]
     if not hit_indexes:
         return ""
-    start = max(0, hit_indexes[0] - 2)
-    end = min(len(lines) - 1, hit_indexes[0] + 2)
+    start = max(0, hit_indexes[0] - SNIPPET_CONTEXT_LINES)
+    end = min(len(lines) - 1, hit_indexes[0] + SNIPPET_CONTEXT_LINES)
     snippet = "\n".join(lines[start : end + 1])
-    if len(snippet) > 200:
-        snippet = snippet[:200] + "..."
+    if len(snippet) > SNIPPET_MAX_CHARS:
+        snippet = snippet[:SNIPPET_MAX_CHARS] + "..."
     return snippet
 
 
 def _cross_domain_search(
     query: str,
-    limit: int = 20,
+    limit: int = SEARCH_LIMIT,
     case_sensitive: bool = False,
 ) -> list[dict]:
     """跨域加权检索：同时扫人类域 + agenote 域 + reconcile 事实。
 
     与 MCP agenote_search 行为对齐：各域权重取自 ctx.default_weight,
-    reconcile 默认 0.7。返回按加权分数降序排列的结果列表。
+    reconcile 默认 RECONCILE_DEFAULT_WEIGHT。返回按加权分数降序排列的结果列表。
     """
     terms = _query_terms(query)
     if not terms:
@@ -164,8 +174,8 @@ def _cross_domain_search(
             occurrence_count = sum(haystack.count(t) for t in term_hits)
             title = read_org_title(content)
             title_hay = title if case_sensitive else title.casefold()
-            title_bonus = 25 * sum(1 for t in term_hits if t in title_hay)
-            raw_score = len(term_hits) * 100 + occurrence_count + title_bonus
+            title_bonus = SCORE_TITLE_BONUS * sum(1 for t in term_hits if t in title_hay)
+            raw_score = len(term_hits) * SCORE_TERM_HIT + occurrence_count + title_bonus
             results.append(
                 {
                     "domain": ctx.name,
@@ -193,9 +203,9 @@ def _cross_domain_search(
             occurrence_count = sum(haystack.count(t) for t in term_hits)
             title = fact.get("title", "")
             title_hay = title if case_sensitive else title.casefold()
-            title_bonus = 25 * sum(1 for t in term_hits if t in title_hay)
-            raw_score = len(term_hits) * 100 + occurrence_count + title_bonus
-            fact_weight = fact.get("weight", 0.7)
+            title_bonus = SCORE_TITLE_BONUS * sum(1 for t in term_hits if t in title_hay)
+            raw_score = len(term_hits) * SCORE_TERM_HIT + occurrence_count + title_bonus
+            fact_weight = fact.get("weight", RECONCILE_DEFAULT_WEIGHT)
             results.append(
                 {
                     "domain": "reconcile",
@@ -206,7 +216,8 @@ def _cross_domain_search(
                     "title": title,
                     "file": "",
                     "id": fact.get("id", ""),
-                    "snippet": hay[:200] + ("..." if len(hay) > 200 else ""),
+                    "snippet": hay[:SNIPPET_MAX_CHARS]
+                    + ("..." if len(hay) > SNIPPET_MAX_CHARS else ""),
                 }
             )
     except Exception:
@@ -220,7 +231,7 @@ def _cmd_cross_domain_search(args: argparse.Namespace) -> None:
     """跨域加权检索的输出与格式化。"""
     results = _cross_domain_search(
         args.query,
-        limit=getattr(args, "limit", 20),
+        limit=getattr(args, "limit", SEARCH_LIMIT),
         case_sensitive=getattr(args, "case_sensitive", False),
     )
 
@@ -300,11 +311,15 @@ def cmd_search(args: argparse.Namespace, ctx=None) -> None:
             continue
 
         occurrence_count = sum(haystack.count(term) for term in term_hits)
-        phrase_bonus = 50 if normalized_phrase and normalized_phrase in haystack else 0
+        phrase_bonus = (
+            SCORE_PHRASE_BONUS if normalized_phrase and normalized_phrase in haystack else 0
+        )
         title = read_org_title(content)
         title_haystack = title if args.case_sensitive else title.casefold()
-        title_bonus = 25 * sum(1 for term in term_hits if term in title_haystack)
-        score = len(term_hits) * 100 + occurrence_count + phrase_bonus + title_bonus
+        title_bonus = SCORE_TITLE_BONUS * sum(1 for term in term_hits if term in title_haystack)
+        score = (
+            len(term_hits) * SCORE_TERM_HIT + occurrence_count + phrase_bonus + title_bonus
+        )
 
         matches.append(
             {

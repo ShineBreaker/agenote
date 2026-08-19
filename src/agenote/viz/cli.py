@@ -16,9 +16,11 @@ import socketserver
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from agenote import config
 from agenote.core import KB_ROOT, agenote_context, default_context
 from agenote.index import _load_index
 
@@ -26,13 +28,20 @@ from agenote.viz.data import compute_stats, parse_filter, top_techs
 from agenote.viz.html import generate_html
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 常量
+# 常量（默认值见 config.py SCHEMA [viz] / [paths] 节）
 # ═══════════════════════════════════════════════════════════════════════════════
 
-DEFAULT_OUTPUT = str(KB_ROOT / "kb-viz.html")
-DEFAULT_PORT = 8765
-SERVE_PROBE_TIMEOUT = 5.0
-SERVE_PROBE_INTERVAL = 0.1
+_viz_output_cfg = str(config.get("paths", "viz_output"))
+DEFAULT_OUTPUT = (
+    str(config.get_path("paths", "viz_output"))
+    if _viz_output_cfg
+    else str(KB_ROOT / "kb-viz.html")
+)
+DEFAULT_PORT = int(config.get("viz", "port"))
+DEFAULT_THEME = str(config.get("viz", "theme"))
+TOP_TECHS_LIMIT = int(config.get("viz", "top_techs_limit"))
+SERVE_PROBE_TIMEOUT = float(config.get("viz", "serve_probe_timeout"))
+SERVE_PROBE_INTERVAL = float(config.get("viz", "serve_probe_interval"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -76,17 +85,22 @@ def _serve(path: Path, port: int, should_open: bool) -> None:
             allow_reuse_address = True
 
         httpd = ReuseTCPServer(("", port), QuietHandler)
-        # 端口探测：等服务就绪后再打开
+        # 端口探测：等服务就绪后再打开。探测 URL 由本地构造，
+        # 仍校验只允许 localhost（防未来改动引入外源 URL 探测）
+        parsed = urllib.parse.urlparse(url)
         deadline = time.time() + SERVE_PROBE_TIMEOUT
         ready = False
-        while time.time() < deadline:
-            try:
-                with urllib.request.urlopen(url, timeout=0.2) as r:
-                    if r.status == 200:
-                        ready = True
-                        break
-            except Exception:
-                time.sleep(SERVE_PROBE_INTERVAL)
+        if parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1"):
+            while time.time() < deadline:
+                try:
+                    with urllib.request.urlopen(url, timeout=0.2) as r:
+                        if r.status == 200:
+                            ready = True
+                            break
+                except Exception:
+                    time.sleep(SERVE_PROBE_INTERVAL)
+        else:
+            print(f"⚠ 跳过端口探测：探测地址非本地 ({url})")
         if not ready:
             print(f"⚠ 端口 {port} 在 {SERVE_PROBE_TIMEOUT}s 内未就绪，仍尝试打开。")
         if should_open:
@@ -164,7 +178,7 @@ def cmd_viz(args: argparse.Namespace, ctx=None) -> None:
         return
 
     stats = compute_stats(cards)
-    techs = top_techs(cards, limit=8)
+    techs = top_techs(cards, limit=TOP_TECHS_LIMIT)
     init_filter = parse_filter(args.filter or "")
     init_search = args.search or ""
 
@@ -232,8 +246,8 @@ def add_viz_parser(subparsers) -> argparse.ArgumentParser:
     p.add_argument(
         "--theme",
         choices=["light", "dark", "auto"],
-        default="auto",
-        help="初始主题（默认 auto，跟随系统）",
+        default=DEFAULT_THEME,
+        help=f"初始主题（默认 {DEFAULT_THEME}，跟随系统）",
     )
     p.add_argument(
         "--filter",

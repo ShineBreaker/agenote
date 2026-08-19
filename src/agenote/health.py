@@ -23,11 +23,15 @@ from pathlib import Path
 
 from agenote.curator import _jaccard_similarity
 from agenote.core import (
+    DEDUP_CATEGORY_BONUS,
+    DEDUP_TECH_BONUS,
+    DEDUP_THRESHOLD,
     STALE_DAYS,
     VALID_TYPES,
     default_context,
     ensure_dirs,
 )
+from agenote import config
 from agenote.orgserde import (
     parse_org_prop,
     read_org_title,
@@ -38,7 +42,23 @@ from agenote.index import (
 )
 
 # 卡片陈旧阈值（时间维度）。区别于 core.STALE_DAYS（=30，memory 语义）。
-CARD_STALE_DAYS = 90
+CARD_STALE_DAYS = int(config.get("health", "card_stale_days"))
+# 健康度三级分级阈值（ok < warn ≤ 值 < bad）
+ISOLATED_WARN, ISOLATED_BAD = (
+    int(config.get("health", "isolated_warn")),
+    int(config.get("health", "isolated_bad")),
+)
+STALE_WARN, STALE_BAD = (
+    int(config.get("health", "stale_warn")),
+    int(config.get("health", "stale_bad")),
+)
+SKEW_WARN, SKEW_BAD = (
+    int(config.get("health", "skew_warn")),
+    int(config.get("health", "skew_bad")),
+)
+# 薄弱类别判定：health 用 <，gaps 用 <=（刻意不同，勿合并）
+WEAK_CATEGORY_MIN = int(config.get("health", "weak_category_min"))
+GAPS_WEAK_MAX = int(config.get("health", "gaps_weak_max"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -154,7 +174,11 @@ def _compute_base_metrics(ctx=None) -> dict:
 
     # 薄弱类别
     cat_counts = Counter(c.get("category", "unknown") for c in cards)
-    weak_cats = {cat: cnt for cat, cnt in cat_counts.items() if cnt < 3}
+    weak_cats = {
+        cat: cnt
+        for cat, cnt in cat_counts.items()
+        if cnt < WEAK_CATEGORY_MIN
+    }
 
     # MEMORY 统计（feedback / project）
     memory_stats = _memory_stats(ctx)
@@ -165,21 +189,21 @@ def _compute_base_metrics(ctx=None) -> dict:
         "isolated": {
             "pct": isolated_pct,
             "count": isolated,
-            "threshold": 15,
-            "status": _status(isolated_pct, 15, 25),
+            "threshold": ISOLATED_WARN,
+            "status": _status(isolated_pct, ISOLATED_WARN, ISOLATED_BAD),
         },
         "stale": {
             "pct": stale_pct,
             "count": stale,
-            "threshold": 10,
-            "status": _status(stale_pct, 10, 20),
+            "threshold": STALE_WARN,
+            "status": _status(stale_pct, STALE_WARN, STALE_BAD),
         },
         "type_skew": {
             "type": max_type,
             "pct": max_type_pct,
             "count": max_type_count,
-            "threshold": 45,
-            "status": _status(max_type_pct, 45, 60),
+            "threshold": SKEW_WARN,
+            "status": _status(max_type_pct, SKEW_WARN, SKEW_BAD),
         },
         "weak_categories": weak_cats,
         "memory": memory_stats,
@@ -267,17 +291,18 @@ def analyze(
     return result
 
 
-def _detect_duplicates(cards: list[dict], threshold: float = 0.7) -> list[dict]:
+def _detect_duplicates(cards: list[dict], threshold: float | None = None) -> list[dict]:
     """疑似重复卡片对。复用 cards._jaccard_similarity + category/tech 加权。"""
+    threshold = DEDUP_THRESHOLD if threshold is None else threshold
     pairs = []
     for i in range(len(cards)):
         for j in range(i + 1, len(cards)):
             a, b = cards[i], cards[j]
             sim = _jaccard_similarity(a.get("title", ""), b.get("title", ""))
             if a.get("category") == b.get("category"):
-                sim += 0.15
+                sim += DEDUP_CATEGORY_BONUS
             if a.get("tech") and a.get("tech") == b.get("tech"):
-                sim += 0.1
+                sim += DEDUP_TECH_BONUS
             sim = min(sim, 1.0)
             if sim >= threshold:
                 pairs.append(
@@ -357,11 +382,11 @@ def find_gaps(ctx=None, stale_days: int = CARD_STALE_DAYS) -> dict:
             if typ not in covered.get(cat, set()):
                 missing_combos.append({"category": cat, "type": typ})
 
-    # 薄弱类别（≤2 张）
+    # 薄弱类别（≤ GAPS_WEAK_MAX 张）
     weak_categories = [
         {"category": cat, "count": cnt}
         for cat, cnt in sorted(category_counts.items(), key=lambda x: x[1])
-        if cnt <= 2
+        if cnt <= GAPS_WEAK_MAX
     ]
 
     # 陈旧卡片（时间维度，区别于 base_metrics 的 status 维度）

@@ -27,7 +27,21 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from agenote import config
+from agenote.core import CONVERSATIONS_ROOT
 from agenote.extract.models import ReconciledFact
+
+# 索引层截断链与默认 trust（config [extract] / [weights] 覆盖）。
+# trunc_user/trunc_assistant 是 dream trace「回查不截断」设计的前提，勿轻易改小。
+TRUNC_USER = int(config.get("extract", "trunc_user"))
+TRUNC_ASSISTANT = int(config.get("extract", "trunc_assistant"))
+TRUNC_REASONING = int(config.get("extract", "trunc_reasoning"))
+TRUNC_TOOL_INPUT = int(config.get("extract", "trunc_tool_input"))
+TRUNC_TOOL_RESULT = int(config.get("extract", "trunc_tool_result"))
+DEFAULT_TRUST = float(config.get("weights", "default_trust"))
+FALLBACK_TITLE_MAX = 80  # session 标题兜底截断（展示层，不进配置）
+EXTRACT_LIMIT = int(config.get("extract", "limit"))  # 每源抽取上限（0 = 不限）
+DATE_OFFSET_DAYS = int(config.get("extract", "date_offset_days"))  # 默认抽取偏移（1 = 昨天）
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 数据模型
@@ -80,10 +94,10 @@ def pair_turns(
                 id=f"{source}:{turn.session['id']}:{turn.native_id}",
                 source=source,
                 native_id=turn.native_id,
-                title=extract_title(current_user.text) or sess_title[:80],
+                title=extract_title(current_user.text) or sess_title[:FALLBACK_TITLE_MAX],
                 category=categorize(turn.session, current_user.text, turn.text),
-                content=f"USER: {current_user.text[:1000]}\n\nASSISTANT: {turn.text[:2000]}",
-                trust_score=0.5,
+                content=f"USER: {current_user.text[:TRUNC_USER]}\n\nASSISTANT: {turn.text[:TRUNC_ASSISTANT]}",
+                trust_score=DEFAULT_TRUST,
                 weight=weight,
                 tags=[directory.split("/")[-1] if directory else "unknown"],
                 timestamp=current_user.timestamp,
@@ -129,7 +143,7 @@ def iter_turns_sqlite(conn: Any, session_row: dict[str, Any]) -> Iterator[Turn]:
                 texts.append(pd.get("text", ""))
             elif role == "assistant":
                 if ptype == "reasoning":
-                    texts.append(f"[reasoning] {pd.get('text', '')[:200]}")
+                    texts.append(f"[reasoning] {pd.get('text', '')[:TRUNC_REASONING]}")
                 elif ptype == "tool":
                     tool_name = pd.get("tool", "?")
                     texts.append(f"[tool: {tool_name}]")
@@ -260,7 +274,7 @@ def run_extract(
     date: str = "",
     output_dir: str = "",
     dry_run: bool = False,
-    limit: int = 500,
+    limit: int = EXTRACT_LIMIT,
 ) -> dict:
     """跨 agent 对话抽取编排：把多个 AI 工具的原始对话抽取为 Org-mode 文件。
 
@@ -277,10 +291,12 @@ def run_extract(
     else:
         return {"error": f"未知 source: {source}；可选: {sorted(extractors)}"}
 
-    # 输出目录
+    # 输出目录（config paths.conversations_root 收敛；此前独立硬编码 ~/Documents/Org）
     if not output_dir:
-        target_date = date or (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        output_dir = f"~/Documents/Org/conversations/{target_date}"
+        target_date = date or (
+            datetime.now() - timedelta(days=DATE_OFFSET_DAYS)
+        ).strftime("%Y-%m-%d")
+        output_dir = str(CONVERSATIONS_ROOT / target_date)
     out_path = Path(output_dir).expanduser()
     if not dry_run:
         out_path.mkdir(parents=True, exist_ok=True)

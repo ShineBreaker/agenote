@@ -20,6 +20,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from agenote import config
 from agenote.extract import open_sqlite_ro, resolve_xdg_path
 from agenote.extract.base import Turn, pair_turns, register
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
@@ -28,12 +29,9 @@ CRUSH_GLOBAL_DB = resolve_xdg_path(
     "CRUSH_GLOBAL_DB", "~/.config/crush/.crush/crush.db"
 )
 
+# 项目级 crush.db 扫描根列表（config [extract.sources].crush_search_roots 覆盖）
 CRUSH_SEARCH_ROOTS = [
-    "~/Documents",
-    "~/Documents/Repo",
-    "~/Documents/Org",
-    "~/.emacs.d",
-    "/data/Documents",
+    str(p) for p in config.get("extract.sources", "crush_search_roots")
 ]
 
 

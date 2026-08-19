@@ -20,6 +20,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+from agenote import config
+
 # 从 base.py re-export（run_extract 是 extract 子命令/ag_note_extract MCP tool 的单一真相源）
 from agenote.extract.base import _resolve_extractors, run_extract
 
@@ -27,12 +29,13 @@ from agenote.extract.base import _resolve_extractors, run_extract
 
 
 def resolve_xdg_path(env_var: str, default: str) -> Path:
-    """Resolve path respecting env var, then XDG base dirs.
+    """Resolve path respecting env var, config file, then XDG base dirs.
 
     Lookup order:
       1. os.environ[env_var] (direct override)
-      2. $XDG_DATA_HOME / $XDG_CONFIG_HOME from default placeholder
-      3. expanduser fallback (~/...)
+      2. config.toml [extract.sources].<env_var.lower()>（替代 default）
+      3. $XDG_DATA_HOME / $XDG_CONFIG_HOME from default placeholder
+      4. expanduser fallback (~/...)
 
     default may use $XDG_DATA_HOME/$XDG_CONFIG_HOME placeholders:
         resolve_xdg_path('CODEX_HOME', '$XDG_CONFIG_HOME/codex')
@@ -40,6 +43,12 @@ def resolve_xdg_path(env_var: str, default: str) -> Path:
     val = os.environ.get(env_var)
     if val:
         return Path(val).expanduser()
+
+    # config.toml 覆盖层：键名 = env var 的小写形式（如 OPENCODE_DB → opencode_db）。
+    # 展开复用 config._expand（$XDG_* 占位符未设 env 时回落规范默认，与 get_path 一致）。
+    cfg_val = config.get("extract.sources", env_var.lower())
+    if isinstance(cfg_val, str) and cfg_val and cfg_val != default:
+        return config._expand(cfg_val)
 
     # Resolve $XDG_*_HOME placeholders in default
     m = re.match(r"\$XDG_(\w+)_HOME", default)
@@ -75,9 +84,10 @@ def open_sqlite_ro(db_path: Path) -> sqlite3.Connection:
 
 _TITLE_BRACKET_RE = re.compile(r"^【([^】]+)】")
 _TITLE_SENT_RE = re.compile(r"[^。\n!?:;]+")
+TITLE_MAX_LEN = int(config.get("extract", "title_max_len"))
 
 
-def extract_title(content: str, max_len: int = 60) -> str:
+def extract_title(content: str, max_len: int = TITLE_MAX_LEN) -> str:
     """Unified title extractor: 【...】 bracket → first sentence → truncate."""
     m = _TITLE_BRACKET_RE.match(content.strip())
     if m:
