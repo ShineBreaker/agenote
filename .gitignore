@@ -20,3 +20,10 @@ dist/
 # IDE
 .vscode/
 .idea/
+
+# 工具状态（mimosa 安全扫描 / zcode 子智能体工作产物）
+.mimosa/
+.agents/
+
+# pytest
+.pytest_cache/
