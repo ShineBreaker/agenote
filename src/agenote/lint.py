@@ -21,6 +21,7 @@ import argparse
 import os
 import re
 import sys
+from pathlib import Path
 
 from agenote.core import (
     VALID_TYPES,
@@ -104,8 +105,12 @@ def _lint_file(filepath: str, do_fix: bool) -> list[str]:
                 seen.add(key)
                 issues.append(ch)
     if do_fix and fmt_changes:
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(new_text)
+        # 写回校验：路径归一化，且仅写回 .org 文件（lint 的操作对象）
+        target = Path(filepath).resolve()
+        if target.suffix != ".org":
+            issues.append(f"跳过写回：非 .org 文件 ({filepath})")
+        else:
+            target.write_text(new_text, encoding="utf-8")
 
     # ── 语义问题（始终只报告，--fix 不修）──
     # 用原始 text 检查（语义问题不依赖格式化结果）
