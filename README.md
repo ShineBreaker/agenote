@@ -144,6 +144,24 @@ uv run pytest -q
 uv build
 ```
 
+## Shell 补全
+
+fish / zsh / bash 均支持 Tab 补全子命令与常用选项。
+
+```bash
+# 动态生成（推荐：变更后自动同步）
+agenote completions fish > ~/.config/fish/completions/agenote.fish
+agenote completions zsh  > ~/.zsh/completions/_agenote   # 确保该目录在 $fpath
+agenote completions bash > /etc/bash_completion.d/agenote  # 或 source
+
+# 静态脚本（随仓库分发，无需已安装 agenote）
+# completions/agenote.fish  completions/_agenote  completions/agenote.bash
+```
+
+覆盖 33 个子命令（含 `config init/show` 二级）、`--domain` / `--type` /
+`--source` 等常用枚举。`completions/` 下的静态脚本与 `agenote completions`
+输出逐字节一致，CI 校验。
+
 贡献指南（含 Conventional Commits 规范）见 [CONTRIBUTING.md](CONTRIBUTING.md)，
 版本历史见 [CHANGELOG.md](CHANGELOG.md)，架构决策见 [docs/adr/](docs/adr/)。
 

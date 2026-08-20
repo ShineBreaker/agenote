@@ -242,6 +242,19 @@ def cmd_config(args: argparse.Namespace, ctx=None) -> None:
         print(f"\n配置文件: {config.CONFIG_PATH}")
 
 
+def cmd_completions(args: argparse.Namespace, ctx=None) -> None:
+    """生成并打印指定 shell 的补全脚本。"""
+    from agenote.completions import COMPLETIONS_SHELLS, generate
+
+    shell = (args.shell or "").lower()
+    if shell not in COMPLETIONS_SHELLS:
+        die(
+            f"未知 shell: {args.shell!r}，可选: {', '.join(COMPLETIONS_SHELLS)} "
+            f"（用法: agenote completions <{'|'.join(COMPLETIONS_SHELLS)}>）"
+        )
+    print(generate(shell), end="")
+
+
 def _run_git(args: list[str], cwd: Path) -> str:
     """执行 git 命令，返回 stdout。失败时 die。"""
     result = subprocess.run(
@@ -516,6 +529,11 @@ def print_help() -> None:
   init     初始化知识库
             agenote init            创建目录结构 + git 仓库 + 初始 commit
             agenote init --no-git   仅创建目录结构，跳过 git
+
+  completions shell 补全脚本
+            agenote completions bash   生成 bash 补全
+            agenote completions zsh    生成 zsh 补全
+            agenote completions fish   生成 fish 补全（推荐 fish 用户）
 
   config   配置管理（~/.config/agenote/config.toml，优先级 env > 文件 > 默认）
             agenote config init     生成带注释的配置模板
@@ -1027,6 +1045,17 @@ def main() -> None:
     )
     extract_parser.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
 
+    # ── completions ─────────────────────────────────────────────────────────
+    comp_parser = subparsers.add_parser(
+        "completions", help="生成 shell 补全脚本（bash/zsh/fish）"
+    )
+    comp_parser.add_argument(
+        "shell",
+        nargs="?",
+        choices=["bash", "zsh", "fish"],
+        help="目标 shell（bash|zsh|fish）",
+    )
+
     # ── config ──────────────────────────────────────────────────────────────
     config_parser = subparsers.add_parser(
         "config", help="配置管理（config.toml 生成与查看）"
@@ -1064,6 +1093,7 @@ def main() -> None:
         "init": cmd_init,
         "commit": cmd_commit,
         "config": cmd_config,
+        "completions": cmd_completions,
         # 新命令
         "touch": cmd_touch,
         "merge": cmd_merge,
@@ -1093,7 +1123,7 @@ def main() -> None:
             args._cross_domain = True
         else:
             ctx = agenote_context()
-        if ctx is not None and args.command not in ("init", "config"):
+        if ctx is not None and args.command not in ("init", "config", "completions"):
             ensure_dirs(ctx)
         commands[args.command](args, ctx)
     else:

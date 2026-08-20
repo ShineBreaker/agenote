@@ -35,6 +35,15 @@
 - lint `--fix` 写回前路径归一化并限定 `.org` 文件；viz serve 探测限定
   localhost；HTML 骨架模板占位符白名单（静态审计加固）。
 
+## [0.1.5.1] - 2026-08-20
+
+### Added
+
+- fish / zsh / bash 自动补全：`agenote completions <shell>` 动态生成，
+  `completions/` 静态脚本随仓库分发（`agenote.fish` / `_agenote` / `agenote.bash`），
+  覆盖全部 34 个子命令与常用枚举（`--domain` / `--type` / `--source` 等）；
+  `completions.py` 为单一真相源，`completions/` 与动态输出逐字节一致。
+
 ## [0.1.2] - 2026-08-03
 
 ### Changed
