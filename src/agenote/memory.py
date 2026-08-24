@@ -22,6 +22,7 @@ from agenote.core import (
     _init_memory_template_for_ctx,
     default_context,
 )
+from agenote.safeio import atomic_write
 
 
 def _parse_memory_sections(content: str) -> dict[str, list[tuple[int, int, str]]]:
@@ -265,7 +266,7 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
     entry_text = "\n".join(entry_lines) + "\n"
     lines.insert(insert_line, entry_text)
 
-    ctx.memory_org.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write(ctx.memory_org, "\n".join(lines))
     print(f"已添加 {mem_type} 记忆: {new_id} {title}")
 
 
@@ -281,9 +282,8 @@ def _memory_add_project(
     proj_file = ctx.projects / f"{project_name}.org"
 
     if not proj_file.exists():
-        proj_file.write_text(
-            f"#+title: {project_name}\n#+date: [{today()}]\n\n",
-            encoding="utf-8",
+        atomic_write(
+            proj_file, f"#+title: {project_name}\n#+date: [{today()}]\n\n"
         )
 
     # 追加条目到项目文件
@@ -300,7 +300,7 @@ def _memory_add_project(
     entry_lines.append("")
 
     proj_lines.extend(entry_lines)
-    proj_file.write_text("\n".join(proj_lines), encoding="utf-8")
+    atomic_write(proj_file, "\n".join(proj_lines))
 
     # 同步更新 MEMORY.org 索引
     _memory_sync_project_index(project_name, proj_file, ctx)
@@ -348,7 +348,7 @@ def _memory_sync_project_index(name: str, proj_file: Path, ctx=None) -> None:
         f"   :END:\n"
     )
     lines.insert(insert_line, index_entry)
-    ctx.memory_org.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write(ctx.memory_org, "\n".join(lines))
 
 
 def _memory_touch(entry_id: str, ctx=None) -> None:
@@ -381,7 +381,7 @@ def _memory_touch(entry_id: str, ctx=None) -> None:
     if not found:
         die(f"未找到条目: {entry_id}")
 
-    ctx.memory_org.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write(ctx.memory_org, "\n".join(lines))
     print(f"已更新 {entry_id} 时间戳 → {today()}")
 
 
@@ -437,7 +437,7 @@ def _memory_archive(entry_id: str, ctx=None) -> None:
     for k, el in enumerate(entry_lines):
         lines.insert(insert_line + k, el)
 
-    ctx.memory_org.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write(ctx.memory_org, "\n".join(lines))
     print(f"已归档 {entry_id} → deprecated")
 
 
@@ -610,14 +610,13 @@ def _memory_archive_to_file(entry_id: str, ctx=None) -> None:
     # 清理多余空行
     while entry_start < len(lines) and lines[entry_start].strip() == "":
         del lines[entry_start]
-    ctx.memory_org.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write(ctx.memory_org, "\n".join(lines))
 
     # 追加到 MEMORY-ARCHIVE.org
     archive = ctx.memory_archive
     if not archive.exists():
-        archive.write_text(
-            f"#+title: MEMORY-ARCHIVE\n#+date: [{now()}]\n\n* archived\n",
-            encoding="utf-8",
+        atomic_write(
+            archive, f"#+title: MEMORY-ARCHIVE\n#+date: [{now()}]\n\n* archived\n"
         )
 
     archive_text = archive.read_text(encoding="utf-8")
@@ -627,7 +626,7 @@ def _memory_archive_to_file(entry_id: str, ctx=None) -> None:
     else:
         archive_text = archive_text.rstrip("\n") + f"\n\n* archived\n\n{entry_text}\n"
 
-    archive.write_text(archive_text, encoding="utf-8")
+    atomic_write(archive, archive_text)
     print(f"已归档到 MEMORY-ARCHIVE.org: {entry_id}")
 
 
@@ -712,7 +711,7 @@ def _memory_project_touch(project_name: str, ctx=None) -> None:
     if not found:
         die(f"未找到项目: {project_name}")
 
-    ctx.memory_org.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write(ctx.memory_org, "\n".join(lines))
 
     print(f"已更新项目 {project_name} LAST_ACTIVE → {today()}")
 
@@ -809,7 +808,7 @@ def _memory_project_auto_update(name, ctx=None):
                 # PROPERTIES 抽屉格式
                 proj_lns = proj_text.split("\n")
                 _memory_set_property(proj_lns, 0, "LAST_CURATED", f"[{today()}]")
-                proj_file.write_text("\n".join(proj_lns), encoding="utf-8")
+                atomic_write(proj_file, "\n".join(proj_lns))
             else:
                 # #+ 元数据格式: 更新或追加
                 if "#+LAST_CURATED:" in proj_text:
@@ -829,13 +828,13 @@ def _memory_project_auto_update(name, ctx=None):
                             break
                     plines.insert(insert_pt, f"#+LAST_CURATED: [{today()}]")
                     proj_text = "\n".join(plines)
-                proj_file.write_text(proj_text, encoding="utf-8")
+                atomic_write(proj_file, proj_text)
             summary.append(f"  {file_val} LAST_CURATED -> [{today()}]")
         else:
             summary.append(f"  项目记忆文件不存在: {file_val}")
 
     # 写入 MEMORY.org
-    ctx.memory_org.write_text("\n".join(lns), encoding="utf-8")
+    atomic_write(ctx.memory_org, "\n".join(lns))
 
     # 输出摘要
     print("\n".join(summary))

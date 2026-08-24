@@ -62,6 +62,7 @@ from agenote.cards import (
     cmd_merge,
 )
 from agenote.search import cmd_search
+from agenote.safeio import atomic_write, kb_lock
 from agenote.curator import (
     cmd_archive,
     cmd_restore,
@@ -142,7 +143,10 @@ def cmd_init(args: argparse.Namespace, ctx=None) -> None:
         # 创建 .gitignore
         gitignore = root / ".gitignore"
         if not gitignore.exists():
-            gitignore.write_text("# 机器生成索引\nindex.json\n", encoding="utf-8")
+            atomic_write(
+                gitignore,
+                "# 机器生成索引\nindex.json\n# KB 进程锁\n.agenote.lock\n",
+            )
 
         # git init + 初始 commit
         _run_git(["init"], cwd=root)
@@ -226,6 +230,7 @@ def cmd_config(args: argparse.Namespace, ctx=None) -> None:
         if config.CONFIG_PATH.exists():
             die(f"配置文件已存在: {config.CONFIG_PATH}（不覆盖；如需重新生成请先手动删除）")
         config.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        # config 模板写用户 XDG 配置目录（KB 外），保留直接写
         config.CONFIG_PATH.write_text(config.render_template(), encoding="utf-8")
         print(f"已生成配置模板: {config.CONFIG_PATH}")
         print("全部键默认注释掉——取消注释需要定制的键即可启用。")
@@ -1074,6 +1079,15 @@ def main() -> None:
         print_help()
         sys.exit(0)
 
+    # 变更类子命令：dispatch 时持 KB 锁执行（读-改-写型命令的并发互斥）。
+    # review/lint 默认只读，但带 --fix 时写文件，统一加锁换取简单。
+    MUTATING_COMMANDS = {
+        "add", "update", "touch", "merge", "archive", "restore", "connect",
+        "inbox", "inbox-archive", "memory", "curate", "reindex",
+        "review", "lint", "format", "commit", "init",
+        "distill", "reconcile", "extract",
+    }
+
     commands = {
         "add": cmd_add,
         "get": cmd_get,
@@ -1125,7 +1139,13 @@ def main() -> None:
             ctx = agenote_context()
         if ctx is not None and args.command not in ("init", "config", "completions"):
             ensure_dirs(ctx)
-        commands[args.command](args, ctx)
+        # 变更类命令持全局 KB 锁（学 claude-obsidian：多 agent 并发写入互斥，
+        # 锁在 agent 域根，一把锁覆盖人类+agent 两域；临界区毫秒级无性能问题）
+        if args.command in MUTATING_COMMANDS:
+            with kb_lock(agenote_context().root / ".agenote.lock"):
+                commands[args.command](args, ctx)
+        else:
+            commands[args.command](args, ctx)
     else:
         die(f"未知子命令: {args.command}。运行 'agenote help' 查看帮助。")
 

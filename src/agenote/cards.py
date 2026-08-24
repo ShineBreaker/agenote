@@ -51,6 +51,7 @@ from agenote.index import (
     _save_index,
     _upsert_card,
 )
+from agenote.safeio import atomic_write
 
 
 def cmd_add(args: argparse.Namespace, ctx=None) -> None:
@@ -115,6 +116,13 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
         tech = category
 
     id_ = timestamp_id()
+    # 同秒并发 add 防撞：ID 追加序号保证唯一（index 按 ID upsert，撞车会互相覆盖；
+    # kb 锁内执行，检查-生成无竞态窗口）
+    base_id = id_
+    n = 2
+    while any(ctx.experiences.rglob(f"{id_}-*.org")):
+        id_ = f"{base_id}-{n}"
+        n += 1
     ts = now()
     filename = f"{id_}-{type_}-{category}.org"
 
@@ -168,7 +176,7 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
         lines.append("")
         lines.extend(_build_template(entry_type, body))
 
-    filepath.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    atomic_write(filepath, "\n".join(lines) + "\n")
 
     # 增量更新 JSON 索引
     index = _load_index(ctx)
@@ -519,7 +527,7 @@ def _append_link(filepath: Path, target: Path, desc: str) -> None:
     else:
         content = content.rstrip("\n") + f"\n\n** 相关链接\n{link}\n"
 
-    filepath.write_text(content, encoding="utf-8")
+    atomic_write(filepath, content)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -582,7 +590,7 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
         if extra.strip():
             content = content.rstrip("\n") + f"\n\n{extra.strip()}\n"
 
-    card.write_text(content, encoding="utf-8")
+    atomic_write(card, content)
     print(f"已更新: {card}")
 
 
@@ -672,7 +680,7 @@ def cmd_merge(args: argparse.Namespace, ctx=None) -> None:
             sec_new = sec_new.replace(":END:", ":STATUS:   archived\n:END:", 1)
         if ":MERGED_INTO:" not in sec_new:
             sec_new = sec_new.replace(":END:", f":MERGED_INTO:  {primary_id}\n:END:", 1)
-        sec.write_text(sec_new, encoding="utf-8")
+        atomic_write(sec, sec_new)
         print(f"  已归档: {sec.name}")
 
     if not merged_from_ids:
@@ -689,7 +697,7 @@ def cmd_merge(args: argparse.Namespace, ctx=None) -> None:
             ":END:", f":MERGED_FROM: {merged_str}\n:END:", 1
         )
 
-    primary.write_text(primary_content, encoding="utf-8")
+    atomic_write(primary, primary_content)
 
     # 更新索引
     index = _load_index(ctx)

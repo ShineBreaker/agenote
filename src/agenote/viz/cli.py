@@ -194,7 +194,7 @@ def cmd_viz(args: argparse.Namespace, ctx=None) -> None:
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(html, encoding="utf-8")
+    out.write_text(html, encoding="utf-8")  # --output 用户显式指定，保留直接写
     domains_desc = args.domain if args.domain != "all" else "human+agenote"
     print(f"✅ 可视化页面已生成: {out}（{len(cards)} 张卡片，域: {domains_desc}）")
 

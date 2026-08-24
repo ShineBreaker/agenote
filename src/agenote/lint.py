@@ -110,6 +110,7 @@ def _lint_file(filepath: str, do_fix: bool) -> list[str]:
         if target.suffix != ".org":
             issues.append(f"跳过写回：非 .org 文件 ({filepath})")
         else:
+            # 用户显式指定的任意目标文件，保留直接写（atomic_write 仅限 KB 内）
             target.write_text(new_text, encoding="utf-8")
 
     # ── 语义问题（始终只报告，--fix 不修）──

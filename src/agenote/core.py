@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from agenote import config
+from agenote.safeio import atomic_write
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 配置常量 — 默认值与覆盖入口见 agenote/config.py SCHEMA 与 ~/.config/agenote/config.toml
@@ -348,7 +349,7 @@ def _init_memory_template_for_ctx(ctx: "KBContext") -> None:
     for sec in MEMORY_SECTIONS:
         sections.append("")
         sections.append(f"* {sec}")
-    ctx.memory_org.write_text("\n".join(sections) + "\n", encoding="utf-8")
+    atomic_write(ctx.memory_org, "\n".join(sections) + "\n")
 
 
 def ensure_dirs(ctx: "KBContext | None" = None) -> None:
@@ -366,10 +367,7 @@ def ensure_dirs(ctx: "KBContext | None" = None) -> None:
 
     # ── inbox.org ──────────────────────────────────────────────────────────
     if not ctx.inbox.exists():
-        ctx.inbox.write_text(
-            f"#+title: inbox\n#+date: [{now()}]\n\n",
-            encoding="utf-8",
-        )
+        atomic_write(ctx.inbox, f"#+title: inbox\n#+date: [{now()}]\n\n")
 
     # ── MEMORY.org（含所有标准节）──────────────────────────────────────────
     if not ctx.memory_org.exists():
@@ -445,7 +443,7 @@ def touch_card(
     else:
         # 旧卡片无此字段，初始化为 1（首次留痕）
         content = content.replace(":END:", ":USAGE_COUNT: 1\n:END:", 1)
-    filepath.write_text(content, encoding="utf-8")
+    atomic_write(filepath, content)
 
     # 同步更新索引
     from agenote.index import _load_index, _save_index, _upsert_card  # lazy：避免 core↔index 顶层循环

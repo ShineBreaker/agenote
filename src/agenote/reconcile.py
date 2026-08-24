@@ -35,6 +35,7 @@ from pathlib import Path
 from agenote.core import AGENOTE_ROOT, is_noise_fact
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT, ReconciledFact
 from agenote import config
+from agenote.safeio import atomic_write
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # reconcile 索引落盘位置（与 experiences/ 平级，独立目录，绝不混入权威 KB）
@@ -119,9 +120,9 @@ def _save_reconcile_index(index: dict) -> None:
     for f in index["facts"]:
         by_source[f["source"]] = by_source.get(f["source"], 0) + 1
     index["by_source"] = dict(sorted(by_source.items(), key=lambda kv: (-kv[1], kv[0])))
-    RECONCILE_INDEX.write_text(
+    atomic_write(
+        RECONCILE_INDEX,
         json.dumps(index, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
     )
 
 

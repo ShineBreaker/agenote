@@ -22,6 +22,7 @@ from agenote.core import (
     KBContext,
     default_context,
 )
+from agenote.safeio import atomic_write
 from agenote.orgserde import (
     _parse_float_prop,
     _parse_int_prop,
@@ -97,9 +98,9 @@ def _save_index(index: dict, ctx: "KBContext | None" = None) -> None:
     ctx = ctx or default_context()
     index["updated"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     index["total"] = len(index["cards"])
-    ctx.index.write_text(
+    atomic_write(
+        ctx.index,
         json.dumps(index, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
     )
 
 

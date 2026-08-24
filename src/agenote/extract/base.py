@@ -340,6 +340,7 @@ def run_extract(
             src_file = out_path / f"{src}.org"
             from agenote.orgserde import render_facts_org  # lazy：避免包初始化链拉 orgserde
 
+            # --output-dir 用户显式指定（可配 KB 外目录），保留直接写
             src_file.write_text(
                 render_facts_org(shown, source=src, date=date, limit=effective_limit),
                 encoding="utf-8",

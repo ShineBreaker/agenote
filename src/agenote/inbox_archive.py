@@ -22,6 +22,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agenote.safeio import atomic_write
+
 if TYPE_CHECKING:
     from agenote.core import KBContext
 
@@ -151,7 +153,7 @@ def _prune_inbox(inbox_path: Path, pruned_headings: list[str]) -> int:
         # 清理尾部多余空行
         while len(output) >= 2 and output[-1] == "" and output[-2] == "":
             output.pop()
-        inbox_path.write_text("\n".join(output) + "\n", encoding="utf-8")
+        atomic_write(inbox_path, "\n".join(output) + "\n")
     return pruned_count
 
 
@@ -225,7 +227,7 @@ def cmd_inbox_archive(args: argparse.Namespace, ctx: "KBContext | None" = None) 
             counter += 1
         ts_human = now()
         card_text = _build_archived_card(heading, body, ts_id, ts_human, category, reason)
-        target.write_text(card_text, encoding="utf-8")
+        atomic_write(target, card_text)
         # 增量更新索引(为单卡片 upsert,与 cmd_add 一致)
         index = _load_index(ctx)
         _upsert_card(index, target, ctx)

@@ -28,6 +28,7 @@ from pathlib import Path
 from agenote import config
 from agenote.core import DISTILL_DIR, agenote_context
 from agenote.index import _load_index
+from agenote.safeio import atomic_write
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 常量（默认值见 config.py SCHEMA [distill] / [paths] 节）
@@ -288,7 +289,7 @@ def run_distill(window_days: int = DEFAULT_WINDOW_DAYS, dry_run: bool = True) ->
             content = _render_draft(cand, group)
             path = DISTILL_DIR / f"{date_tag}-{cand.name}-draft.md"
             cand.draft_path = str(path)
-            path.write_text(content, encoding="utf-8")
+            atomic_write(path, content)
             drafted += 1
         except Exception as e:
             report.error_details.append(f"draft '{cand.name}' 失败: {e}")

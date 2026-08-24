@@ -76,8 +76,10 @@ def test_render_facts_org_format():
     assert "#+LIMIT: unlimited" in out2
 
 
-def test_index_roundtrip(tmp_path):
+def test_index_roundtrip(tmp_path, monkeypatch):
     """_card_dict 抽取 → _save/_load 回读 → _upsert 增量。"""
+    # _save_index 走 atomic_write（仅允许 KB_ROOT 内），测试把根指到 tmp
+    monkeypatch.setattr(core, "KB_ROOT", tmp_path)
     # 造一个最小 KB 域
     exp = tmp_path / "experiences" / "general"
     exp.mkdir(parents=True)

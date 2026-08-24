@@ -36,6 +36,7 @@ from agenote.index import (
     _upsert_card,
     _rebuild_index,
 )
+from agenote.safeio import atomic_write
 
 # 权重重分配的变化判定 epsilon（小于此差异跳过，减少无意义 churn）
 WEIGHT_EPSILON = float(config.get("weights", "weight_epsilon"))
@@ -77,7 +78,7 @@ def cmd_archive(args: argparse.Namespace, ctx=None) -> None:
                 ":END:", f":ARCHIVE_REASON: {args.reason}\n:END:", 1
             )
 
-    card.write_text(content, encoding="utf-8")
+    atomic_write(card, content)
     index = _load_index(ctx)
     _upsert_card(index, card, ctx)
     _save_index(index, ctx)
@@ -126,7 +127,7 @@ def _archive_auto_stale(ctx=None) -> None:
                     content = content.replace(
                         ":END:", f":ARCHIVED_AT: [{now()}]\n:END:", 1
                     )
-                card.write_text(content, encoding="utf-8")
+                atomic_write(card, content)
                 _upsert_card(index, card, ctx)
                 count += 1
                 print(f"  自动归档: {card.name} (>{ARCHIVE_THRESHOLD_DAYS}天未验证)")
@@ -168,7 +169,7 @@ def _mark_auto_stale(ctx=None) -> None:
                     content = content.replace(
                         ":END:", ":STATUS:   stale\n:END:", 1
                     )
-                card.write_text(content, encoding="utf-8")
+                atomic_write(card, content)
                 _upsert_card(index, card, ctx)
                 count += 1
                 print(f"  标记 stale: {card.name} (>{STALE_DAYS}天未使用)")
@@ -200,7 +201,7 @@ def cmd_restore(args: argparse.Namespace, ctx=None) -> None:
     else:
         content = content.replace(":END:", f":LAST_VERIFIED: [{now()}]\n:END:", 1)
 
-    card.write_text(content, encoding="utf-8")
+    atomic_write(card, content)
     index = _load_index(ctx)
     _upsert_card(index, card, ctx)
     _save_index(index, ctx)
@@ -348,7 +349,7 @@ def cmd_review(args: argparse.Namespace, ctx=None) -> None:
             content = re.sub(r":TECH:\s*\n", ":TECH: general\n", content)
             fixes.append("已设置 TECH=general")
         if fixes:
-            card.write_text(content, encoding="utf-8")
+            atomic_write(card, content)
             for fix in fixes:
                 print(f"  🔧 {fix}")
 
