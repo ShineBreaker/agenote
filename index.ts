@@ -28,10 +28,11 @@ import { join } from "node:path";
 const KB_SCRIPT = "agenote-cli";
 
 // ─── 加载错误日志（omp 默认静默吞掉扩展错误，这里显式留痕）────────────────────
+// omp 18：agent dir = <PI_CONFIG_DIR|默认 .config/omp>/agent（多一层 agent/）
 const LOG_FILE = join(
   homedir(),
-  ".config",
-  "omp",
+  process.env.PI_CONFIG_DIR || ".config/omp",
+  "agent",
   "extensions",
   ".load-errors.log",
 );
