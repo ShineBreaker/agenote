@@ -75,6 +75,7 @@ from agenote.memory import cmd_memory
 from agenote.lint import cmd_lint
 from agenote.orgfmt import cmd_format
 from agenote.health import CARD_STALE_DAYS, cmd_health, cmd_gaps
+from agenote.doctor import cmd_doctor
 from agenote.viz.cli import add_viz_parser, cmd_viz
 
 # 跨 agent 协同 4 件套（lazy import 到 wrapper 内，避免顶层拉起 sqlite/JSONL 依赖）
@@ -1050,6 +1051,14 @@ def main() -> None:
     )
     extract_parser.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
 
+    # ── doctor ──────────────────────────────────────────────────────────────
+    doctor_parser = subparsers.add_parser(
+        "doctor", help="环境自诊断：外部工具/配置/KB 结构（纯只读）"
+    )
+    doctor_parser.add_argument(
+        "--json", action="store_true", help="JSON 结构化输出（agent 消费）"
+    )
+
     # ── completions ─────────────────────────────────────────────────────────
     comp_parser = subparsers.add_parser(
         "completions", help="生成 shell 补全脚本（bash/zsh/fish）"
@@ -1117,6 +1126,7 @@ def main() -> None:
         "review": cmd_review,
         "health": cmd_health,
         "gaps": cmd_gaps,
+        "doctor": cmd_doctor,
         "viz": cmd_viz,
         "curate": cmd_curate,
         # 跨 agent 协同 4 件套

@@ -43,6 +43,7 @@ COMMANDS: dict[str, str] = {
     "review": "审查卡片",
     "health": "知识库健康度报告",
     "gaps": "知识空白检测",
+    "doctor": "环境自诊断（外部工具/配置/KB 结构）",
     "viz": "生成知识库可视化 Web 页面",
     "curate": "一键策展",
     "reconcile": "跨 agent memory 只读 reconcile",

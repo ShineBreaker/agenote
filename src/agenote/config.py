@@ -279,12 +279,13 @@ def _file_value(section: str, key: str) -> object:
     return _MISSING
 
 
-def _warn_unknown_keys(data: dict) -> None:
-    """文件里存在 SCHEMA 未定义的节/键时警告（提示拼写错误），不阻塞。
+def _unknown_keys(data: dict) -> list[tuple[str, str]]:
+    """返回 SCHEMA 未定义的 (类别, 路径描述) 列表（doctor 与加载警告共用口径）。
 
-    子表（如 [extract.sources]）视为嵌套节递归检查：完整路径是已知节则继续，
-    否则按未知节警告。
+    类别 ∈ {"未知节", "顶层散键", "未知键"}。子表（如 [extract.sources]）
+    视为嵌套节递归检查：完整路径是已知节则继续，否则按未知节计。
     """
+    unknown: list[tuple[str, str]] = []
 
     def _walk(node: dict, path: str) -> None:
         for key, val in node.items():
@@ -293,17 +294,22 @@ def _warn_unknown_keys(data: dict) -> None:
                 if full in SCHEMA:
                     _walk(val, full)
                 else:
-                    print(f"警告: 配置文件存在未知节 [{full}]（已忽略）", file=sys.stderr)
+                    unknown.append(("未知节", f"[{full}]"))
             elif not path:
-                print(f"警告: 配置文件存在顶层散键 {key}（已忽略）", file=sys.stderr)
+                unknown.append(("顶层散键", key))
             elif path not in SCHEMA:
-                print(f"警告: 配置文件存在未知节 [{path}]（已忽略）", file=sys.stderr)
+                unknown.append(("未知节", f"[{path}]"))
             elif key not in SCHEMA[path]:
-                print(
-                    f"警告: 配置文件存在未知键 [{path}].{key}（已忽略）", file=sys.stderr
-                )
+                unknown.append(("未知键", f"[{path}].{key}"))
 
     _walk(data, "")
+    return unknown
+
+
+def _warn_unknown_keys(data: dict) -> None:
+    """文件里存在 SCHEMA 未定义的节/键时警告（提示拼写错误），不阻塞。"""
+    for kind, desc in _unknown_keys(data):
+        print(f"警告: 配置文件存在{kind} {desc}（已忽略）", file=sys.stderr)
 
 
 def _resolve_default(section: str, key: str) -> object:
