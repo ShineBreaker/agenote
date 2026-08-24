@@ -5,6 +5,39 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+核心设计移植自 [claude-obsidian](https://github.com/AgriciDaniel/claude-obsidian)
+（写入安全 / BM25 检索 / doctor 能力检测 / lint 分类报告，详见 README 致谢）。
+
+### Added
+
+- **写入安全层**（`safeio.py`）：变更类子命令统一持 flock 全局 KB 锁
+  （`cli.py` 单点包锁，锁文件 `.agenote.lock`）；KB 内数据文件全部改走
+  原子写（tmp + rename，containment 校验仅放行 KB_ROOT 内）；`add` 同秒
+  并发撞车自动追加 ID 序号后缀。修复多 agent 并发 `add` 互相覆盖、
+  index.json read-modify-write 丢条目、写一半崩溃留半文件三类缺陷。
+- **BM25 检索**（`ranking.py`）：检索打分从子串计数升级为纯 stdlib Okapi
+  BM25（k1/b 可配），CJK 1/2/3-gram 分词支持中英混检；两域卡片 + MEMORY +
+  reconcile 事实统一进语料算 IDF，域权重/标题加成/短语加成/all-terms/
+  snippet 全部保留。
+- `doctor` 子命令：环境自诊断（外部工具 PATH 探测 + 缺失降级说明 +
+  verification_reason 惯例；config.toml 未知键复用加载警告同一口径；
+  两域 index 与磁盘卡片数一致性检查）。`--json` 供 agent 消费。
+- `lint --json`：分类结构化报告（`summary.category_counts` + 条目
+  `{file, reason}`，分类键 format/missing_entry_type/enum_drift/
+  fingerprint/missing_sections），修复前后可差分对比。
+
+### Changed
+
+- **BREAKING**：检索 `score`/`raw_score` 数值尺度变化（BM25 分），排序
+  质量单调提升（稀有词与高频词有了 IDF 区分度）。
+- **BREAKING**：配置 `weights` 节删除 `score_title_bonus` /
+  `score_phrase_bonus`（改用 `[search]` 的 `title_boost` / `phrase_boost`，
+  Okapi 尺度）；`score_term_hit` 保留但仅用于命中块展示排序。旧
+  config.toml 残留键会触发未知键警告（无害）。
+- KB 侧 `.gitignore` 模板新增 `.agenote.lock` 条目（`init` 同步）。
+
 ## [0.1.5] - 2026-08-20
 
 ### Added

@@ -11,7 +11,7 @@ _agenote_completions() {
         words=("${COMP_WORDS[@]}")
         cword=$COMP_CWORD
     }
-    local subcmds="add archive commit completions config connect curate deduplicate distill dream extract fields format gaps get health inbox inbox-archive init lint list memory merge reconcile reindex restore review search stats tags touch trace update viz"
+    local subcmds="add archive commit completions config connect curate deduplicate distill doctor dream extract fields format gaps get health inbox inbox-archive init lint list memory merge reconcile reindex restore review search stats tags touch trace update viz"
     local globals="--domain --version -h --help"
     # 顶层：补子命令 + 全局选项
     if [[ $cword -eq 1 ]] || [[ "${words[1]}" == --* ]]; then

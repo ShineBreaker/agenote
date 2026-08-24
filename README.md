@@ -46,11 +46,14 @@ pip install --user git+https://github.com/ShineBreaker/agenote.git
 运行 `agenote --help` 查看完整子命令清单。主要命令分组：
 
 - **卡片 CRUD**：`add` / `get` / `list` / `update` / `merge` / `connect` / `archive` / `restore`
-- **检索**：`search` / `tags` / `fields` / `inbox`
+- **检索**：`search`（BM25 排序，CJK n-gram 中英混检）/ `tags` / `fields` / `inbox`
 - **记忆系统**：`memory`（`--add` / `--stale` / `--touch` / `--archive` 等子选项）
-- **策展**：`curate`（一键）/ `lint` / `deduplicate` / `health` / `gaps` / `reindex` / `stats`
+- **策展**：`curate`（一键）/ `lint`（`--json` 分类报告）/ `deduplicate` / `health` / `gaps` / `reindex` / `stats`
 - **跨 agent**：`reconcile` / `dream` / `distill` / `extract`
-- **维护**：`init` / `commit` / `config` / `touch` / `viz`
+- **维护**：`init` / `commit` / `config` / `doctor`（环境自诊断）/ `touch` / `viz`
+
+多 agent 并发写入安全：变更类命令持进程级 KB 锁（flock），文件落盘走
+原子写（tmp + rename），同秒 `add` 自动追加 ID 序号防覆盖。
 
 ## 配置
 
@@ -164,6 +167,20 @@ agenote completions bash > /etc/bash_completion.d/agenote  # 或 source
 
 贡献指南（含 Conventional Commits 规范）见 [CONTRIBUTING.md](CONTRIBUTING.md)，
 版本历史见 [CHANGELOG.md](CHANGELOG.md)，架构决策见 [docs/adr/](docs/adr/)。
+
+## 致谢
+
+本项目的若干核心设计移植自 [claude-obsidian](https://github.com/AgriciDaniel/claude-obsidian)
+（MIT License © AgriciDaniel 及贡献者），在此致谢：
+
+- **写入安全**（flock 进程锁 + tmp/rename 原子写）源自其「崩溃后可确定性恢复」
+  的事务哲学（裁剪版——agenote 单命令即时写入，不引入 journal/审批两阶段）
+- **BM25 检索**（纯 stdlib Okapi + CJK 1/2/3-gram 分词）源自其 wiki-retrieve
+  检索扩展（裁剪版——百级卡片进程内即时计算，不引入持久倒排索引）
+- **doctor 能力检测**的三态声明与 `verification_reason` 惯例
+  （「没有验证器」是一等信息公开声明）源自其 capabilities 合同
+- **lint 分类报告**（summary.category_counts + 条目 {file, reason}，
+  agent 可消费、可差分）源自其 wiki-lint 报告结构
 
 ## 许可证
 
