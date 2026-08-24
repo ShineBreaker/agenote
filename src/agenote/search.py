@@ -25,15 +25,20 @@ from agenote.core import (
     agenote_context,
 )
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
+from agenote.ranking import BM25, tokenize
 from agenote.orgserde import (
     parse_org_prop,
     read_org_title,
 )
 
 # 检索评分系数与片段参数（config [weights] / [search] 覆盖）
-SCORE_TERM_HIT = int(config.get("weights", "score_term_hit"))  # 每命中词得分
-SCORE_TITLE_BONUS = int(config.get("weights", "score_title_bonus"))  # 标题命中加分
-SCORE_PHRASE_BONUS = int(config.get("weights", "score_phrase_bonus"))  # 短语命中加分（单域）
+# BM25 排序（ranking.py）：TITLE/PHRASE boost 是 BM25 尺度下的加成；
+# SCORE_TERM_HIT 仅用于命中块的展示排序（_range_score），不参与全局排序。
+SCORE_TERM_HIT = int(config.get("weights", "score_term_hit"))  # 块排序：每命中词得分
+BM25_K1 = float(config.get("search", "bm25_k1"))  # Okapi 词频饱和
+BM25_B = float(config.get("search", "bm25_b"))  # Okapi 文档长度归一
+TITLE_BOOST = float(config.get("search", "title_boost"))  # 标题命中每词加成
+PHRASE_BOOST = float(config.get("search", "phrase_boost"))  # 整短语命中一次加成（单域）
 SEARCH_LIMIT = int(config.get("search", "limit"))  # 结果默认上限
 SNIPPET_MAX_CHARS = int(config.get("search", "snippet_max_chars"))  # 片段截断字符数
 SNIPPET_CONTEXT_LINES = int(config.get("search", "snippet_context_lines"))  # 片段窗口行数
@@ -150,14 +155,17 @@ def _cross_domain_search(
 ) -> list[dict]:
     """跨域加权检索：同时扫人类域 + agenote 域 + reconcile 事实。
 
-    与 MCP agenote_search 行为对齐：各域权重取自 ctx.default_weight,
-    reconcile 默认 RECONCILE_DEFAULT_WEIGHT。返回按加权分数降序排列的结果列表。
+    BM25 排序（移植 claude-obsidian）：全部候选（含 reconcile 事实）统一
+    进语料算 IDF，域权重乘在 BM25 得分上；子串命中仍作为候选门槛，
+    snippet/展示逻辑与旧版一致。
     """
     terms = _query_terms(query)
     if not terms:
         die("必须提供搜索关键词")
 
     normalized_terms = terms if case_sensitive else [t.casefold() for t in terms]
+    query_tokens = tokenize(query, case_sensitive)
+    docs_tokens: dict[str, list[str]] = {}
     results: list[dict] = []
 
     for ctx in (default_context(), agenote_context()):
@@ -168,25 +176,23 @@ def _cross_domain_search(
             except OSError:
                 continue
             haystack = content if case_sensitive else content.casefold()
-            term_hits = [t for t in normalized_terms if t in haystack]
-            if not term_hits:
+            if not any(t in haystack for t in normalized_terms):
                 continue
-            occurrence_count = sum(haystack.count(t) for t in term_hits)
             title = read_org_title(content)
+            key = f"file:{filepath}"
+            docs_tokens[key] = tokenize(content, case_sensitive)
             title_hay = title if case_sensitive else title.casefold()
-            title_bonus = SCORE_TITLE_BONUS * sum(1 for t in term_hits if t in title_hay)
-            raw_score = len(term_hits) * SCORE_TERM_HIT + occurrence_count + title_bonus
             results.append(
                 {
+                    "_key": key,
                     "domain": ctx.name,
                     "weight": weight,
-                    "raw_score": raw_score,
-                    "score": round(raw_score * weight, 1),
                     "title": title,
                     "file": str(filepath),
-                    "snippet": _make_search_snippet(
+                    "_snippet": _make_search_snippet(
                         {"content": content}, normalized_terms, case_sensitive
                     ),
+                    "_title_hits": sum(1 for t in normalized_terms if t in title_hay),
                 }
             )
 
@@ -194,34 +200,38 @@ def _cross_domain_search(
     try:
         from agenote.reconcile import load_reconcile_facts
 
-        for fact in load_reconcile_facts():
+        for i, fact in enumerate(load_reconcile_facts()):
             hay = fact.get("content", "")
             haystack = hay if case_sensitive else hay.casefold()
-            term_hits = [t for t in normalized_terms if t in haystack]
-            if not term_hits:
+            if not any(t in haystack for t in normalized_terms):
                 continue
-            occurrence_count = sum(haystack.count(t) for t in term_hits)
             title = fact.get("title", "")
+            key = f"fact:{i}"
+            docs_tokens[key] = tokenize(hay, case_sensitive)
             title_hay = title if case_sensitive else title.casefold()
-            title_bonus = SCORE_TITLE_BONUS * sum(1 for t in term_hits if t in title_hay)
-            raw_score = len(term_hits) * SCORE_TERM_HIT + occurrence_count + title_bonus
-            fact_weight = fact.get("weight", RECONCILE_DEFAULT_WEIGHT)
             results.append(
                 {
+                    "_key": key,
                     "domain": "reconcile",
                     "source": fact.get("source", ""),
-                    "weight": fact_weight,
-                    "raw_score": raw_score,
-                    "score": round(raw_score * fact_weight, 1),
+                    "weight": fact.get("weight", RECONCILE_DEFAULT_WEIGHT),
                     "title": title,
                     "file": "",
                     "id": fact.get("id", ""),
-                    "snippet": hay[:SNIPPET_MAX_CHARS]
+                    "_snippet": hay[:SNIPPET_MAX_CHARS]
                     + ("..." if len(hay) > SNIPPET_MAX_CHARS else ""),
+                    "_title_hits": sum(1 for t in normalized_terms if t in title_hay),
                 }
             )
     except Exception:
         pass  # reconcile 索引不可用 → 静默跳过
+
+    bm25 = BM25(docs_tokens, k1=BM25_K1, b=BM25_B)
+    for r in results:
+        raw = bm25.score(r.pop("_key"), query_tokens) + r.pop("_title_hits") * TITLE_BOOST
+        r["raw_score"] = raw
+        r["score"] = round(raw * r["weight"], 1)
+        r["snippet"] = r.pop("_snippet")
 
     results.sort(key=lambda r: r["score"], reverse=True)
     return results[:limit]
@@ -293,7 +303,9 @@ def cmd_search(args: argparse.Namespace, ctx=None) -> None:
 
     normalized_terms = terms if args.case_sensitive else [t.casefold() for t in terms]
     normalized_phrase = query if args.case_sensitive else query.casefold()
+    query_tokens = tokenize(query, args.case_sensitive)
     matches = []
+    docs_tokens: dict[str, list[str]] = {}
 
     for filepath in _iter_search_targets(ctx):
         try:
@@ -310,30 +322,35 @@ def cmd_search(args: argparse.Namespace, ctx=None) -> None:
         if args.all_terms and len(term_hits) != len(terms):
             continue
 
-        occurrence_count = sum(haystack.count(term) for term in term_hits)
-        phrase_bonus = (
-            SCORE_PHRASE_BONUS if normalized_phrase and normalized_phrase in haystack else 0
-        )
         title = read_org_title(content)
         title_haystack = title if args.case_sensitive else title.casefold()
-        title_bonus = SCORE_TITLE_BONUS * sum(1 for term in term_hits if term in title_haystack)
-        score = (
-            len(term_hits) * SCORE_TERM_HIT + occurrence_count + phrase_bonus + title_bonus
-        )
-
         matches.append(
             {
                 "filepath": filepath,
                 "content": content,
-                "score": score,
                 "matched": [
                     raw
                     for raw, term in zip(terms, normalized_terms)
                     if term in haystack
                 ],
                 "title": title,
+                # BM25 打分素材（打分循环里消费后删除，不进入输出）
+                "_key": str(filepath),
+                "_title_hits": sum(1 for term in term_hits if term in title_haystack),
+                "_phrase_hit": bool(normalized_phrase) and normalized_phrase in haystack,
             }
         )
+        docs_tokens[str(filepath)] = tokenize(content, args.case_sensitive)
+
+    # BM25 打分（+ 标题/短语加成），排序键仍写入 matches[i]["score"]
+    bm25 = BM25(docs_tokens, k1=BM25_K1, b=BM25_B)
+    for match in matches:
+        raw = bm25.score(match["_key"], query_tokens)
+        raw += match.pop("_title_hits") * TITLE_BOOST
+        if match.pop("_phrase_hit"):
+            raw += PHRASE_BOOST
+        match.pop("_key")
+        match["score"] = raw
 
     if not matches:
         if args.json:

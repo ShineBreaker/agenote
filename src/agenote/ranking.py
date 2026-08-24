@@ -32,6 +32,7 @@ _CJK_RANGES = (
 )
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
+_WORD_RE_LOWER = re.compile(r"[A-Za-z0-9']+")
 
 
 def _is_cjk(ch: str) -> bool:
@@ -68,15 +69,21 @@ def _iter_segments(text: str) -> list[tuple[str, bool]]:
     return segs
 
 
-def tokenize(text: str) -> list[str]:
-    """中英混合分词：CJK 段 1/2/3-gram，拉丁段按 [a-z0-9']+ 词切分。"""
-    text = unicodedata.normalize("NFKC", text).casefold()
+def tokenize(text: str, case_sensitive: bool = False) -> list[str]:
+    """中英混合分词：CJK 段 1/2/3-gram，拉丁段按 [a-z0-9']+ 词切分。
+
+    默认 NFKC + casefold 归一（大小写不敏感检索）；case_sensitive=True
+    时保留原大小写（拉丁词区分 Guix/guix，CJK 不受影响）。
+    """
+    text = unicodedata.normalize("NFKC", text)
+    if not case_sensitive:
+        text = text.casefold()
     tokens: list[str] = []
     for seg, is_cjk in _iter_segments(text):
         if is_cjk:
             tokens.extend(_cjk_ngrams(seg))
         else:
-            tokens.extend(_WORD_RE.findall(seg))
+            tokens.extend(_WORD_RE_LOWER.findall(seg) if case_sensitive else _WORD_RE.findall(seg))
     return tokens
 
 

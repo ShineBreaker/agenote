@@ -42,6 +42,13 @@ def test_tokenize_empty():
     assert tokenize("!!！??") == []
 
 
+def test_tokenize_case_sensitive():
+    """case_sensitive=True 保留大小写（拉丁词区分），CJK 不受影响。"""
+    assert tokenize("Guix guix", case_sensitive=True) == ["Guix", "guix"]
+    assert tokenize("Guix", case_sensitive=True) == ["Guix"]
+    assert tokenize("配置", case_sensitive=True) == tokenize("配置")
+
+
 # ── BM25 ───────────────────────────────────────────────────────────────────────
 
 
