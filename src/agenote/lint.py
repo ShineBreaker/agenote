@@ -18,6 +18,7 @@
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -48,6 +49,7 @@ def cmd_lint(args: argparse.Namespace, ctx=None) -> None:
     语义问题：枚举漂移、缺失字段、fingerprint 字段数、卡片骨架章节缺失。
     --fix 只修格式问题（= format），语义问题始终只报告。
     --check 设退出码 = 问题数（≤127）。
+    --json 输出分类结构化报告（agent 可消费、可差分），与 --fix/--check 可并存。
     """
     ctx = ctx or default_context()
     target_files = args.files
@@ -62,6 +64,7 @@ def cmd_lint(args: argparse.Namespace, ctx=None) -> None:
 
     total_issues = 0
     files_with_issues = 0
+    report: dict[str, list[dict]] = {}
 
     for filepath in target_files:
         issues = _lint_file(filepath, do_fix=args.fix)
@@ -69,22 +72,45 @@ def cmd_lint(args: argparse.Namespace, ctx=None) -> None:
             total_issues += len(issues)
             files_with_issues += 1
             basename = os.path.basename(filepath)
-            print(f"\n{basename} ({len(issues)} 项):")
-            for issue in issues:
-                print(issue)
+            if not getattr(args, "json", False):
+                print(f"\n{basename} ({len(issues)} 项):")
+                for issue in issues:
+                    print(issue)
+            for category, message in issues:
+                report.setdefault(category, []).append(
+                    {"file": basename, "reason": message.strip()}
+                )
 
-    action_name = "修复" if args.fix else "检查"
-    print(
-        f"\n{action_name}完成: {files_with_issues}/{len(target_files)} 个文件"
-        f"有问题, 共 {total_issues} 处"
-    )
+    if getattr(args, "json", False):
+        category_counts = {k: len(v) for k, v in sorted(report.items())}
+        print(
+            json.dumps(
+                {
+                    "summary": {
+                        "files_scanned": len(target_files),
+                        "files_with_issues": files_with_issues,
+                        "issues_found": total_issues,
+                        "category_counts": category_counts,
+                    },
+                    **{k: v for k, v in sorted(report.items())},
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        action_name = "修复" if args.fix else "检查"
+        print(
+            f"\n{action_name}完成: {files_with_issues}/{len(target_files)} 个文件"
+            f"有问题, 共 {total_issues} 处"
+        )
 
     if args.check:
         sys.exit(min(total_issues, 127))
 
 
-def _lint_file(filepath: str, do_fix: bool) -> list[str]:
-    """检查（并可选修复格式问题）单个文件，返回问题/变更列表。
+def _lint_file(filepath: str, do_fix: bool) -> list[tuple[str, str]]:
+    """检查（并可选修复格式问题）单个文件，返回 (分类, 描述) 列表。
 
     格式问题：do_fix=True 时调 format_org 写盘修复。
     语义问题：始终只报告（不自动改）。
@@ -92,7 +118,7 @@ def _lint_file(filepath: str, do_fix: bool) -> list[str]:
     with open(filepath, "r", encoding="utf-8") as f:
         text = f.read()
 
-    issues: list[str] = []
+    issues: list[tuple[str, str]] = []
 
     # ── 格式问题：调 format_org 做 diff ──
     new_text, fmt_changes = format_org(text, strict=True)
@@ -103,12 +129,12 @@ def _lint_file(filepath: str, do_fix: bool) -> list[str]:
             key = ch.strip()
             if key not in seen:
                 seen.add(key)
-                issues.append(ch)
+                issues.append(("format", ch))
     if do_fix and fmt_changes:
         # 写回校验：路径归一化，且仅写回 .org 文件（lint 的操作对象）
         target = Path(filepath).resolve()
         if target.suffix != ".org":
-            issues.append(f"跳过写回：非 .org 文件 ({filepath})")
+            issues.append(("format", f"跳过写回：非 .org 文件 ({filepath})"))
         else:
             # 用户显式指定的任意目标文件，保留直接写（atomic_write 仅限 KB 内）
             target.write_text(new_text, encoding="utf-8")
@@ -136,55 +162,65 @@ _STANDARD_SECTIONS = [
 ]
 
 
-def _check_semantic(text: str) -> list[str]:
-    """检查 agenote 卡片语义问题（不自动修，只报告）。
+def _check_semantic(text: str) -> list[tuple[str, str]]:
+    """检查 agenote 卡片语义问题（不自动修，只报告），返回 (分类, 描述) 列表。
 
-    检查项：
-      1. 缺失 ENTRY_TYPE（agenote 卡片应有，旧卡片可能缺）
-      2. TYPE 枚举漂移（不在 VALID_TYPES）
-      3. OWNER 枚举漂移（不在 VALID_OWNERS）
-      4. ENTRY_TYPE 枚举漂移（不在 VALID_ENTRY_TYPES，且非空）
-      5. fingerprint 行字段数 ≠ 5
-      6. 缺失标准骨架章节（信息性提示）
+    分类：missing_entry_type / enum_drift / fingerprint / missing_sections
     """
-    issues: list[str] = []
+    issues: list[tuple[str, str]] = []
 
     # 1. ENTRY_TYPE 缺失
     entry_type = parse_org_prop(text, "ENTRY_TYPE")
     if not entry_type:
-        issues.append("  语义: 缺失 :ENTRY_TYPE: 字段（建议补 note/mistake/ascended）")
+        issues.append(
+            ("missing_entry_type", "语义: 缺失 :ENTRY_TYPE: 字段（建议补 note/mistake/ascended）")
+        )
 
     # 2. TYPE 枚举
     card_type = parse_org_prop(text, "TYPE")
     if card_type and card_type not in VALID_TYPES:
         issues.append(
-            f"  语义: :TYPE: {card_type} 不在 VALID_TYPES（{sorted(VALID_TYPES)}）"
+            (
+                "enum_drift",
+                f"语义: :TYPE: {card_type} 不在 VALID_TYPES（{sorted(VALID_TYPES)}）",
+            )
         )
 
     # 3. OWNER 枚举
     owner = parse_org_prop(text, "OWNER")
     if owner and owner not in VALID_OWNERS:
         issues.append(
-            f"  语义: :OWNER: {owner} 不在 VALID_OWNERS（{sorted(VALID_OWNERS)}）"
+            (
+                "enum_drift",
+                f"语义: :OWNER: {owner} 不在 VALID_OWNERS（{sorted(VALID_OWNERS)}）",
+            )
         )
 
     # 4. ENTRY_TYPE 枚举（有值时校验）
     if entry_type and entry_type not in VALID_ENTRY_TYPES:
         issues.append(
-            f"  语义: :ENTRY_TYPE: {entry_type} 不在 VALID_ENTRY_TYPES"
-            f"（{sorted(VALID_ENTRY_TYPES)}）"
+            (
+                "enum_drift",
+                f"语义: :ENTRY_TYPE: {entry_type} 不在 VALID_ENTRY_TYPES"
+                f"（{sorted(VALID_ENTRY_TYPES)}）",
+            )
         )
 
     # 5. fingerprint 字段数
     fp_issue = _check_fingerprint_fields(text)
     if fp_issue:
-        issues.append(fp_issue)
+        issues.append(("fingerprint", fp_issue))
 
     # 6. 标准骨架章节（信息性，只在卡片有正文时检查）
     if "** " in text:
         missing_sections = [s for s in _STANDARD_SECTIONS if s not in text]
         if missing_sections:
-            issues.append(f"  信息: 缺失标准章节 {missing_sections}（信息性，非必须）")
+            issues.append(
+                (
+                    "missing_sections",
+                    f"信息: 缺失标准章节 {missing_sections}（信息性，非必须）",
+                )
+            )
 
     return issues
 

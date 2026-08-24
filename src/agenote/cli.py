@@ -775,6 +775,9 @@ def main() -> None:
     lint_parser.add_argument(
         "--check", action="store_true", help="仅检查，退出码=min(问题数,127)"
     )
+    lint_parser.add_argument(
+        "--json", action="store_true", help="分类结构化输出（agent 可消费、可差分）"
+    )
     lint_parser.add_argument("files", nargs="*", help="目标文件（默认检查全部）")
 
     # ── format ───────────────────────────────────────────────────────────
