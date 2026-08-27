@@ -252,7 +252,20 @@ def cmd_list(args: argparse.Namespace, ctx=None) -> None:
     compact = [
         {
             k: c.get(k, "")
-            for k in ("id", "title", "category", "type", "tech", "owner", "created")
+            for k in (
+                "id",
+                "title",
+                "category",
+                "type",
+                "tech",
+                "owner",
+                "created",
+                "status",
+                "last_used",
+                "usage_count",
+                "source_agent",
+                "file",
+            )
         }
         for c in matched
     ]
