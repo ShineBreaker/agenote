@@ -60,8 +60,8 @@
 | `t` | `agenote-knowledge-search-by-tag`       | 按标签搜索      |
 | `I` | `agenote-knowledge-open-inbox`          | 打开 Inbox      |
 | `S` | `agenote-knowledge-stats`               | 知识库统计      |
-| `v` | `agenote-knowledge-browse-human`        | 浏览人类知识库  |
-| `b` | `agenote-knowledge-browse-agenote`      | 浏览 agenote 域 |
+| `v` | `agenote-knowledge-browse-human`        | 总览人类域全部  |
+| `b` | `agenote-knowledge-browse-agenote`      | 总览 agenote 域全部 |
 | `a` | `agenote-knowledge-archive-inbox-entry` | 归档 Inbox 条目 |
 | `d` | `agenote-knowledge-deduplicate`         | 检测重复卡      |
 | `e` | `agenote-knowledge-merge`               | 合并卡片        |
@@ -74,6 +74,23 @@
 | `V` | `agenote-knowledge-viz-open-browser`    | 浏览器可视化    |
 
 另含 `agenote-health`（健康度面板）与 dashboard 数据源函数（见下）。
+
+## 知识库总览（browse mode）
+
+`M-x agenote-knowledge-browse` 打开双域分组总览：human 与 agenote 各显示前 20 张卡片
+（列：状态 / 作者 / 上次使用 / 次数 / 类别 / 标题；作者列显示 `source_agent`，无则
+`owner`；mode-line 显示各域总数与当前过滤词）。
+
+| 键       | 动作                                                     |
+| -------- | -------------------------------------------------------- |
+| `RET`    | 条目行：打开卡片文件；分组头行：该域 20 条 ↔ 全部 展开/收起 |
+| `/`      | 子串过滤（匹配标题/类别/状态/作者，如 `stale`、`archived`） |
+| `B`      | 回双区总览（重置展开状态并清除过滤）                     |
+| `g`      | 重新拉取两域数据                                         |
+| `o`      | 打开光标所在域的 web 可视化（`agenote viz --open`）      |
+
+数据来自 `agenote --domain <domain> list --all --json`（每次刷新全量拉取，分组截取在
+Emacs 侧完成，保证过滤对全量数据准确）。
 
 ## 配置项
 
@@ -111,7 +128,10 @@
 
 ```elisp
 ;; 返回最近 N 条知识条目（alist 列表，供 dashboard 渲染）
+;; 默认 agenote 域（agent 写入卡片所在地；human 域多为手写、常为空）
 (agenote-recent-knowledge-entries 5)
+;; 可显式指定域
+(agenote-recent-knowledge-entries 5 'human)
 ```
 
 宿主负责：缓存、异步进程刷新、widget 注册。本包不介入这些。

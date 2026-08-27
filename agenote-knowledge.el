@@ -22,6 +22,7 @@
 (require 'cl-lib)
 (require 'json)
 (require 'org)
+(require 'tabulated-list)
 (require 'agenote)
 
 
@@ -368,12 +369,15 @@ Prefix ARG non-nil: call `agenote lint --fix' to auto-fix."
 (defconst agenote-knowledge-browse-buffer-name "*knowledge-browse*")
 
 ;;;###autoload
-(defun agenote-knowledge-list-cards (domain &optional recent)
+(defun agenote-knowledge-list-cards (domain &optional recent all)
   "Return the card list for DOMAIN via the agenote CLI.
-When RECENT is non-nil, request only the most recent RECENT entries;
-ordering and filtering are entirely decided by the CLI."
-  (let* ((args (append (when recent
-                         (list "--recent" (number-to-string recent)))
+When RECENT is non-nil, request only the most recent RECENT entries.
+When ALL is non-nil, request every card (the CLI caps a plain list at
+its own default of 20 entries).  Ordering and filtering are entirely
+decided by the CLI."
+  (let* ((args (append (cond
+                        (all (list "--all"))
+                        (recent (list "--recent" (number-to-string recent))))
                        (list "--json")))
          (result (apply #'agenote-call domain "list" args))
          (status (plist-get result :status))
@@ -387,123 +391,253 @@ ordering and filtering are entirely decided by the CLI."
           nil
         (json-read-from-string output)))))
 
-(defvar-local agenote--knowledge-card-domain nil)
-(defvar-local agenote--knowledge-card-id nil)
+(defvar-local agenote--knowledge-browse-cards nil
+  "Alist ((DOMAIN . CARDS) ...) cached from the CLI, newest first.
+Refresh always fetches every card; per-group display limits trim later
+so the substring filter stays accurate over the full domain.")
 
-(defun agenote-knowledge-card-refresh (&rest _)
-  "Refresh the current card detail via the CLI."
-  (let* ((result
-          (agenote-call
-           agenote--knowledge-card-domain "get" agenote--knowledge-card-id))
-         (inhibit-read-only t))
-    (erase-buffer)
-    (insert (if (eq (plist-get result :status) 0)
-                (plist-get result :stdout)
-              (format "agenote get 失败:\n%s" (plist-get result :stderr))))
-    (goto-char (point-min))))
+(defvar-local agenote--knowledge-browse-limits nil
+  "Alist ((DOMAIN . LIMIT) ...) controlling group visibility.
+LIMIT is a number (show the first N cards of the group), `all' (show
+every card) or 0 (hide the group entirely).")
+(defvar-local agenote--knowledge-browse-filter nil
+  "Case-folded substring filter over title/category/status/author, or nil.")
 
-;;;###autoload
-(defun agenote-knowledge-show-card (domain id)
-  "Show the card with ID in DOMAIN in a read-only Org buffer."
-  (let ((buffer (get-buffer-create "*knowledge-card*")))
-    (with-current-buffer buffer
-      (org-mode)
-      (setq-local agenote--knowledge-card-domain domain
-                  agenote--knowledge-card-id id
-                  revert-buffer-function #'agenote-knowledge-card-refresh)
-      (agenote-knowledge-card-refresh)
-      (view-mode 1)
-      (setq header-line-format
-            (format " [%s] %s · g 刷新 · q 关闭" domain id)))
-    (pop-to-buffer buffer)))
+(defconst agenote-knowledge-browse--default-limits
+  '((human . 20) (agenote . 20))
+  "Default view: head 20 cards of each domain, as separate groups.")
 
-(defun agenote-knowledge-browse--format-line (domain card)
-  "Format CARD of DOMAIN as a clickable line."
-  (let* ((id (or (plist-get card :id) ""))
-         (title (or (plist-get card :title) "(无标题)"))
-         (category (or (plist-get card :category) "unknown"))
-         (created (or (plist-get card :created) ""))
-         (line (format "%-12s  %-10s  %s" category created title))
-         (map (make-sparse-keymap)))
-    (define-key map (kbd "RET")
-                (lambda ()
-                  (interactive)
-                  (agenote-knowledge-show-card domain id)))
-    (define-key map [mouse-1]
-                (lambda ()
-                  (interactive)
-                  (agenote-knowledge-show-card domain id)))
-    (add-text-properties
-     0 (length line)
-     (list 'agenote-knowledge-id id
-           'keymap map
-           'mouse-face 'highlight
-           'help-echo (format "查看 %s" id)
-           'follow-link t)
-     line)
-    line))
+(defun agenote-knowledge-browse--root (domain)
+  "Return the knowledge-base root directory for DOMAIN."
+  (if (eq domain 'human)
+      agenote-org-directory
+    agenote-subdomain-directory))
 
-(defvar-local agenote--knowledge-browse-domain 'human)
-(defvar-local agenote--knowledge-browse-cards nil)
+(defun agenote-knowledge-browse--str (s fallback)
+  "Return S unless it is nil or empty, else FALLBACK."
+  (if (and (stringp s) (not (string-empty-p s))) s fallback))
+
+(defun agenote-knowledge-browse--date (ts)
+  "Extract the YYYY-MM-DD part of an Org timestamp TS (\"[2026-08-27 …\")."
+  (if (and (stringp ts) (>= (length ts) 11))
+      (substring ts 1 11)
+    "-"))
+
+(defun agenote-knowledge-browse--status-face (status)
+  "Face for a card STATUS value."
+  (pcase status
+    ("stable" 'success)
+    ("stale" 'warning)
+    ("archived" 'shadow)
+    (_ 'default)))
+
+(defun agenote-knowledge-browse--match-p (card)
+  "Return non-nil when CARD passes `agenote--knowledge-browse-filter'."
+  (let ((needle agenote--knowledge-browse-filter))
+    (or (null needle)
+        (string-search
+         needle
+         (downcase
+          (string-join
+           (mapcar (lambda (k) (or (plist-get card k) ""))
+                   '(:title :category :status :source_agent :owner))
+           " "))))))
+
+(defun agenote-knowledge-browse--entries ()
+  "Build `tabulated-list-entries': one header row per visible group.
+A card entry's id is its absolute file path (RET visits the file); a
+group header's id is (group . DOMAIN) (RET toggles expansion).  The
+header text lands in the flexible Title column so it never stretches
+the fixed-width columns."
+  (let (entries)
+    (dolist (spec agenote--knowledge-browse-limits)
+      (let* ((domain (car spec))
+             (limit (cdr spec))
+             (cards (cdr (assq domain agenote--knowledge-browse-cards)))
+             (hits (seq-filter #'agenote-knowledge-browse--match-p cards))
+             (shown (if (eq limit 'all) hits (seq-take hits limit))))
+        (unless (eq limit 0)
+          (let ((label
+                 (propertize
+                  (format "── %s · 显示 %d/%d 张%s"
+                          domain (length shown) (length hits)
+                          (if (eq limit 'all) "（RET 收起）" "（RET 展开全部）"))
+                  'face 'bold)))
+            (push (list (cons 'group domain)
+                        (vector "" "" "" "" "" label))
+                  entries))
+          (dolist (card shown)
+            (let ((status (agenote-knowledge-browse--str
+                           (plist-get card :status) "done"))
+                  (file (plist-get card :file)))
+              ;; file 缺失 = CLI 版本过旧（list 无该字段）：跳过并提示，
+              ;; 避免 expand-file-name 对 nil 报错毁掉整个界面
+              (when file
+                (push (list
+                       (expand-file-name
+                        file (agenote-knowledge-browse--root domain))
+                       (vector
+                        (propertize status
+                                    'face (agenote-knowledge-browse--status-face status))
+                        (agenote-knowledge-browse--str
+                         (plist-get card :source_agent)
+                         (agenote-knowledge-browse--str (plist-get card :owner) "-"))
+                        (agenote-knowledge-browse--date (plist-get card :last_used))
+                        (number-to-string (or (plist-get card :usage_count) 0))
+                        (agenote-knowledge-browse--str (plist-get card :category) "?")
+                        (agenote-knowledge-browse--str (plist-get card :title) "(无标题)")))
+                      entries)))))))
+    (nreverse entries)))
+
+(defun agenote-knowledge-browse--modeline-name ()
+  "Return the mode-name showing per-domain totals and the active filter.
+The header-line is left to `tabulated-list-init-header' (column names)."
+  (let ((counts
+         (mapconcat
+          (lambda (spec)
+            (format "%s:%d"
+                    (car spec)
+                    (length (cdr (assq (car spec)
+                                        agenote--knowledge-browse-cards)))))
+          (seq-filter (lambda (s) (not (eq 0 (cdr s))))
+                      agenote--knowledge-browse-limits)
+          " ")))
+    (if agenote--knowledge-browse-filter
+        (format "KB[%s|%s]" counts agenote--knowledge-browse-filter)
+      (format "KB[%s]" counts))))
+
+(defun agenote-knowledge-browse-redraw ()
+  "Rebuild entries from cached cards and redraw; no CLI access."
+  (setq tabulated-list-entries (agenote-knowledge-browse--entries))
+  (tabulated-list-print)
+  (setq mode-name (agenote-knowledge-browse--modeline-name)))
 
 (defun agenote-knowledge-browse-refresh (&rest _)
-  "Reload the current domain from the CLI and redraw the list."
+  "Reload every visible domain from the CLI and redraw.
+A CLI failure degrades that domain to an empty group plus a message
+instead of signalling, so the buffer stays usable."
   (interactive)
   (setq agenote--knowledge-browse-cards
-        (agenote-knowledge-list-cards agenote--knowledge-browse-domain))
-  (let ((inhibit-read-only t))
-    (erase-buffer)
-    (insert (propertize
-             (format "%s · %d 张\n\n"
-                     agenote--knowledge-browse-domain
-                     (length agenote--knowledge-browse-cards))
-             'face 'bold))
-    (dolist (card agenote--knowledge-browse-cards)
-      (insert (agenote-knowledge-browse--format-line
-               agenote--knowledge-browse-domain card)
-              "\n"))
-    (goto-char (point-min))))
+        (mapcar
+         (lambda (spec)
+           (cons (car spec)
+                 (condition-case err
+                     (agenote-knowledge-list-cards (car spec) nil t)
+                   (error
+                    (message "%s" (error-message-string err))
+                    nil))))
+         agenote--knowledge-browse-limits))
+  (when (seq-some (lambda (pair)
+                    (seq-some (lambda (c) (not (plist-get c :file)))
+                              (cdr pair)))
+                  agenote--knowledge-browse-cards)
+    (message "agenote CLI 的 list 输出缺 file 字段（版本过旧），受影响卡片暂不在总览显示；请升级 agenote"))
+  (agenote-knowledge-browse-redraw))
+
+(defun agenote-knowledge-browse--domain-at-point ()
+  "Domain of the group header or card row at point (default `agenote')."
+  (let ((id (tabulated-list-get-id)))
+    (cond
+     ((and (consp id) (eq (car id) 'group)) (cdr id))
+     ((stringp id)
+      (if (string-prefix-p
+           (file-name-as-directory agenote-subdomain-directory) id)
+          'agenote 'human))
+     (t 'agenote))))
+
+(defun agenote-knowledge-browse-ret ()
+  "On a group header, toggle that group between head-20 and all.
+On a card row, visit the card file."
+  (interactive)
+  (let ((id (tabulated-list-get-id)))
+    (cond
+     ((and (consp id) (eq (car id) 'group))
+      (let ((spec (assq (cdr id) agenote--knowledge-browse-limits)))
+        (when spec
+          (setcdr spec (if (eq (cdr spec) 'all) 20 'all))
+          (agenote-knowledge-browse-redraw))))
+     ((stringp id) (find-file id))
+     (t (message "此处没有卡片")))))
+
+(defun agenote-knowledge-browse-filter (needle)
+  "Narrow the browse list to cards matching NEEDLE.
+NEEDLE matches (case-folded) against title, category, status or author,
+so e.g. \"/stale\" surfaces exactly the stale cards.  Empty NEEDLE
+clears the filter."
+  (interactive
+   (list (read-string (format "过滤 标题/类别/状态/作者 (空串清除%s): "
+                              (if agenote--knowledge-browse-filter
+                                  (format ", 当前: %s"
+                                          agenote--knowledge-browse-filter)
+                                "")))))
+  (setq agenote--knowledge-browse-filter
+        (and (not (string-empty-p needle)) (downcase needle)))
+  (agenote-knowledge-browse-redraw))
+
+(defun agenote-knowledge-browse-overview ()
+  "Return to the two-group overview: head 20 cards of each domain.
+Also clears the substring filter, so the overview always shows the
+unfiltered state."
+  (interactive)
+  (setq agenote--knowledge-browse-limits
+        (copy-alist agenote-knowledge-browse--default-limits)
+        agenote--knowledge-browse-filter nil)
+  (agenote-knowledge-browse-redraw))
 
 ;;;###autoload
 (defun agenote-knowledge-browse-open-browser ()
-  "Open the web visualization of the current domain via `agenote viz'."
+  "Open the web visualization of the domain at point via `agenote viz'."
   (interactive)
-  (agenote-call-async agenote--knowledge-browse-domain "viz" "--open"))
+  (agenote-call-async (agenote-knowledge-browse--domain-at-point)
+                      "viz" "--open"))
 
 (defvar agenote-knowledge-browse-mode-map
   (let ((map (make-sparse-keymap)))
-    (set-keymap-parent map special-mode-map)
-    (define-key map "g" #'agenote-knowledge-browse-refresh)
+    (set-keymap-parent map tabulated-list-mode-map)
+    (define-key map (kbd "RET") #'agenote-knowledge-browse-ret)
+    (define-key map "/" #'agenote-knowledge-browse-filter)
+    (define-key map "B" #'agenote-knowledge-browse-overview)
     (define-key map "o" #'agenote-knowledge-browse-open-browser)
-    (define-key map "q" #'quit-window)
     map))
 
 ;;;###autoload
-(define-derived-mode agenote-knowledge-browse-mode special-mode "KB-Browse"
-  "CLI-driven knowledge-base list view.
+(define-derived-mode agenote-knowledge-browse-mode tabulated-list-mode "KB"
+  "CLI-driven knowledge-base overview.
 \\{agenote-knowledge-browse-mode-map}"
-  (setq-local revert-buffer-function #'agenote-knowledge-browse-refresh))
+  (setq tabulated-list-format
+        [("状态" 8) ("作者" 8) ("上次使用" 12) ("次数" 5) ("类别" 10) ("标题" 0)]
+        ;; nil keeps group blocks contiguous; sorting would interleave them.
+        tabulated-list-sort-key nil)
+  (setq-local revert-buffer-function #'agenote-knowledge-browse-refresh)
+  (tabulated-list-init-header))
 
-(defun agenote-knowledge-browse--open (domain)
-  "Open the unified knowledge-base list for DOMAIN."
+(defun agenote-knowledge-browse--open (limits)
+  "Open the knowledge-base overview with LIMITS ((DOMAIN . LIMIT) ...)."
   (let ((buffer (get-buffer-create agenote-knowledge-browse-buffer-name)))
     (with-current-buffer buffer
       (agenote-knowledge-browse-mode)
-      (setq agenote--knowledge-browse-domain domain)
+      (setq agenote--knowledge-browse-limits limits)
       (agenote-knowledge-browse-refresh))
     (pop-to-buffer buffer)))
 
 ;;;###autoload
-(defun agenote-knowledge-browse-human ()
-  "Open the human-domain knowledge-base list."
+(defun agenote-knowledge-browse ()
+  "Open the knowledge-base overview: head 20 cards of each domain."
   (interactive)
-  (agenote-knowledge-browse--open 'human))
+  (agenote-knowledge-browse--open
+   (copy-alist agenote-knowledge-browse--default-limits)))
+
+;;;###autoload
+(defun agenote-knowledge-browse-human ()
+  "Open the human-domain knowledge-base overview (all cards)."
+  (interactive)
+  (agenote-knowledge-browse--open '((human . all) (agenote . 0))))
 
 ;;;###autoload
 (defun agenote-knowledge-browse-agenote ()
-  "Open the agenote-domain knowledge-base list."
+  "Open the agenote-domain knowledge-base overview (all cards)."
   (interactive)
-  (agenote-knowledge-browse--open 'agenote))
+  (agenote-knowledge-browse--open '((human . 0) (agenote . all))))
 
 ;;;###autoload
 (defun agenote-knowledge-viz-open-browser ()

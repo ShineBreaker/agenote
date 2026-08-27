@@ -36,13 +36,14 @@ Each row is a (ID CATEGORY TITLE) triple."
    collect (list id category title)))
 
 ;;;###autoload
-(defun agenote-recent-knowledge-entries (max-items)
+(defun agenote-recent-knowledge-entries (max-items &optional domain)
   "Return the most recent knowledge entries as (ID CATEGORY TITLE) triples.
-Consumes the stable `agenote --domain human list --json' index with no
-caching.  Ordering and filtering are decided by the CLI; Emacs performs
-no recursive file scan.  Let callers layer their own TTL cache."
-  (agenote-knowledge-entries-from-cards
-   (agenote-knowledge-list-cards 'human max-items)))
+DOMAIN defaults to `agenote' (where agent-written cards live); the human
+domain only holds hand-written cards and is often empty.  Consumes the
+stable `agenote list --json' index with no caching.  Ordering and
+filtering are decided by the CLI; Emacs performs no recursive file
+scan.  Let callers layer their own TTL cache."  (agenote-knowledge-entries-from-cards
+   (agenote-knowledge-list-cards (or domain 'agenote) max-items)))
 
 (provide 'agenote-dashboard)
 ;;; agenote-dashboard.el ends here
