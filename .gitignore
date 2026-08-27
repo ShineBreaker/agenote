@@ -27,3 +27,4 @@ dist/
 
 # pytest
 .pytest_cache/
+.zcode/plans/
