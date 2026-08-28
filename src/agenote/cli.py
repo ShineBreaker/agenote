@@ -84,6 +84,7 @@ from agenote.dream import DEFAULT_WINDOW_DAYS as DEFAULT_DREAM_WINDOW_DAYS
 from agenote.distill import run_distill
 from agenote.extract import run_extract
 from agenote.extract.base import EXTRACT_LIMIT
+from agenote.memscan import SOURCES as MEMSCAN_SOURCES, cmd_scan_memories
 
 # 本 CLI 默认操作 agenote 域（~/Documents/Org/agenote/），与 MCP server 对齐。
 # --domain human 切到人类知识库根（~/Documents/Org/）。
@@ -1026,6 +1027,22 @@ def main() -> None:
     )
     extract_parser.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
 
+    # ── scan-memories ───────────────────────────────────────────────────────
+    scan_mem_parser = subparsers.add_parser(
+        "scan-memories",
+        help="只读扫描各 agent 记忆库（zcode/claude/codex/pi/reasonix/hermes，"
+        "供策展审查后显式导入，不写 KB）",
+    )
+    scan_mem_parser.add_argument(
+        "--source",
+        default="all",
+        choices=sorted(MEMSCAN_SOURCES) + ["all"],
+        help="zcode|claude|codex|pi|reasonix|hermes|all（默认 all）",
+    )
+    scan_mem_parser.add_argument(
+        "--json", action="store_true", help="输出 JSON（含记忆全文，agent 消费）"
+    )
+
     # ── doctor ──────────────────────────────────────────────────────────────
     doctor_parser = subparsers.add_parser(
         "doctor", help="环境自诊断：外部工具/配置/KB 结构（纯只读）"
@@ -1109,6 +1126,8 @@ def main() -> None:
         "trace": cmd_trace,
         "distill": cmd_distill,
         "extract": cmd_extract,
+        # 记忆库巡检（只读，免锁）
+        "scan-memories": cmd_scan_memories,
     }
     if args.command in commands:
         # 解析域：--domain 显式指定 → 仅该域；__auto__ → search 做跨域，其余默认 agenote

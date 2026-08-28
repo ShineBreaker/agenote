@@ -51,6 +51,7 @@ COMMANDS: dict[str, str] = {
     "trace": "回查 dream 候选的原始对话",
     "distill": "工作流蒸馏",
     "extract": "跨 agent 对话抽取为 Org 文件",
+    "scan-memories": "只读扫描各 agent 记忆库",
     "completions": "生成 shell 补全脚本",
 }
 
@@ -64,6 +65,7 @@ CONFIG_SUBS: dict[str, str] = {
 DOMAIN_VALUES = ["human", "agenote"]
 COMPLETIONS_SHELLS = ["bash", "zsh", "fish"]
 CONFIG_SOURCES = ["hermes", "opencode", "zcode", "omp", "crush", "codex", "claude", "all"]
+MEMSCAN_SOURCES = ["zcode", "claude", "codex", "pi", "reasonix", "hermes", "all"]
 MEMORY_TYPES = ["feedback", "project", "reference"]
 OWNER_VALUES = ["human", "ai", "collab"]
 TYPE_VALUES = ["debug", "refactor", "research", "workflow", "feature", "config"]
@@ -107,6 +109,7 @@ def _gen_fish() -> str:
         "complete -c agenote -n '__fish_seen_subcommand_from viz' -l output -d '输出文件'",
         "complete -c agenote -n '__fish_seen_subcommand_from reconcile' -l source -x -a 'hermes opencode zcode omp crush codex claude all' -d '来源'",
         "complete -c agenote -n '__fish_seen_subcommand_from extract' -l source -x -a 'hermes opencode zcode omp crush codex claude all' -d '来源'",
+        "complete -c agenote -n '__fish_seen_subcommand_from scan-memories' -l source -x -a 'zcode claude codex pi reasonix hermes all' -d '来源'",
         "complete -c agenote -n '__fish_seen_subcommand_from memory' -l type -x -a 'feedback project reference' -d '记忆类型'",
         # 文件补全（lint/format/commit 的 files 位置参数）
         "complete -c agenote -n '__fish_seen_subcommand_from lint; and not __fish_seen_subcommand_from --fix --check' -F",

@@ -155,6 +155,30 @@ SCHEMA: dict[str, dict[str, Key]] = {
             "~/.local/share/hermes/memory_store.db", env="HERMES_DB", comment="hermes 事实库"
         ),
     },
+    "memories.sources": {
+        # 键名 = 对应 env var 的小写形式；配置值替代各记忆源默认根目录（memscan 用）
+        "zcode_memories_dir": Key(
+            "~/.zcode/cli/memories", env="ZCODE_MEMORIES_DIR", comment="zcode 记忆库根"
+        ),
+        "claude_config_dir": Key(
+            "~/.claude", env="CLAUDE_CONFIG_DIR", comment="claude 配置根（记忆在 projects/*/memory/）"
+        ),
+        "codex_home": Key(
+            "~/.codex", env="CODEX_HOME", comment="codex 根（记忆在 memories/）"
+        ),
+        "pi_agent_dir": Key(
+            "$XDG_CONFIG_HOME/omp", env="PI_CODING_AGENT_DIR",
+            comment="pi/omp 配置根（记忆在 agent/memory/）",
+        ),
+        "reasonix_home": Key(
+            "$XDG_DATA_HOME/reasonix", env="REASONIX_HOME",
+            comment="reasonix 根（记忆在 projects/*/memory/）",
+        ),
+        "hermes_home": Key(
+            "$XDG_DATA_HOME/hermes", env="HERMES_HOME",
+            comment="hermes 根（分节记忆在 memories/*.md）",
+        ),
+    },
     "reconcile": {
         "min_fact_len": Key(15, comment="事实最短长度（更短视为噪声，dream 同用）"),
         "noise_scan_chars": Key(250, comment="噪声标记扫描窗口（USER 提问区字符数）"),

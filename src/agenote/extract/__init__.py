@@ -28,17 +28,18 @@ from agenote.extract.base import _resolve_extractors, run_extract
 # ── XDG-aware path resolution ──────────────────────────────────
 
 
-def resolve_xdg_path(env_var: str, default: str) -> Path:
+def resolve_xdg_path(env_var: str, default: str, section: str = "extract.sources") -> Path:
     """Resolve path respecting env var, config file, then XDG base dirs.
 
     Lookup order:
       1. os.environ[env_var] (direct override)
-      2. config.toml [extract.sources].<env_var.lower()>（替代 default）
+      2. config.toml [section].<env_var.lower()>（替代 default）
       3. $XDG_DATA_HOME / $XDG_CONFIG_HOME from default placeholder
       4. expanduser fallback (~/...)
 
     default may use $XDG_DATA_HOME/$XDG_CONFIG_HOME placeholders:
         resolve_xdg_path('CODEX_HOME', '$XDG_CONFIG_HOME/codex')
+    section 默认 "extract.sources"，memscan 等其他子系统传各自配置节。
     """
     val = os.environ.get(env_var)
     if val:
@@ -46,7 +47,7 @@ def resolve_xdg_path(env_var: str, default: str) -> Path:
 
     # config.toml 覆盖层：键名 = env var 的小写形式（如 OPENCODE_DB → opencode_db）。
     # 展开复用 config._expand（$XDG_* 占位符未设 env 时回落规范默认，与 get_path 一致）。
-    cfg_val = config.get("extract.sources", env_var.lower())
+    cfg_val = config.get(section, env_var.lower())
     if isinstance(cfg_val, str) and cfg_val and cfg_val != default:
         return config._expand(cfg_val)
 
