@@ -44,6 +44,22 @@ def test_registry_includes_omp_and_excludes_pi():
     assert "pi" not in extractors  # pi.py 已删除
 
 
+def test_sessions_dir_env_priority(tmp_path, monkeypatch):
+    # OMP_SESSIONS_DIR（agenote 专用覆盖口）优先于 pi 运行时变量
+    monkeypatch.setenv("OMP_SESSIONS_DIR", str(tmp_path / "override"))
+    monkeypatch.setenv("PI_CODING_AGENT_SESSION_DIR", str(tmp_path / "pi-runtime"))
+    assert omp_mod._sessions_dir() == tmp_path / "override"
+
+    # pi 运行时变量次之（omp 会话实际落盘处）
+    monkeypatch.delenv("OMP_SESSIONS_DIR")
+    assert omp_mod._sessions_dir() == tmp_path / "pi-runtime"
+
+    # 都未设 → XDG_DATA_HOME 默认
+    monkeypatch.delenv("PI_CODING_AGENT_SESSION_DIR")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
+    assert omp_mod._sessions_dir() == tmp_path / "xdg-data" / "omp" / "sessions"
+
+
 def test_extract_omp_pairs_and_reorders(tmp_path):
     sessions = tmp_path / "sessions"
     _write_session(sessions, "proj-a/20260813_sess-1.jsonl", SESSION_EVENTS)

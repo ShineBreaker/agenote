@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: MIT
 """omp conversation extractor (JSONL event stream, parentId reconstruction).
 
-omp 是 pi-coding-agent 的下游 fork,会话存储在 XDG_CONFIG_HOME/omp/sessions/,
-按项目分子目录存放 .jsonl 文件。
+omp 是 pi-coding-agent 的下游 fork,会话存储在 $PI_CODING_AGENT_SESSION_DIR
+（pi 运行时导出，默认 XDG_DATA_HOME/omp/sessions/）,按项目分子目录存放 .jsonl 文件。
 
 Schema: JSONL 事件流,每条 {type, id, parentId, timestamp, ...}
   type=session  → {id, timestamp (ISO UTC), cwd}
@@ -17,6 +17,7 @@ pair_turns,adapter 只提供:JSONL 解析、parentId 重建、递归目录遍历
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -31,10 +32,21 @@ from agenote.extract.base import (
 )
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
 
-OMP_SESSIONS_DIR = resolve_xdg_path(
-    "OMP_SESSIONS_DIR",
-    "$XDG_CONFIG_HOME/omp/sessions",
-)
+
+def _sessions_dir() -> Path:
+    """omp 会话目录：OMP_SESSIONS_DIR > PI_CODING_AGENT_SESSION_DIR > config > XDG 默认。
+
+    pi 运行时导出 PI_CODING_AGENT_SESSION_DIR 指向 omp 实际落盘处（XDG_DATA_HOME 下）；
+    OMP_SESSIONS_DIR 是 agenote 专用覆盖口，优先级更高。
+    """
+    if not os.environ.get("OMP_SESSIONS_DIR"):
+        pi_val = os.environ.get("PI_CODING_AGENT_SESSION_DIR")
+        if pi_val:
+            return Path(pi_val).expanduser()
+    return resolve_xdg_path("OMP_SESSIONS_DIR", "$XDG_DATA_HOME/omp/sessions")
+
+
+OMP_SESSIONS_DIR = _sessions_dir()
 
 
 def _normalize_content(content) -> str:

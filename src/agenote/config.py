@@ -133,7 +133,9 @@ SCHEMA: dict[str, dict[str, Key]] = {
         ),
         "zcode_db": Key("~/.zcode/cli/db/db.sqlite", env="ZCODE_DB", comment="zcode SQLite 源"),
         "omp_sessions_dir": Key(
-            "$XDG_CONFIG_HOME/omp/sessions", env="OMP_SESSIONS_DIR", comment="omp JSONL 会话目录"
+            "$XDG_DATA_HOME/omp/sessions",
+            env="OMP_SESSIONS_DIR",
+            comment="omp JSONL 会话目录（pi 运行时的 PI_CODING_AGENT_SESSION_DIR 亦被识别）",
         ),
         "claude_transcripts_dir": Key(
             "$XDG_DATA_HOME/claude/transcripts", env="CLAUDE_TRANSCRIPTS_DIR",
