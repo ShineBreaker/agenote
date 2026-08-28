@@ -54,12 +54,16 @@ _Avoid_: 消息、message、轮次
 _Avoid_: 推荐、suggest、分析、report
 
 **distill（聚类蒸馏）**:
-把同 `category`+`tech` 下多张高频/ascended 卡片聚类为 skill **草稿**，写 `.distill/`（不进 `skills/`）。零候选即成功。
-_Avoid_: 提炼、extract（易混）、总结、summarize
+把同 `category`+`tech` 下多张高频/ascended 卡片聚类为**候选工作流清单**（含源卡片 id）。纯只读、不落盘；skill 撰写由 agent 评估候选后自行完成。零候选即成功。
+_Avoid_: 提炼、extract（易混）、总结、summarize、草稿生成
 
 **curate（策展）**:
-卡片生命周期维护流水线：健康度 → 权重调整 → stale 降级 → 去重 → 归档 → reindex。
-_Avoid_: 清理、cleanup、整理、maintain
+agent 依据 agenote-curator skill 主导执行的 KB 维护流程（诊断 → 状态重整 → 去重合并 → 矛盾调和 → reconcile/dream 综合 → 重整提交）；CLI 只提供只读候选发现与原子写命令，无一键编排（ADR-0004）。
+_Avoid_: 清理、cleanup、整理、maintain、一键策展
+
+**候选清单（candidates）**:
+CLI 检测命令输出的只读待办集合（降级候选 / 归档候选 / 重复对 / dream·distill 候选），每项含判定依据（天数、相似度、评分）；agent 审查后用原子命令显式执行，CLI 不代为取舍。
+_Avoid_: 建议、suggestion、自动处理
 
 **noise fact（噪声事实）**:
 源自 harness 注入的元消息（TodoWrite、system-reminder、checkpoint、`[CONTEXT]` 框架标记等），非用户真实经验；reconcile/dream 过滤之。
