@@ -8,16 +8,15 @@
  * - session_start: 注入 agenote 健康度摘要
  * - agent_end:     检测"任务完成信号"，命中时注入 agenote-review 评估提示（含留痕）
  * - /agenote-summarize: 在当前会话触发经验总结 + 留痕
- * - /agenote-curate:    执行 agenote 策展（健康+去重+归档+权重重分配）
+ * - /agenote-curate:    注入策展任务提示（agent 按 agenote-curator skill 主导执行）
  * - /agenote-health:    显示 agenote 健康度报告
  *
  * 信号清单、写入流程、卡片格式由 agenote-{base,curator,review} skill 提供，
  * 本插件只做"事件触发 + 命令快捷入口"，避免与 skill 重复维护。
  *
- * 调用路径：agenote 已迁至 CLI（agenote）模式，agent 主循环通过 bash 调用
- * agenote 命令。但 pi 的 ExtensionAPI 不提供 CLI 调用接口，本插件的命令
- * （/agenote-health、/agenote-curate）调轻量 CLI shim（agenote-cli），
- * 它复用同一套 agenote 内核，输出人类可读文本。
+ * 调用路径：agent 主循环通过 bash 调用 agenote CLI。本插件注入的提示词由
+ * agent 执行；唯一 execSync 的场景是只读的健康度查询（/agenote-health 与
+ * session_start 状态注入），走轻量 CLI shim（agenote-cli health）。
  */
 
 import { execSync } from "node:child_process";
@@ -72,16 +71,28 @@ const COMPLETION_SIGNALS = [
   "ship it",
 ];
 
-/** 注入到下一轮的 agenote-review 评估提示（含留痕环节） */
 /** 注入到下一轮的 agenote-review 评估提示（含留痕环节）。reason 说明触发来源。 */
 function buildReviewPrompt(reason: string): string {
   return [
     `<agenote-hook>${reason}，请按 agenote-review skill 流程评估本次对话：`,
     "（注意：这有可能是误报，如果当前任务没有完成的话，请忽略）",
     "1. 是否有可记录的经验信号（bug/踩坑/更优方案/用户纠正/项目决策）？",
-    "2. 如有 → 通过 agenote MCP tool 写入（agenote_add / agenote_memory_add / 链接用 agenote_get 后手动关联）",
-    "3. 本轮用到的资料留痕：已有卡片 agenote_touch，联网新知识 agenote_add（type=note）",
+    "2. 如有 → 通过 agenote CLI 写入（agenote add / agenote memory --add；调用时带 AGENOTE_AGENT=pi 前缀）",
+    "3. 本轮用到的资料留痕：已有卡片 agenote touch，联网新知识 agenote add（type=note）",
     "4. 如无 → 明确回复'本次无可记录经验'</agenote-hook>",
+  ].join("\n");
+}
+
+/** 注入到下一轮的策展任务提示——由 agent 按 agenote-curator skill 主导执行 */
+function buildCuratePrompt(reason: string): string {
+  return [
+    `<agenote-hook>${reason}，请按 agenote-curator skill 流程对知识库执行策展：`,
+    "（CLI 只提供检测报告与原子命令，流程编排与去留决策由你执行；先看候选清单，核实后再写盘）",
+    "1. 诊断：agenote health --quality --duplicates / stats / gaps",
+    "2. 状态重整：list --unused-days 找降级候选、archive --stale 找归档候选，逐项审查后显式 update/archive",
+    "3. 去重合并 / type 聚拢 / 矛盾调和 / memory 维护（规则见 skill）",
+    "4. 可选：reconcile + dream 综合（值得沉淀的候选用 agenote add 写入）",
+    "5. 收尾：reindex + lint --fix + agenote commit（策展产物），输出策展报告</agenote-hook>",
   ].join("\n");
 }
 
@@ -335,28 +346,15 @@ function initBody(pi: ExtensionAPI): void {
   });
 
   // ── /agenote-curate 命令 ──（原 /curate）
-  // 原 runKbAgent 走 kb-agent（~/.local/bin/kb-agent），但该文件不存在；
-  // agenote-cli 复用同一套 agenote 内核，支持 curate 关键词，改走它。
-  // curate 是重操作（健康 + 去重 + 归档 + 权重重分配），给 120s 超时。
+  // 策展不直接 execSync CLI——流程由 agent 按 agenote-curator skill 主导
+  // （编排原子命令 + 逐项审查），此处只注入任务提示（对齐 /agenote-summarize 模式）。
   pi.registerCommand("agenote-curate", {
-    description: "执行 agenote 策展（健康 + 去重 + 归档 + 权重重分配）",
+    description: "在当前会话触发 KB 策展（agent 按 agenote-curator skill 执行）",
     handler: async (_args, ctx) => {
-      ctx.ui.notify("[agenote] 开始策展...", "info");
-
-      let result: string;
-      try {
-        result = execSync(`${KB_SCRIPT} curate`, {
-          encoding: "utf-8",
-          timeout: 120000,
-          stdio: ["pipe", "pipe", "pipe"],
-        }).trim();
-      } catch (err: any) {
-        result = `(agenote-cli curate 失败: ${err.message?.split("\n")[0] || err})`;
-      }
-
-      ctx.ui.notify("[agenote] 策展完成", "info");
-      console.log("=== 策展结果 ===");
-      console.log(result);
+      ctx.ui.notify("[agenote] 触发策展任务，请在下一轮对话中查看结果", "info");
+      pi.sendUserMessage(buildCuratePrompt("用户手动触发策展"), {
+        deliverAs: "followUp",
+      });
     },
   });
 
