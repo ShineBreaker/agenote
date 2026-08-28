@@ -68,7 +68,6 @@ from agenote.curator import (
     cmd_restore,
     cmd_deduplicate,
     cmd_review,
-    cmd_curate,
 )
 from agenote.inbox_archive import cmd_inbox_archive
 from agenote.memory import cmd_memory
@@ -82,7 +81,7 @@ from agenote.viz.cli import add_viz_parser, cmd_viz
 from agenote.reconcile import reconcile_source, trace_fact
 from agenote.dream import DEFAULT_LIMIT as DEFAULT_DREAM_LIMIT, run_dream
 from agenote.dream import DEFAULT_WINDOW_DAYS as DEFAULT_DREAM_WINDOW_DAYS
-from agenote.distill import DEFAULT_WINDOW_DAYS as DEFAULT_DISTILL_WINDOW_DAYS, run_distill
+from agenote.distill import run_distill
 from agenote.extract import run_extract
 from agenote.extract.base import EXTRACT_LIMIT
 
@@ -347,14 +346,13 @@ def cmd_dream(args: argparse.Namespace, ctx=None) -> None:
     """从 reconcile 事实启发式提炼候选新卡片。"""
     report = run_dream(
         window_days=args.window_days,
-        dry_run=args.dry_run,
         offset=args.offset,
         limit=args.limit,
     )
     _print_report(
         report.to_dict(),
         getattr(args, "json", False),
-        f"dream (window={args.window_days}d, offset={args.offset}, limit={args.limit}, dry_run={args.dry_run})",
+        f"dream (window={args.window_days}d, offset={args.offset}, limit={args.limit})",
     )
 
 
@@ -420,12 +418,12 @@ def cmd_trace(args: argparse.Namespace, ctx=None) -> None:
 
 
 def cmd_distill(args: argparse.Namespace, ctx=None) -> None:
-    """工作流蒸馏：把反复使用的经验打包成 skill 草稿。"""
-    report = run_distill(window_days=args.window_days, dry_run=args.dry_run)
+    """工作流蒸馏：发现可沉淀为 skill 的工作流候选（纯只读）。"""
+    report = run_distill()
     _print_report(
         report.to_dict(),
         getattr(args, "json", False),
-        f"distill (window={args.window_days}d, dry_run={args.dry_run})",
+        "distill",
     )
 
 
@@ -474,14 +472,13 @@ def print_help() -> None:
             agenote get <卡片文件名或ID>
 
   list      列出卡片
-            agenote list --category 类别 --all
             agenote list [--category 类别] [--type 类型] [--owner 执行者] [--recent N] [--all]
+            agenote list --unused-days 30            只列超 N 天未使用的卡片（降级候选，只读）
 
   search    全文检索
             agenote search <关键词...> [--context N] [--limit N]
-            agenote search --regex <正则> [--context N]
+            agenote search <关键词> [--context N] [--json]
             默认按空格、/、逗号拆分多关键词，大小写不敏感，按命中词数和次数排序。
-            需要旧式 rg/grep 正则行为时显式加 --regex。
 
   fields    列出已有字段值（用于优先复用标签）
             agenote fields [--category] [--tech] [--type] [--owner]
@@ -492,20 +489,16 @@ def print_help() -> None:
   memory   管理记忆系统
             agenote memory                          列出记忆概览
             agenote memory --type feedback|project|reference  按类型过滤
-            agenote memory --project <名称|路径|.>   检索项目记忆
+            agenote memory --project <名称|路径|.>   检索项目记忆（含 PATH/UPDATED 健康提示）
             agenote memory --add --type <类型> --title "标题" --stdin  添加记忆
             agenote memory --stale                   列出陈旧记忆
             agenote memory --touch <ID>              更新时间戳
             agenote memory --archive <ID>            归档记忆到 deprecated
             agenote memory --archive-to-file <ID>    归档 feedback 到 MEMORY-ARCHIVE.org
-            agenote memory --stale --auto-archive-days 60  自动归档陈旧 feedback
             agenote memory --project-touch <名称>    更新项目 LAST_ACTIVE
-            agenote memory --project <名称> --auto-update  自动更新项目元数据
             agenote memory --get                     查看全文
 
-
-
-  reindex   重建知识库索引
+  reindex   重建知识库索引（WEIGHT 随之按 usage/新鲜度公式重算）
             agenote reindex
 
   lint      格式校验与报告（格式问题 + 语义问题：枚举漂移、缺失字段）
@@ -560,9 +553,9 @@ def print_help() -> None:
             agenote merge <主卡片ID> <次卡片ID>... [--desc 原因]
 
   archive  归档卡片
-            agenote archive <卡片ID> [--reason 原因]  归档指定卡片
-            agenote archive --list [--json]           列出归档卡片
-            agenote archive --stale                   自动归档过时卡片
+            agenote archive <卡片ID>... [--reason 原因]  归档指定卡片（支持批量）
+            agenote archive --list [--json]             列出归档卡片
+            agenote archive --stale [--json]            列出归档候选（只读，去留由 agent 审查）
 
   restore  恢复归档卡片
             agenote restore <卡片ID> [--status stable]
@@ -570,18 +563,14 @@ def print_help() -> None:
   deduplicate 检测重复卡片
             agenote deduplicate [--threshold {DEDUP_THRESHOLD}] [--json]
 
-  review   审查卡片
-            agenote review <卡片ID> [--fix]
+  review   审查卡片（只读；修复用 update/connect 显式执行）
+            agenote review <卡片ID>
 
   health   知识库健康度报告
             agenote health [--duplicates] [--quality]
 
   gaps     知识空白检测（类别×类型矩阵）
             agenote gaps [--stale-days {CARD_STALE_DAYS}] [--json]
-
-  curate   一键策展（健康检查+权重重分配+去重+归档陈旧+重建索引）
-            agenote curate [--threshold {DEDUP_THRESHOLD}]
-            策展后建议运行: agenote commit -m "chore(curate): <一句话总结>"
 
   reconcile 跨 agent memory 只读 reconcile（抽取事实到 .reconcile/，不写回源）
             agenote reconcile [--source all] [--dry-run]
@@ -595,8 +584,8 @@ def print_help() -> None:
             agenote trace --id <source_trace>
             --id 取自 dream 候选的 source_trace（如 opencode:ses_x:msg_y）
 
-  distill  工作流蒸馏：把反复使用的经验打包成 skill 草稿（写 .distill/，不进 skills/）
-            agenote distill [--window-days {DEFAULT_DISTILL_WINDOW_DAYS}] [--dry-run]
+  distill  工作流蒸馏：发现可沉淀为 skill 的工作流候选（纯只读，草稿由 agent 撰写）
+            agenote distill
 
   extract  跨 agent 对话抽取为 Org 文件（输出到 conversations/<date>/）
             agenote extract [--source all] [--date YYYY-MM-DD] [--limit N] [--dry-run]
@@ -684,10 +673,14 @@ def main() -> None:
     # ── list ──────────────────────────────────────────────────────────────
     list_parser = subparsers.add_parser("list", help="列出卡片")
     list_parser.add_argument("--category", help="按类别过滤")
-    list_parser.add_argument("--cagetory", dest="category", help=argparse.SUPPRESS)
     list_parser.add_argument("--type", help="按类型过滤")
     list_parser.add_argument("--owner", help="按执行者过滤")
     list_parser.add_argument("--recent", type=int, help="显示最近 N 条")
+    list_parser.add_argument(
+        "--unused-days",
+        type=int,
+        help="只列最后使用（缺省用创建日期）距今超 N 天的卡片（降级候选，只读）",
+    )
     list_parser.add_argument("--all", action="store_true", help="显示全部")
     list_parser.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
 
@@ -717,9 +710,6 @@ def main() -> None:
     )
     search_parser.add_argument(
         "--case-sensitive", action="store_true", help="大小写敏感匹配"
-    )
-    search_parser.add_argument(
-        "--regex", action="store_true", help="使用旧版 rg/grep 正则检索模式"
     )
     search_parser.add_argument("--json", action="store_true", help="JSON 输出")
 
@@ -759,22 +749,13 @@ def main() -> None:
         "--archive-to-file", metavar="ID", help="归档 feedback 到 MEMORY-ARCHIVE.org"
     )
     memory_parser.add_argument(
-        "--auto-archive-days",
-        type=int,
-        default=0,
-        help="自动归档 >N 天 stale feedback（配合 --stale 使用）",
-    )
-    memory_parser.add_argument(
         "--project-touch", metavar="NAME", help="更新项目 LAST_ACTIVE 时间戳"
-    )
-    memory_parser.add_argument(
-        "--auto-update",
-        action="store_true",
-        help="自动更新项目元数据（与 --project 联合使用）",
     )
 
     # ── reindex ───────────────────────────────────────────────────────────
-    subparsers.add_parser("reindex", help="重建知识库索引")
+    subparsers.add_parser(
+        "reindex", help="重建知识库索引（WEIGHT 随之按 usage/新鲜度公式重算）"
+    )
 
     # ── lint ──────────────────────────────────────────────────────────────
     lint_parser = subparsers.add_parser("lint", help="格式校验与报告（含语义问题）")
@@ -908,12 +889,14 @@ def main() -> None:
 
     # ── archive ─────────────────────────────────────────────────────────────
     archive_parser = subparsers.add_parser("archive", help="归档卡片")
-    archive_parser.add_argument("id", nargs="?", help="卡片 ID")
+    archive_parser.add_argument("id", nargs="*", help="卡片 ID（支持批量）")
     archive_parser.add_argument("--reason", help="归档原因")
     archive_parser.add_argument(
         "--list", dest="list_cards", action="store_true", help="列出归档卡片"
     )
-    archive_parser.add_argument("--stale", action="store_true", help="自动归档过时卡片")
+    archive_parser.add_argument(
+        "--stale", action="store_true", help="列出归档候选（只读，去留由 agent 审查）"
+    )
     archive_parser.add_argument("--json", action="store_true", help="JSON 输出")
 
     # ── restore ─────────────────────────────────────────────────────────────
@@ -932,12 +915,10 @@ def main() -> None:
         help=f"相似度阈值（默认 {DEDUP_THRESHOLD}）",
     )
     dedup_parser.add_argument("--json", action="store_true", help="JSON 输出")
-    dedup_parser.add_argument("--merge", action="store_true", help="自动合并")
 
     # ── review ──────────────────────────────────────────────────────────────
-    review_parser = subparsers.add_parser("review", help="审查卡片")
+    review_parser = subparsers.add_parser("review", help="审查卡片（只读）")
     review_parser.add_argument("id", help="卡片 ID")
-    review_parser.add_argument("--fix", action="store_true", help="自动修复问题")
 
     # ── health ──────────────────────────────────────────────────────────────
     health_parser = subparsers.add_parser("health", help="知识库健康度报告")
@@ -946,17 +927,6 @@ def main() -> None:
     )
     health_parser.add_argument(
         "--quality", action="store_true", help="检测质量问题（章节/元数据/Markdown）"
-    )
-
-    # ── curate ──────────────────────────────────────────────────────────────
-    curate_parser = subparsers.add_parser(
-        "curate", help="一键策展（健康+权重+去重+归档陈旧+重建索引）"
-    )
-    curate_parser.add_argument(
-        "--threshold",
-        type=float,
-        default=DEDUP_THRESHOLD,
-        help=f"去重相似度阈值（默认 {DEDUP_THRESHOLD}）",
     )
 
     # ── gaps ────────────────────────────────────────────────────────────────
@@ -1006,12 +976,6 @@ def main() -> None:
         default=DEFAULT_DREAM_LIMIT,
         help=f"本次最多返回 N 个候选（默认 {DEFAULT_DREAM_LIMIT}）",
     )
-    dream_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        default=True,
-        help=argparse.SUPPRESS,  # 已废弃：dream 现为纯只读，dry_run 无效果
-    )
     dream_parser.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
 
     # ── trace ───────────────────────────────────────────────────────────────
@@ -1027,16 +991,7 @@ def main() -> None:
 
     # ── distill ─────────────────────────────────────────────────────────────
     distill_parser = subparsers.add_parser(
-        "distill", help="工作流蒸馏：把反复使用的经验打包成 skill 草稿"
-    )
-    distill_parser.add_argument(
-        "--window-days",
-        type=int,
-        default=DEFAULT_DISTILL_WINDOW_DAYS,
-        help=f"回看窗口（天，默认 {DEFAULT_DISTILL_WINDOW_DAYS}）",
-    )
-    distill_parser.add_argument(
-        "--dry-run", action="store_true", default=True, help="只预览不写 .distill/"
+        "distill", help="工作流蒸馏：发现可沉淀为 skill 的工作流候选（纯只读）"
     )
     distill_parser.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
 
@@ -1112,8 +1067,8 @@ def main() -> None:
     # review/lint 默认只读，但带 --fix 时写文件，统一加锁换取简单。
     MUTATING_COMMANDS = {
         "add", "update", "touch", "merge", "archive", "restore", "connect",
-        "inbox", "inbox-archive", "memory", "curate", "reindex",
-        "review", "lint", "format", "commit", "init",
+        "inbox", "inbox-archive", "memory", "reindex",
+        "lint", "format", "commit", "init",
         "distill", "reconcile", "extract",
     }
 
@@ -1148,7 +1103,6 @@ def main() -> None:
         "gaps": cmd_gaps,
         "doctor": cmd_doctor,
         "viz": cmd_viz,
-        "curate": cmd_curate,
         # 跨 agent 协同 4 件套
         "reconcile": cmd_reconcile,
         "dream": cmd_dream,

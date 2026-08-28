@@ -236,8 +236,7 @@ def cmd_inbox_archive(args: argparse.Namespace, ctx: "KBContext | None" = None) 
         if heading.strip():
             pruned_headings.append(heading)
 
-    # 全量 reindex(默认):消除 Emacs 端 reindex 补刀。
-    # _rebuild_index 是幂等扫盘,与 cmd_curate step 5 行为一致。
+    # 全量 reindex(默认):消除 Emacs 端 reindex 补刀。_rebuild_index 是幂等扫盘。
     if not getattr(args, "no_reindex", False):
         idx = _rebuild_index(ctx)
         _save_index(idx, ctx)

@@ -6,7 +6,7 @@
 从 cards.py 拆出（ADR-0002）：检索算法（关键词解析/打分/片段/snippet）
 集中于此；core 的 5 个搜索辅助函数一并迁入（只有检索路径使用它们）。
 
-- cmd_search：CLI search 子命令（单域 --regex / 跨域加权两条路径）
+- cmd_search：CLI search 子命令（单域 BM25 / 跨域加权两条路径）
 - _cross_domain_search：与 MCP agenote_search 行为对齐的跨域加权检索
 """
 
@@ -14,8 +14,6 @@ import argparse
 import json
 import re
 import shlex
-import shutil
-import subprocess
 from pathlib import Path
 
 from agenote import config
@@ -269,33 +267,16 @@ def _cmd_cross_domain_search(args: argparse.Namespace) -> None:
 
 
 def cmd_search(args: argparse.Namespace, ctx=None) -> None:
-    """在 experiences/ 和 MEMORY.org 中全文检索。"""
-    # 跨域加权检索（default，匹配 MCP agenote_search 行为）
-    if getattr(args, "_cross_domain", False) and not getattr(args, "regex", False):
+    """在 experiences/ 和 MEMORY.org 中检索（单域 BM25）。"""
+    # 跨域加权检索（默认，匹配 MCP agenote_search 行为）
+    if getattr(args, "_cross_domain", False):
         _cmd_cross_domain_search(args)
         return
 
-    # 单域检索（--domain human/agenote 显式指定或 --regex 模式）
+    # 单域检索（--domain human/agenote 显式指定）
     ctx = ctx or default_context()
     query = args.query
     context = args.context
-
-    if args.json and args.regex:
-        die("--json 与 --regex 互斥；--regex 模式只支持人类可读输出")
-
-    if args.regex:
-        targets = [str(ctx.experiences), str(ctx.memory_org)]
-        if shutil.which("rg"):
-            cmd = ["rg", "--color=never", "-n", "-C", str(context), query] + targets
-        else:
-            cmd = ["grep", "-r", "-n", "-C", str(context), query] + targets
-
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0:
-            print(result.stdout, end="")
-        else:
-            print(f"未找到匹配: {query}")
-        return
 
     terms = _query_terms(query)
     if not terms:

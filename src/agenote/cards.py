@@ -170,7 +170,6 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
     # source_agent：agent 域写入者溯源；人类域留空（不写该行，区分人/agent）
     if source_agent:
         lines.append(f":SOURCE_AGENT: {source_agent}")
-    lines.append(f":WEIGHT:   {ctx.default_weight}")
     lines.append(":USAGE_COUNT: 0")
     lines.append(":END:")
     lines.append(tags_line)
@@ -236,14 +235,30 @@ def cmd_get(args: argparse.Namespace, ctx=None) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _days_since(date_prop: str | None) -> int:
+    """Org 日期属性（[YYYY-MM-DD] …）距今天数；无法解析返回 -1（永不过滤）。"""
+    if not date_prop:
+        return -1
+    try:
+        d = datetime.strptime(re.sub(r"[\[\]]", "", date_prop).split()[0], "%Y-%m-%d")
+        return (datetime.now() - d).days
+    except (ValueError, IndexError):
+        return -1
+
+
 def cmd_list(args: argparse.Namespace, ctx=None) -> None:
-    """列出经验卡片，支持过滤和数量限制。默认显示最近 DEFAULT_LIST_COUNT 条，输出 JSON。"""
+    """列出经验卡片，支持过滤和数量限制。默认显示最近 DEFAULT_LIST_COUNT 条，输出 JSON。
+
+    --unused-days N：只列「最后使用（缺省用创建日期）距今超 N 天」的卡片——
+    策展时找 done/stable → stale 降级候选的只读入口。
+    """
     ctx = ctx or default_context()
     recent = (
         args.recent
         if args.recent is not None
         else (0 if args.all else DEFAULT_LIST_COUNT)
     )
+    unused_days = getattr(args, "unused_days", None)
     index = _load_index(ctx)
     matched = []
     for c in index["cards"]:
@@ -252,6 +267,8 @@ def cmd_list(args: argparse.Namespace, ctx=None) -> None:
         if args.type and c["type"] != args.type:
             continue
         if args.owner and c["owner"] != args.owner:
+            continue
+        if unused_days is not None and _days_since(c.get("last_used") or c.get("created")) <= unused_days:
             continue
         matched.append(c)
         if recent > 0 and len(matched) >= recent:

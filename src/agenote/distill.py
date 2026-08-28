@@ -2,18 +2,16 @@
 #
 # SPDX-License-Identifier: MIT
 #
-"""agenote.distill — workflow packaging（把重复经验打包成 skill 草稿）。
+"""agenote.distill — workflow packaging（发现可沉淀为 skill 的工作流候选）。
 
-扫 KB 卡片里**被反复使用的工作流模式**，聚类为候选 skill 草稿，
-写到 `.distill/`（**不直接进 skills/ 目录**），人工 review + 手动 move 才生效。
+扫 KB 卡片里**被反复使用的工作流模式**，聚类为候选清单。纯只读发现器：
+不生成草稿、不落盘——skill 草稿由 agent 评估候选后自行撰写（对齐 dream 哲学：
+发现交给 CLI，综合决策交给 agent）。
 
 设计原则（从 MiMoCode `agent/prompt/distill.txt` 提炼）：
 1. **No extract without evidence**：只有 ≥2 张同主题卡片才聚类为候选，
-   没有就明说"无候选"。**零产物即成功**（distill.txt:39-41）。
-2. **draft 不进 skills/ 目录**：避免污染 agent 的 skill 列表，人工 move 才生效。
-3. **不调 LLM 生成正文**：用 SKILL.md 模板填空（name/description/触发场景），
-   正文仍由用户写（distill.txt 不靠模型杜撰步骤）。
-4. **幂等**：已存在的同主题 draft 不重复生成（避免每次跑都堆叠）。
+   没有就明说"无候选"。**零候选即成功**（distill.txt:39-41）。
+2. **不调 LLM 生成正文**：只给出聚类与源卡片清单，不杜撰 skill 步骤。
 
 聚类维度：category + tech（同技术栈的卡片视为同一工作流候选）。
 触发条件：`type == ascended`（经过多轮试错验证的最优方案）或 `usage_count >= 2`。
@@ -22,66 +20,23 @@
 import re
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
-from pathlib import Path
 
 from agenote import config
-from agenote.core import DISTILL_DIR, agenote_context
 from agenote.index import _load_index
-from agenote.safeio import atomic_write
+from agenote.core import agenote_context
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 常量（默认值见 config.py SCHEMA [distill] / [paths] 节）
+# 常量（默认值见 config.py SCHEMA [distill] 节）
 # ═══════════════════════════════════════════════════════════════════════════════
 
 MIN_CLUSTER_SIZE = int(config.get("distill", "min_cluster_size"))  # 同 category+tech 至少 N 张才聚类
 MIN_USAGE_FOR_ASCEND = int(config.get("distill", "min_usage_for_ascend"))  # usage_count >= N 视为"反复使用"
-DEFAULT_WINDOW_DAYS = int(config.get("distill", "window_days"))  # 回看窗口（天）
 ASCENDED_TYPE = "ascended"  # 经多轮试错验证的卡片类型
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SKILL.md 草稿模板（对齐 MiMoCode compose/.bundle/new-skill/SKILL.md 的最小骨架）
-# ═══════════════════════════════════════════════════════════════════════════════
-
-_SKILL_DRAFT_TEMPLATE = """\
----
-name: {name}
-description: {description}
----
-
-# {title}
-
-> **DISTILL DRAFT** — 由 agenote_distill 自动生成于 {date}。
-> **这是候选草稿，不是正式 skill**。人工 review + 填充正文后，
-> move 到 `~/.config/agents/skills/{name}/SKILL.md` 才生效。
-> **正文（何时用、怎么做、避坑）由人工填写**，distill 只做骨架。
-
-## 触发场景
-
-（人工填写：什么情况下应该用这个 skill）
-
-## 源卡片（{card_count} 张）
-
-{card_list}
-
-## 相关技术栈
-
-`{tech}`
-
-## 步骤
-
-（人工填写：从源卡片提炼的稳定步骤）
-
-## 避坑
-
-（人工填写：从源卡片的"难点与坑点"节提炼）
-"""
 
 
 @dataclass
 class DistillCandidate:
-    """一个 distill 聚类出的候选 skill（未落盘，待 review）。"""
+    """一个 distill 聚类出的候选 skill（待 agent 评估）。"""
 
     name: str  # 候选 skill 名（kebab-case，来自 category+tech）
     title: str  # 人类可读标题
@@ -90,18 +45,14 @@ class DistillCandidate:
     card_count: int
     card_ids: list[str]  # 源卡片 id 列表（溯源）
     card_titles: list[str]  # 源卡片标题（供 review 判断）
-    draft_path: str  # 落盘后的 draft 路径（dry_run 时为空）
 
 
 @dataclass
 class DistillReport:
     """一次 distill 运行报告。"""
 
-    window_days: int
     total_kb_cards: int = 0
     candidates: list[dict] = field(default_factory=list)
-    drafted: int = 0  # 实际落盘的 draft 数（dry_run 时为 0）
-    skipped_existing_draft: int = 0  # 因 draft 已存在而跳过
     error_details: list[str] = field(default_factory=list)
     message: str = ""
 
@@ -127,45 +78,6 @@ def _to_skill_name(category: str, tech: str) -> str:
     # 保留 CJK + ASCII 字母数字，其余转 -
     name = re.sub(r"[^a-zA-Z0-9\u4e00-\u9fff]+", "-", raw).strip("-").lower()
     return name or "unnamed-skill"
-
-
-def _existing_draft_names() -> set[str]:
-    """已落盘的 draft 名集合（幂等：避免重复生成）。"""
-    names: set[str] = set()
-    if not DISTILL_DIR.exists():
-        return names
-    for f in DISTILL_DIR.glob("*.md"):
-        # 文件名格式：<date>-<name>-draft.md，取中间 name
-        m = re.match(r"\d{8}-(.+)-draft\.md$", f.name)
-        if m:
-            names.add(m.group(1))
-    return names
-
-
-def _render_draft(candidate: DistillCandidate, cards: list[dict]) -> str:
-    """渲染 SKILL.md 草稿（模板填空，正文留空由人工填）。"""
-    card_list_items = []
-    for c in cards:
-        cid = c.get("id", "?")
-        ctitle = c.get("title", "?")
-        ctype = c.get("type", "?")
-        usage = c.get("usage_count", 0)
-        card_list_items.append(f"- `{cid}` ({ctype}, usage={usage}) — {ctitle}")
-    # description：从聚类维度生成一句话（不杜撰步骤）
-    tech = candidate.tech or candidate.category
-    description = (
-        f"distill 候选：{tech} 相关的 {candidate.card_count} 张经验卡片聚类的"
-        f"工作流模式（需人工填充触发条件与步骤）"
-    )
-    return _SKILL_DRAFT_TEMPLATE.format(
-        name=candidate.name,
-        title=candidate.title,
-        description=description,
-        date=datetime.now().strftime("%Y-%m-%d"),
-        card_count=candidate.card_count,
-        card_list="\n".join(card_list_items) or "(无)",
-        tech=tech,
-    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -214,7 +126,6 @@ def _gather_candidates(cards: list[dict]) -> list[tuple[DistillCandidate, list[d
             card_count=len(group),
             card_ids=[c.get("id", "") for c in group],
             card_titles=[c.get("title", "") for c in group],
-            draft_path="",
         )
         candidates.append((cand, group))
 
@@ -222,86 +133,32 @@ def _gather_candidates(cards: list[dict]) -> list[tuple[DistillCandidate, list[d
     return candidates
 
 
-def run_distill(window_days: int = DEFAULT_WINDOW_DAYS, dry_run: bool = True) -> DistillReport:
-    """跑一次 distill（workflow packaging）。
-
-    Args:
-        window_days: 保留参数（当前扫全量 KB，未来可加时间窗）
-        dry_run: True（默认）只返回候选不落盘；False 才写 draft 到 .distill/
-
-    Returns:
-        DistillReport。**零候选是合法返回**（message 说明"无待 distill 工作流"）。
-    """
-    report = DistillReport(window_days=window_days)
+def run_distill() -> DistillReport:
+    """跑一次 distill（workflow packaging，纯只读）。"""
+    report = DistillReport()
     ctx = agenote_context()
     index = _load_index(ctx)
     cards = index.get("cards", [])
     report.total_kb_cards = len(cards)
 
     if not cards:
-        report.message = "KB 为空，无待 distill 工作流（零产物即成功）"
+        report.message = "KB 为空，无待 distill 工作流（零候选即成功）"
         return report
 
-    raw_candidates = _gather_candidates(cards)
+    candidates = _gather_candidates(cards)
 
-    if not raw_candidates:
+    if not candidates:
         report.message = (
-            "无候选：KB 中没有 ≥%d 张同主题的 ascended/高频卡片（零产物即成功）"
+            "无候选：KB 中没有 ≥%d 张同主题的 ascended/高频卡片（零候选即成功）"
             % MIN_CLUSTER_SIZE
         )
         return report
 
-    existing = _existing_draft_names()
-    skipped = 0
-    final: list[tuple[DistillCandidate, list[dict]]] = []
-    for cand, group in raw_candidates:
-        if cand.name in existing:
-            skipped += 1
-            continue
-        final.append((cand, group))
-    report.skipped_existing_draft = skipped
-
-    if not final and skipped:
-        report.message = (
-            "全部候选已有 draft（%d 个），未生成新 draft（幂等跳过）" % skipped
-        )
-        # 仍把候选信息放进 report 供查看
-        report.candidates = [
-            {**asdict(c), "cards_in_group": len(g)} for c, g in raw_candidates
-        ]
-        return report
-
-    report.candidates = [{**asdict(c), "cards_in_group": len(g)} for c, g in final]
-
-    if dry_run:
-        report.message = (
-            "dry_run：%d 个候选 skill，review 后用 dry_run=False 生成 draft"
-            % len(final)
-        )
-        return report
-
-    # ── dry_run=False：落盘 draft 到 .distill/ ────────────────────────────
-    DISTILL_DIR.mkdir(parents=True, exist_ok=True)
-    date_tag = datetime.now().strftime("%Y%m%d")
-    drafted = 0
-    for cand, group in final:
-        try:
-            content = _render_draft(cand, group)
-            path = DISTILL_DIR / f"{date_tag}-{cand.name}-draft.md"
-            cand.draft_path = str(path)
-            atomic_write(path, content)
-            drafted += 1
-        except Exception as e:
-            report.error_details.append(f"draft '{cand.name}' 失败: {e}")
-    report.drafted = drafted
-    # 更新 report.candidates 里的 draft_path
-    report.candidates = [{**asdict(c), "cards_in_group": len(g)} for c, g in final]
+    report.candidates = [
+        {**asdict(c), "cards_in_group": len(g)} for c, g in candidates
+    ]
     report.message = (
-        "drafted %d/%d 个候选到 %s（人工 review + move 到 skills/ 才生效）"
-        % (
-            drafted,
-            len(final),
-            DISTILL_DIR,
-        )
+        "%d 个候选工作流——评估源卡片后由 agent 撰写 skill（草稿落盘功能已移除）"
+        % len(candidates)
     )
     return report

@@ -14,7 +14,6 @@ from pathlib import Path
 from agenote.core import (
     PROJECT_CURATE_DAYS,
     STALE_DAYS,
-    MEMORY_ARCHIVE_DAYS,
     die,
     ensure_dirs,
     today,
@@ -112,17 +111,12 @@ def cmd_memory(args: argparse.Namespace, ctx=None) -> None:
         _memory_archive_to_file(args.archive_to_file, ctx)
         return
 
-    # --auto-archive-days + --stale：自动归档 stale feedback
-    if getattr(args, "stale", False) and getattr(args, "auto_archive_days", 0) > 0:
-        _memory_auto_archive_stale(args.auto_archive_days, ctx)
-        return
-
     # --project-touch：更新项目 LAST_ACTIVE
     if getattr(args, "project_touch", None):
         _memory_project_touch(args.project_touch, ctx)
         return
 
-    # --stale：列出陈旧记忆
+    # --stale：列出陈旧记忆（归档由 agent 审查后逐条 --archive-to-file 执行）
     if getattr(args, "stale", False):
         _memory_stale(ctx)
         return
@@ -132,14 +126,7 @@ def cmd_memory(args: argparse.Namespace, ctx=None) -> None:
         _memory_add(args, ctx)
         return
 
-    # --auto-update：自动更新项目记忆元数据
-    if getattr(args, "auto_update", False):
-        if not getattr(args, "project", None):
-            die("--auto-update 需要与 --project 联合使用")
-        _memory_project_auto_update(args.project, ctx)
-        return
-
-    # --project：按项目名或路径检索
+    # --project：按项目名或路径检索（含 PATH/UPDATED 只读健康提示）
     if getattr(args, "project", None):
         _memory_project(args.project, ctx)
         return
@@ -552,6 +539,21 @@ def _memory_project(identifier: str, ctx=None) -> None:
         print(f"未找到匹配项目。已知项目：{known}")
         sys.exit(1)
 
+    # 健康检查（只读提示，dormant/归档等策展决策由 agent 执行）
+    path_val = matched.get("PATH", "")
+    if path_val and not Path(path_val).expanduser().exists():
+        print(f"[!] PATH 已失效: {path_val}（建议评估是否标注 dormant）")
+    updated_str = matched.get("UPDATED", "").strip("[]")
+    if updated_str:
+        try:
+            delta = (datetime.now().date() - datetime.strptime(
+                updated_str.split()[0], "%Y-%m-%d"
+            ).date()).days
+            if delta > PROJECT_CURATE_DAYS:
+                print(f"[!] 距上次更新 {delta} 天 (>{PROJECT_CURATE_DAYS})，建议策展")
+        except ValueError:
+            pass
+
     # 读取并输出项目文件内容
     file_path = matched.get("FILE", matched.get("PATH", ""))
     proj_path = (
@@ -630,49 +632,6 @@ def _memory_archive_to_file(entry_id: str, ctx=None) -> None:
     print(f"已归档到 MEMORY-ARCHIVE.org: {entry_id}")
 
 
-def _memory_auto_archive_stale(days: int = 0, ctx=None) -> None:
-    ctx = ctx or default_context()
-    """自动归档超过指定天数的 stale feedback 条目。"""
-    threshold = days or MEMORY_ARCHIVE_DAYS
-    if not ctx.memory_org.exists():
-        print("(记忆文件不存在)")
-        return
-
-    text = ctx.memory_org.read_text(encoding="utf-8")
-    lines = text.split("\n")
-    count = 0
-
-    # 找到 feedback 节中的 stale 条目
-    entries_to_archive = []
-    for i, line in enumerate(lines):
-        m = re.match(r"^\*\* (F\d+)", line)
-        if not m:
-            continue
-        entry_id = m.group(1)
-        # 查找 UPDATED
-        for j in range(i + 1, min(i + 10, len(lines))):
-            um = re.match(r"\s*:UPDATED:\s*\[(\d{4}-\d{2}-\d{2})\]", lines[j])
-            if um:
-                try:
-                    updated = datetime.strptime(um.group(1), "%Y-%m-%d")
-                    if (datetime.now() - updated).days > threshold:
-                        entries_to_archive.append(entry_id)
-                except ValueError:
-                    pass
-                break
-            if ":END:" in lines[j]:
-                break
-
-    for entry_id in entries_to_archive:
-        try:
-            _memory_archive_to_file(entry_id)
-            count += 1
-        except SystemExit:
-            continue
-
-    print(f"自动归档完成: {count} 条 feedback 记忆 (>{threshold}天未更新)")
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # 0.10 增强: 项目记忆元数据 — LAST_ACTIVE, LAST_CURATED, STATUS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -714,127 +673,3 @@ def _memory_project_touch(project_name: str, ctx=None) -> None:
     atomic_write(ctx.memory_org, "\n".join(lines))
 
     print(f"已更新项目 {project_name} LAST_ACTIVE → {today()}")
-
-
-def _memory_set_property(lines, start, key, value):
-    """设置条目 PROPERTIES 中的属性(更新或插入)。原地修改 lines。"""
-    for j in range(start + 1, min(start + 15, len(lines))):
-        if ":" + key + ":" in lines[j]:
-            lines[j] = re.sub(
-                r"(:\w+:)(\s+).*$",
-                lambda m: m.group(1) + m.group(2) + value,
-                lines[j],
-            )
-            return
-        if lines[j].strip() == ":END:":
-            lines.insert(j, "   :" + key + ":  " + value)
-            return
-
-
-def _memory_project_auto_update(name, ctx=None):
-    ctx = ctx or default_context()
-    """自动更新项目记忆元数据: LAST_ACTIVE, STATUS, LAST_CURATED。"""
-
-    if not ctx.memory_org.exists():
-        die("记忆文件不存在")
-
-    text = ctx.memory_org.read_text(encoding="utf-8")
-    lns = text.split("\n")
-
-    # 找到项目条目
-    entry_start = None
-    for i, l in enumerate(lns):
-        m = re.match(rf"^\*\* {re.escape(name)}\b", l)
-        if m:
-            entry_start = i
-            break
-
-    if entry_start is None:
-        die(f"未找到项目: {name}")
-
-    # 扫描已有属性
-    props = {}
-    for j in range(entry_start + 1, min(entry_start + 15, len(lns))):
-        if lns[j].strip() == ":END:":
-            break
-        pm = re.match(r"\s*:(\w+):\s*(.+)", lns[j])
-        if pm:
-            props[pm.group(1)] = pm.group(2).strip()
-
-    summary = [f"项目: {name}"]
-
-    # 1. 验证 PATH 存在性 -> STATUS
-    path_val = props.get("PATH", "")
-    if path_val:
-        proj_path = Path(path_val).expanduser()
-        if not proj_path.exists():
-            _memory_set_property(lns, entry_start, "STATUS", "dormant")
-            summary.append(f"  STATUS -> dormant (PATH 不存在: {path_val})")
-    else:
-        summary.append("  未设置 PATH 属性")
-
-    # 2. 检查 UPDATED 日期 > 60 天
-    updated_str = props.get("UPDATED", "")
-    if updated_str:
-        try:
-            # UPDATED 值格式为 [2026-05-26]，去掉方括号再解析
-            date_str = updated_str.strip("[]")
-            updated_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-            delta = (datetime.now().date() - updated_date).days
-            if delta > PROJECT_CURATE_DAYS:
-                summary.append(
-                    f"  上次更新距今 {delta} 天 (>{PROJECT_CURATE_DAYS})，建议策展"
-                )
-            else:
-                summary.append(f"  距上次更新 {delta} 天，尚在窗口内")
-        except ValueError:
-            summary.append(f"  无法解析 UPDATED 日期: {updated_str}")
-    else:
-        summary.append("  未设置 UPDATED 属性")
-
-    # 3. 更新 LAST_ACTIVE
-    _memory_set_property(lns, entry_start, "LAST_ACTIVE", f"[{today()}]")
-    summary.append(f"  LAST_ACTIVE -> [{today()}]")
-
-    # 4. 更新项目记忆文件的 LAST_CURATED
-    file_val = props.get("FILE", "")
-    if file_val:
-        proj_file = (
-            ctx.root / file_val if not Path(file_val).is_absolute() else Path(file_val)
-        )
-        if proj_file.exists():
-            proj_text = proj_file.read_text(encoding="utf-8")
-            if ":PROPERTIES:" in proj_text[:100]:
-                # PROPERTIES 抽屉格式
-                proj_lns = proj_text.split("\n")
-                _memory_set_property(proj_lns, 0, "LAST_CURATED", f"[{today()}]")
-                atomic_write(proj_file, "\n".join(proj_lns))
-            else:
-                # #+ 元数据格式: 更新或追加
-                if "#+LAST_CURATED:" in proj_text:
-                    proj_text = re.sub(
-                        r"#\+LAST_CURATED:.*",
-                        f"#+LAST_CURATED: [{today()}]",
-                        proj_text,
-                    )
-                else:
-                    # 在第一个 #+ 属性块末尾追加
-                    plines = proj_text.split("\n")
-                    insert_pt = 0
-                    for k, pl in enumerate(plines):
-                        if pl.startswith("#+"):
-                            insert_pt = k + 1
-                        else:
-                            break
-                    plines.insert(insert_pt, f"#+LAST_CURATED: [{today()}]")
-                    proj_text = "\n".join(plines)
-                atomic_write(proj_file, proj_text)
-            summary.append(f"  {file_val} LAST_CURATED -> [{today()}]")
-        else:
-            summary.append(f"  项目记忆文件不存在: {file_val}")
-
-    # 写入 MEMORY.org
-    atomic_write(ctx.memory_org, "\n".join(lns))
-
-    # 输出摘要
-    print("\n".join(summary))

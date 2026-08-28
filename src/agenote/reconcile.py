@@ -75,13 +75,6 @@ class ReconcileReport:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# hermes 抽取器 — 已迁至 agenote/extract/hermes.py（@register 注册进 SOURCES）
-# ═══════════════════════════════════════════════════════════════════════════════
-
-from agenote.extract.hermes import HERMES_DB, extract_hermes  # noqa: F401  (re-export)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # source 分发 — 统一由 agenote.extract.base.SOURCES registry 提供
 # ═══════════════════════════════════════════════════════════════════════════════
 # 原 KNOWN_SOURCES（7 项 lambda __import__ 分发）已删除：新增 source 只需在

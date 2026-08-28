@@ -40,7 +40,7 @@ pip install --user git+https://github.com/ShineBreaker/agenote.git
 | 命令          | 用途                                                                      |
 | ------------- | ------------------------------------------------------------------------- |
 | `agenote`     | 主 CLI（30+ 子命令）：卡片 CRUD、检索、记忆、策展、健康度、跨 agent 协同 |
-| `agenote-cli` | 轻量 shim，供 omp-hooks 扩展 execSync 调用（health/curate/review）        |
+| `agenote-cli` | 轻量 shim，供 pi 扩展 execSync 调用（health）                             |
 | `orgfmt`      | 通用 org-mode 格式化 CLI（共享 agenote 库）                               |
 
 运行 `agenote --help` 查看完整子命令清单。主要命令分组：
@@ -48,7 +48,9 @@ pip install --user git+https://github.com/ShineBreaker/agenote.git
 - **卡片 CRUD**：`add` / `get` / `list` / `update` / `merge` / `connect` / `archive` / `restore`
 - **检索**：`search`（BM25 排序，CJK n-gram 中英混检）/ `tags` / `fields` / `inbox`
 - **记忆系统**：`memory`（`--add` / `--stale` / `--touch` / `--archive` 等子选项）
-- **策展**：`curate`（一键）/ `lint`（`--json` 分类报告）/ `deduplicate` / `health` / `gaps` / `reindex` / `stats`
+- **策展**（原子工具，流程由 agent 依据 [agenote-skills](https://github.com/ShineBreaker/agenote-skills) 编排）：
+  `health` / `gaps` / `deduplicate` / `review` / `archive --stale`（归档候选，只读）/
+  `list --unused-days`（降级候选，只读）/ `lint`（`--json` 分类报告）/ `reindex`（含 WEIGHT 重算）/ `stats`
 - **跨 agent**：`reconcile` / `dream` / `distill` / `extract`
 - **维护**：`init` / `commit` / `config` / `doctor`（环境自诊断）/ `touch` / `viz`
 
@@ -71,7 +73,7 @@ agenote config show    # 打印当前生效配置及每个键的来源（env / f
 
 | 节 | 内容 |
 | --- | --- |
-| `[paths]` | `kb_root` 知识库根、`agenote_dir` agent 域子目录名、conversations/distill/reconcile/viz 产物目录 |
+| `[paths]` | `kb_root` 知识库根、`agenote_dir` agent 域子目录名、conversations/reconcile/viz 产物目录 |
 | `[agent]` | 卡片 SOURCE_AGENT 默认写入者标签 |
 | `[weights]` | 检索权重（人类 1.5 / agent 1.0）、touch 加成、stale 惩罚、去重加成、评分系数 |
 | `[curation]` | stale/archive 天数阈值、去重相似度阈值 |
@@ -124,8 +126,8 @@ agenote-cli ─┘     ├── cards.py    卡片 CRUD
                    └── viz/        HTML 可视化生成
 ```
 
-三个 CLI 共享同一 `agenote` 包内核，行为一致。`agenote-cli` 是给 omp-hooks 扩展的
-轻量入口（纯 stdlib，health/curate/review 三个命令）。
+三个 CLI 共享同一 `agenote` 包内核，行为一致。`agenote-cli` 是给 pi 扩展的
+轻量入口（纯 stdlib，仅 health 一个命令——策展由 agent 走主 CLI 编排）。
 
 ## 开发
 

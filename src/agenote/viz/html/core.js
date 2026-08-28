@@ -202,7 +202,7 @@ function openDetail(id) {
       : '<div class="body body-empty">（无内容）</div>';
 
   // 对齐 curator 状态机：只在 STATUS==stale 时提示。
-  // archive 分支用 LAST_VERIFIED 超 90 天（与 _archive_auto_stale 一致）
+  // archive 分支用 LAST_VERIFIED 超 90 天（与 _archive_stale_candidates 的候选条件一致）
   var staleHtml = "";
   if (c.status === "stale") {
     var verifiedDays = daysSinceDate(c.last_verified);

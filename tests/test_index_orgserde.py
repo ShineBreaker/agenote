@@ -115,7 +115,9 @@ def test_index_roundtrip(tmp_path, monkeypatch):
     assert d["title"] == "一张测试卡片"
     assert d["tech"] == "Python,Packaging"
     assert d["tags"] == ["general", "workflow", "ai", "Python", "Packaging"]  # 逗号展开
-    assert d["weight"] == 1.1
+    # WEIGHT 是派生值（文件中的 :WEIGHT: 1.1 遗留属性被忽略）：
+    # 1.5(域默认) × (1 + 0.1×2(usage)) × 1.0(无 LAST_USED 不惩罚) = 1.8
+    assert d["weight"] == 1.8
     assert d["usage_count"] == 2
     assert d["created"] == "2026-08-14"
 

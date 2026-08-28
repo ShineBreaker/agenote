@@ -125,18 +125,17 @@ def normalize_cards(cards: list[dict]) -> list[dict]:
     return out
 
 
-def compute_stats(cards: list[dict], memory: dict | None = None) -> dict:
+def compute_stats(cards: list[dict]) -> dict:
     """Python 端预计算：总数、陈旧列表、按域分布。
 
-    陈旧判定对齐 curator 状态机（``_archive_auto_stale``，cards.py）：
+    陈旧判定对齐 curator 状态机（``_archive_stale_candidates``，curator.py）：
       - stale: STATUS == "stale"（被策展流程主动标记为陈旧的卡片）
       - archive: STATUS == "stale" 且 LAST_VERIFIED 距今 > ARCHIVE_THRESHOLD_DAYS(90)
-        ——即 curator 下次 curate 会真正归档的那些卡片
+        ——即 ``agenote archive --stale`` 会列为归档候选的那些卡片
 
     不再用 LAST_USED 天数判定陈旧（那会把 done 态卡片误报为陈旧，与 curator
-    的归档条件 ``STATUS==stale`` 完全脱节）。curator 不会自动把 done→stale，
+    的归档条件 ``STATUS==stale`` 完全脱节）。CLI 不自动把 done→stale，
     STATUS 只能由 ``agenote update --status stale`` 主动设置。
-    `memory` 参数保留为可选以兼容旧调用，但不再生成相关数据。
     """
     normalized = normalize_cards(cards)
     stale_cards = [c for c in normalized if c.get("status") == "stale"]

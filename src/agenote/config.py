@@ -58,7 +58,6 @@ SCHEMA: dict[str, dict[str, Key]] = {
         ),
         "agenote_dir": Key("agenote", comment="agent 域子目录名（KB_ROOT 下）"),
         "conversations_root": Key("", comment="extract 对话输出目录（空 = KB_ROOT/conversations）"),
-        "distill_dir": Key("", comment="distill skill 草稿目录（空 = agent 域/.distill）"),
         "reconcile_dir": Key("", comment="reconcile 只读事实索引目录（空 = agent 域/.reconcile）"),
         "viz_output": Key("", comment="viz 可视化输出文件（空 = KB_ROOT/kb-viz.html）"),
     },
@@ -73,7 +72,6 @@ SCHEMA: dict[str, dict[str, Key]] = {
         "usage_bonus": Key(0.1, comment="每次 touch 的权重提升系数"),
         "usage_cap": Key(10, comment="usage 计数封顶（bonus×cap = 最大加成）"),
         "stale_penalty": Key(0.8, comment="超 stale_days 未用的权重惩罚系数"),
-        "weight_epsilon": Key(0.001, comment="权重变化判定 epsilon（curate 跳过无变化卡片）"),
         "reconcile_default": Key(0.7, comment="reconcile 自家 agent 源基准权重"),
         "external_delta": Key(-0.1, comment="外部 reconcile 源相对基准的偏移"),
         "default_trust": Key(0.5, comment="对话型源默认 trust 分"),
@@ -96,8 +94,7 @@ SCHEMA: dict[str, dict[str, Key]] = {
     "curation": {
         "stale_days": Key(30, comment="memory/卡片「陈旧」统一阈值（天）"),
         "archive_days": Key(90, comment="stale→archived 状态机阈值（天，按 LAST_VERIFIED）"),
-        "memory_archive_days": Key(60, comment="feedback stale→MEMORY-ARCHIVE.org 阈值（天）"),
-        "project_curate_days": Key(60, comment="memory --auto-update 项目建议策展阈值（天）"),
+        "project_curate_days": Key(60, comment="memory 项目健康检查的策展建议阈值（天）"),
         "dedup_threshold": Key(0.7, comment="去重相似度阈值（0-1，越高越严）"),
     },
     "dream": {
@@ -115,7 +112,6 @@ SCHEMA: dict[str, dict[str, Key]] = {
     "distill": {
         "min_cluster_size": Key(2, comment="聚类最小卡片数"),
         "min_usage_for_ascend": Key(2, comment="反复使用判定（USAGE_COUNT 下限）"),
-        "window_days": Key(30, comment="distill 回看窗口（天）"),
     },
     "extract": {
         "date_offset_days": Key(1, comment="默认抽取偏移（1 = 抽昨天）"),

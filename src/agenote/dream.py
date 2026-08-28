@@ -374,7 +374,6 @@ class DreamReport:
     limit: int = DEFAULT_LIMIT  # 本次请求的返回上限
     snapshot_hash: str = ""  # 本次候选集指纹（前 8 位）；offset>0 时提示排序可能漂移
     candidates: list[dict] = field(default_factory=list)
-    promoted: int = 0  # 实际写入 KB 的卡片数（dry_run 时为 0）
     skipped_existing: int = 0  # 因 KB 已覆盖而跳过的候选
     error_details: list[str] = field(default_factory=list)
     message: str = ""  # 人类可读结论（含"零产物即成功"语义）
@@ -553,18 +552,14 @@ def _gather_candidates(
 
 def run_dream(
     window_days: int = DEFAULT_WINDOW_DAYS,
-    dry_run: bool = True,
     offset: int = 0,
     limit: int = DEFAULT_LIMIT,
 ) -> DreamReport:
-    """跑一次 dream（启发式 memory consolidation）。
+    """跑一次 dream（启发式 memory consolidation，纯只读）。
 
     Args:
         window_days: 事实时间窗口（天）。0=不过滤看全量；默认 90d（幸存 ~90% facts）。
             无 timestamp 的事实（如 hermes）不受窗口影响，默认保留。
-        dry_run: 历史参数，**已无实际效果**——dream 现为纯只读候选发现器，
-            不再自动写 KB。保留以兼容 MCP 签名。显式传 `dry_run=False`（旧行为：
-            "写 KB"）会触发 DeprecationWarning，提示该参数已废弃。
         offset: 跳过前 N 个候选（用于多轮抽取跳过噪声词）。**注意 offset 语义不稳定**：
             候选排序随 reconcile 索引更新变化，同一 offset 在不同时间可能指向不同候选。
             report.snapshot_hash 标识本次候选集指纹，两次调用指纹不同即说明排序已漂移。
@@ -574,19 +569,9 @@ def run_dream(
         DreamReport。**零候选是合法返回**（message 说明"无待 consolidate 事实"）。
         有候选时 report.candidates 含代表事实正文 + source_trace 溯源指针——
         agent 对某候选词感兴趣时，用 `agenote trace --id <source_trace>` 读该词
-        出现的完整原始对话（含工具调用/推理/补丁，索引层摘要不截断），
+        出现的完整原始对话（含工具调用/推理/补丁），
         再用 agenote_add 决定是否综合写入 KB（见 agenote-curator skill Step 3）。
     """
-    # dry_run 弃用警告：只在显式传 dry_run=False（旧行为）时触发。
-    # 默认 dry_run=True 不警告（避免每次调用都吵）——只提示那些以为"False=写KB"的调用方。
-    if dry_run is False:
-        warnings.warn(
-            "run_dream(dry_run=False) 已无效果——dream 现为纯只读候选发现器，"
-            "不再自动写 KB。该参数保留仅为向后兼容，请勿依赖其行为。",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
     report = DreamReport(window_days=window_days, offset=offset, limit=limit)
     facts = load_reconcile_facts()
     report.total_reconcile_facts = len(facts)

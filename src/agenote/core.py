@@ -35,11 +35,7 @@ _conv_root = str(config.get("paths", "conversations_root"))
 CONVERSATIONS_ROOT = (  # extract 对话输出（extract/base.py 用）
     config.get_path("paths", "conversations_root") if _conv_root else KB_ROOT / "conversations"
 )
-AGENOTE_ROOT = KB_ROOT / AGENOTE_DIR_NAME  # agent 域根（reconcile/distill/viz 共用）
-_distill_cfg = str(config.get("paths", "distill_dir"))
-DISTILL_DIR = (  # distill skill 草稿目录（agenote.distill 用）
-    config.get_path("paths", "distill_dir") if _distill_cfg else AGENOTE_ROOT / ".distill"
-)
+AGENOTE_ROOT = KB_ROOT / AGENOTE_DIR_NAME  # agent 域根（reconcile/viz 共用）
 
 VALID_TYPES = {"debug", "refactor", "research", "workflow", "feature", "config"}
 VALID_OWNERS = {"human", "ai", "collab"}
@@ -391,7 +387,6 @@ def ensure_dirs(ctx: "KBContext | None" = None) -> None:
 
 STALE_DAYS = int(config.get("curation", "stale_days"))  # memory/卡片「陈旧」统一阈值（天）
 ARCHIVE_THRESHOLD_DAYS = int(config.get("curation", "archive_days"))  # stale → archived 阈值（天）
-MEMORY_ARCHIVE_DAYS = int(config.get("curation", "memory_archive_days"))  # feedback stale → 归档阈值（天）
 DEDUP_THRESHOLD = float(config.get("curation", "dedup_threshold"))  # 去重相似度阈值（4 处硬编码的单一来源）
 DEDUP_CATEGORY_BONUS = float(config.get("weights", "dedup_category_bonus"))  # 去重：category 相同加成
 DEDUP_TECH_BONUS = float(config.get("weights", "dedup_tech_bonus"))  # 去重：tech 相同加成

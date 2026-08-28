@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: 2026 BrokenShine <xchai404@gmail.com>
 #
 # SPDX-License-Identifier: MIT
-"""agenote.curator — 知识策展（归档/恢复/去重/审查/一键策展）。
+"""agenote.curator — 知识策展原子工具（归档/恢复/去重/审查）。
 
-从 cards.py 拆出（ADR-0002）：done→stable→stale→archived 状态机、
-权重重分配、标题相似度去重集中于此。_jaccard_similarity 由 health
-复用（统一去重算法），cmd_curate 运行时 lazy import health（无循环）。
+从 cards.py 拆出（ADR-0002）：归档状态机、标题相似度去重、单卡审查集中于此。
+策展流程（状态重整顺序、去留取舍）由 agent 依据 agenote-curator skill 主导，
+CLI 只提供检测报告与原子写命令。_jaccard_similarity 由 health 复用（统一去重算法）。
 """
 
 import argparse
@@ -13,13 +13,11 @@ import json
 import re
 from datetime import datetime
 
-from agenote import config
 from agenote.core import (
     DEDUP_CATEGORY_BONUS,
     DEDUP_TECH_BONUS,
     DEDUP_THRESHOLD,
     VALID_STATUSES,
-    STALE_DAYS,
     ARCHIVE_THRESHOLD_DAYS,
     die,
     now,
@@ -34,12 +32,8 @@ from agenote.index import (
     _load_index,
     _save_index,
     _upsert_card,
-    _rebuild_index,
 )
 from agenote.safeio import atomic_write
-
-# 权重重分配的变化判定 epsilon（小于此差异跳过，减少无意义 churn）
-WEIGHT_EPSILON = float(config.get("weights", "weight_epsilon"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -48,41 +42,44 @@ WEIGHT_EPSILON = float(config.get("weights", "weight_epsilon"))
 
 
 def cmd_archive(args: argparse.Namespace, ctx=None) -> None:
-    """归档卡片或自动归档过时卡片。"""
+    """归档指定卡片（支持批量），或列出归档候选（只读）。"""
     ctx = ctx or default_context()
     if getattr(args, "list_cards", False):
         _archive_list(ctx, json_output=getattr(args, "json", False))
         return
 
     if getattr(args, "stale", False):
-        _archive_auto_stale(ctx)
+        _archive_stale_candidates(ctx, json_output=getattr(args, "json", False))
         return
 
-    # 归档指定卡片
+    # 归档指定卡片（agent 审查候选清单后批量执行）
     if not args.id:
-        die("请指定卡片 ID 或使用 --stale")
-    card = _resolve_card(args.id, ctx)
-    if not card:
-        die(f"未找到卡片: {args.id}")
+        die("请指定卡片 ID 或使用 --stale 查看归档候选")
+    archived = []
+    for card_id in args.id:
+        card = _resolve_card(card_id, ctx)
+        if not card:
+            die(f"未找到卡片: {card_id}")
 
-    content = card.read_text(encoding="utf-8")
-    if ":STATUS:" in content:
-        content = re.sub(r":STATUS:\s*.+", ":STATUS:   archived", content)
-    else:
-        content = content.replace(":END:", ":STATUS:   archived\n:END:", 1)
-    if ":ARCHIVED_AT:" not in content:
-        content = content.replace(":END:", f":ARCHIVED_AT: [{now()}]\n:END:", 1)
-    if getattr(args, "reason", None):
-        if ":ARCHIVE_REASON:" not in content:
-            content = content.replace(
-                ":END:", f":ARCHIVE_REASON: {args.reason}\n:END:", 1
-            )
+        content = card.read_text(encoding="utf-8")
+        if ":STATUS:" in content:
+            content = re.sub(r":STATUS:\s*.+", ":STATUS:   archived", content)
+        else:
+            content = content.replace(":END:", ":STATUS:   archived\n:END:", 1)
+        if ":ARCHIVED_AT:" not in content:
+            content = content.replace(":END:", f":ARCHIVED_AT: [{now()}]\n:END:", 1)
+        if getattr(args, "reason", None):
+            if ":ARCHIVE_REASON:" not in content:
+                content = content.replace(
+                    ":END:", f":ARCHIVE_REASON: {args.reason}\n:END:", 1
+                )
 
-    atomic_write(card, content)
-    index = _load_index(ctx)
-    _upsert_card(index, card, ctx)
-    _save_index(index, ctx)
-    print(f"已归档: {card.name}")
+        atomic_write(card, content)
+        index = _load_index(ctx)
+        _upsert_card(index, card, ctx)
+        _save_index(index, ctx)
+        archived.append(card.name)
+    print(f"已归档 {len(archived)} 张: {', '.join(archived)}")
 
 
 def _archive_list(ctx=None, json_output: bool = False) -> None:
@@ -101,11 +98,14 @@ def _archive_list(ctx=None, json_output: bool = False) -> None:
         print(f"\n共 {len(archived)} 张归档卡片")
 
 
-def _archive_auto_stale(ctx=None) -> None:
-    """自动归档超过阈值天数的 stale 卡片。"""
+def _archive_stale_candidates(ctx=None, json_output: bool = False) -> None:
+    """列出归档候选：超过阈值天数未验证的 stale 卡片（只读）。
+
+    去留由 agent 审查后决定，执行用 `agenote archive <id...> --reason`。
+    """
     ctx = ctx or default_context()
     index = _load_index(ctx)
-    count = 0
+    candidates = []
     for card_info in index["cards"]:
         if card_info.get("status") != "stale":
             continue
@@ -118,64 +118,26 @@ def _archive_auto_stale(ctx=None) -> None:
         except (ValueError, IndexError):
             continue
         if days > ARCHIVE_THRESHOLD_DAYS:
-            card = _resolve_card(card_info["id"], ctx)
-            if card and card.exists():
-                content = card.read_text(encoding="utf-8")
-                if ":STATUS:" in content:
-                    content = re.sub(r":STATUS:\s*.+", ":STATUS:   archived", content)
-                if ":ARCHIVED_AT:" not in content:
-                    content = content.replace(
-                        ":END:", f":ARCHIVED_AT: [{now()}]\n:END:", 1
-                    )
-                atomic_write(card, content)
-                _upsert_card(index, card, ctx)
-                count += 1
-                print(f"  自动归档: {card.name} (>{ARCHIVE_THRESHOLD_DAYS}天未验证)")
-    if count:
-        _save_index(index, ctx)
-    print(f"自动归档完成: {count} 张卡片")
+            candidates.append(
+                {
+                    "id": card_info["id"],
+                    "title": card_info.get("title", "")[:60],
+                    "days_unverified": days,
+                }
+            )
 
-
-def _mark_auto_stale(ctx=None) -> None:
-    """自动把超阈值未使用的非终态卡片标记为 stale（done/stable → stale）。
-
-    补全 curator 状态机缺失的一跳：curate 第 2 步权重重分配已对 LAST_USED
-    超 STALE_DAYS 的卡片打 0.8 权重惩罚，本函数用同一判定条件同步降级 STATUS，
-    使其进入第 4 步 ``_archive_auto_stale`` 的归档候选。不动 archived（终态）
-    和已是 stale 的卡片（幂等）。
-    """
-    ctx = ctx or default_context()
-    index = _load_index(ctx)
-    count = 0
-    now_dt = datetime.now()
-    for card_info in index["cards"]:
-        if card_info.get("status", "done") not in ("done", "stable"):
-            continue
-        last_used = card_info.get("last_used", "")
-        if not last_used:
-            continue
-        try:
-            lu_date = re.sub(r"[\[\]]", "", last_used).split()[0]
-            days = (now_dt - datetime.strptime(lu_date, "%Y-%m-%d")).days
-        except (ValueError, IndexError):
-            continue
-        if days > STALE_DAYS:
-            card = _resolve_card(card_info["id"], ctx)
-            if card and card.exists():
-                content = card.read_text(encoding="utf-8")
-                if ":STATUS:" in content:
-                    content = re.sub(r":STATUS:\s*.+", ":STATUS:   stale", content)
-                else:
-                    content = content.replace(
-                        ":END:", ":STATUS:   stale\n:END:", 1
-                    )
-                atomic_write(card, content)
-                _upsert_card(index, card, ctx)
-                count += 1
-                print(f"  标记 stale: {card.name} (>{STALE_DAYS}天未使用)")
-    if count:
-        _save_index(index, ctx)
-    print(f"状态降级完成: {count} 张卡片 done/stable → stale")
+    if not candidates:
+        print(f"无归档候选（stale 且 >{ARCHIVE_THRESHOLD_DAYS} 天未验证）")
+        return
+    if json_output:
+        print(json.dumps(candidates, ensure_ascii=False, indent=2))
+    else:
+        for c in candidates:
+            print(f"  {c['id']}  {c['title']}  (>{c['days_unverified']}天未验证)")
+        print(
+            f"\n共 {len(candidates)} 张归档候选——审查后执行: "
+            f"agenote archive <id...> --reason \"策展: >{ARCHIVE_THRESHOLD_DAYS}天未验证\""
+        )
 
 
 def cmd_restore(args: argparse.Namespace, ctx=None) -> None:
@@ -266,9 +228,7 @@ def cmd_deduplicate(args: argparse.Namespace, ctx=None) -> None:
             print(f"  [{sim:.0%}] {a['id']}: {a['title'][:50]}")
             print(f"         {b['id']}: {b['title'][:50]}")
         print(f"\n共 {len(pairs)} 对疑似重复 (阈值={threshold:.0%})")
-
-    if getattr(args, "merge", False) and pairs:
-        print("\n--merge 模式：请用 kb merge 手动合并")
+        print("核实后用 agenote merge <primary> <secondary> --desc 手动合并")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -336,93 +296,6 @@ def cmd_review(args: argparse.Namespace, ctx=None) -> None:
         print("问题:")
         for issue in issues:
             print(f"  ❌ {issue}")
+        print("修复用: agenote update <id> --category <值> / --tech <值> / connect 建关联")
     else:
         print("质量检查: ✅ 全部通过")
-
-    # --fix 模式
-    if getattr(args, "fix", False) and issues:
-        fixes = []
-        if "缺少 CATEGORY" in issues:
-            content = re.sub(r":CATEGORY:\s*\n", ":CATEGORY: general\n", content)
-            fixes.append("已设置 CATEGORY=general")
-        if "缺少 TECH" in issues:
-            content = re.sub(r":TECH:\s*\n", ":TECH: general\n", content)
-            fixes.append("已设置 TECH=general")
-        if fixes:
-            atomic_write(card, content)
-            for fix in fixes:
-                print(f"  🔧 {fix}")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 子命令: curate — 一键策展（健康 + 去重 + 归档 + 重建索引 + 权重重分配）
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-def cmd_curate(args: argparse.Namespace, ctx=None) -> None:
-    """一键策展：健康检查 + 权重重分配 + 去重 + 归档陈旧 + 重建索引。"""
-    from agenote.core import (
-        HUMAN_DEFAULT_WEIGHT,
-        AGENT_DEFAULT_WEIGHT,
-        WEIGHT_USAGE_BONUS,
-        WEIGHT_USAGE_CAP,
-        WEIGHT_STALE_PENALTY,
-    )
-
-    ctx = ctx or default_context()
-    print(f"=== curate ({ctx.name}) ===")
-
-    # 1. 健康检查（cmd_health 在 agenote.health，lazy import 避免循环）
-    print("\n── 1. 健康检查 ──")
-    from agenote.health import cmd_health
-
-    cmd_health(args, ctx)
-
-    # 2. 权重重分配
-    print("\n── 2. 权重重分配 ──")
-    base_weight = HUMAN_DEFAULT_WEIGHT if ctx.is_human else AGENT_DEFAULT_WEIGHT
-    index = _load_index(ctx)
-    now_dt = datetime.now()
-    reassigned = 0
-    for card in index["cards"]:
-        usage = card.get("usage_count", 0)
-        last_used = card.get("last_used", "")
-        # 使用次数提升：1 + 0.1 × min(usage, 10)
-        usage_factor = 1 + WEIGHT_USAGE_BONUS * min(usage, WEIGHT_USAGE_CAP)
-        # 新鲜度惩罚：last_used 超 STALE_DAYS 则 ×0.8
-        stale_factor = 1.0
-        if last_used:
-            try:
-                lu = datetime.strptime(last_used.strip("[]").split()[0], "%Y-%m-%d")
-                if (now_dt - lu).days > STALE_DAYS:
-                    stale_factor = WEIGHT_STALE_PENALTY
-            except (ValueError, IndexError):
-                pass
-        new_weight = round(base_weight * usage_factor * stale_factor, 3)
-        if abs(new_weight - card.get("weight", base_weight)) > WEIGHT_EPSILON:
-            reassigned += 1
-        card["weight"] = new_weight
-    _save_index(index, ctx)
-    print(f"  重新分配权重: {reassigned}/{len(index['cards'])} 张卡片变化")
-
-    # 2.5 状态降级：长期未使用的 done/stable → stale（与第 2 步同判定条件）
-    print("\n── 2.5 状态降级 ──")
-    _mark_auto_stale(ctx)
-
-    # 3. 去重检测
-    print("\n── 3. 去重检测 ──")
-    cmd_deduplicate(args, ctx)
-
-    # 4. 归档陈旧
-    print("\n── 4. 归档陈旧 ──")
-    archive_args = argparse.Namespace(
-        id=None, reason=None, list_cards=False, stale=True, json=False
-    )
-    cmd_archive(archive_args, ctx)
-
-    # 5. 重建索引
-    print("\n── 5. 重建索引 ──")
-    new_idx = _rebuild_index(ctx)
-    _save_index(new_idx, ctx)
-    print(f"  索引已重建: {new_idx['total']} 条")
-    print("\n=== curate 完成 ===")

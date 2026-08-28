@@ -20,11 +20,14 @@ from agenote.core import (
     DEFAULT_OWNER,
     DEFAULT_TYPE,
     KBContext,
+    STALE_DAYS,
+    WEIGHT_STALE_PENALTY,
+    WEIGHT_USAGE_BONUS,
+    WEIGHT_USAGE_CAP,
     default_context,
 )
 from agenote.safeio import atomic_write
 from agenote.orgserde import (
-    _parse_float_prop,
     _parse_int_prop,
     parse_org_prop,
     read_org_title,
@@ -62,6 +65,23 @@ def _card_dict(filepath: Path, ctx: "KBContext | None" = None) -> dict | None:
     for tag in raw_tags:
         expanded_tags.extend(t.strip() for t in tag.split(",") if t.strip())
 
+    # WEIGHT 是派生值（不读文件属性，文件中的遗留 WEIGHT 被忽略）：
+    # base(域默认) × 使用系数 × 新鲜度系数，rebuild/upsert 全路径一致重算。
+    usage = _parse_int_prop(content, "USAGE_COUNT", 0)
+    usage_factor = 1 + WEIGHT_USAGE_BONUS * min(usage, WEIGHT_USAGE_CAP)
+    stale_factor = 1.0
+    last_used_raw = parse_org_prop(content, "LAST_USED")
+    if last_used_raw:
+        try:
+            lu = datetime.strptime(
+                re.sub(r"[\[\]]", "", last_used_raw).split()[0], "%Y-%m-%d"
+            )
+            if (datetime.now() - lu).days > STALE_DAYS:
+                stale_factor = WEIGHT_STALE_PENALTY
+        except (ValueError, IndexError):
+            pass
+    weight = round(ctx.default_weight * usage_factor * stale_factor, 3)
+
     return {
         "id": card_id,
         "file": str(filepath.relative_to(ctx.root)),
@@ -73,12 +93,12 @@ def _card_dict(filepath: Path, ctx: "KBContext | None" = None) -> dict | None:
         "entry_type": entry_type,
         "source_agent": source_agent,
         "status": parse_org_prop(content, "STATUS") or "done",
-        "last_used": parse_org_prop(content, "LAST_USED"),
+        "last_used": last_used_raw,
         "last_verified": parse_org_prop(content, "LAST_VERIFIED"),
         "created": created or "",
         "tags": expanded_tags,
-        "weight": _parse_float_prop(content, "WEIGHT", ctx.default_weight),
-        "usage_count": _parse_int_prop(content, "USAGE_COUNT", 0),
+        "weight": weight,
+        "usage_count": usage,
     }
 
 
@@ -105,7 +125,7 @@ def _save_index(index: dict, ctx: "KBContext | None" = None) -> None:
 
 
 def _rebuild_index(ctx: "KBContext | None" = None) -> dict:
-    """全量扫描 experiences/ 重建索引 dict。"""
+    """全量扫描 experiences/ 重建索引 dict（WEIGHT 随之按公式重算）。"""
     ctx = ctx or default_context()
     cards = []
     for f in sorted(
