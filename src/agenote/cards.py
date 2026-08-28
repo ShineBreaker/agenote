@@ -80,12 +80,7 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
     if entry_type and entry_type not in VALID_ENTRY_TYPES | {""}:
         die(f"--entry 仅支持: {', '.join(sorted(VALID_ENTRY_TYPES))}")
 
-    # ── 白名单校验：对非标准值打印警告 ─────────────────────────────────────
-    if type_ not in VALID_TYPES:
-        print(
-            f"警告: type '{type_}' 不在标准值中 ({', '.join(sorted(VALID_TYPES))})",
-            file=sys.stderr,
-        )
+    # ── owner 白名单：非标准值只警告不阻塞（便于扩展）─────────────────────
     if owner not in VALID_OWNERS:
         print(
             f"警告: owner '{owner}' 不在标准值中 ({', '.join(sorted(VALID_OWNERS))})",
@@ -108,6 +103,20 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
             type_ = "debug"
         elif entry_type == "note":
             type_ = "workflow"
+
+    # ── type 门禁：标准值或知识库已有 type 免检，新 type 需 --force ────────
+    index = _load_index(ctx)
+    known_types = Counter(c["type"] for c in index["cards"] if c.get("type"))
+    if type_ not in VALID_TYPES and type_ not in known_types:
+        if not getattr(args, "force", False):
+            hint = ", ".join(f"{t}({n})" for t, n in known_types.most_common())
+            die(
+                f"type '{type_}' 是新类型（不在标准值中，知识库中也无该类型卡片）\n"
+                f"      已有 type: {hint}\n"
+                f"      请优先复用已有 type（agenote fields --type 查看全量）；"
+                f"确需新建请加 --force"
+            )
+        print(f"警告: type '{type_}' 为新类型，已按 --force 强制写入", file=sys.stderr)
 
     if entry_type and not args.owner:
         owner = "collab"
@@ -178,8 +187,7 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
 
     atomic_write(filepath, "\n".join(lines) + "\n")
 
-    # 增量更新 JSON 索引
-    index = _load_index(ctx)
+    # 增量更新 JSON 索引（index 已在 type 门禁处加载）
     _upsert_card(index, filepath, ctx)
     _save_index(index, ctx)
 
@@ -581,7 +589,38 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
     if args.tech:
         content = re.sub(r":TECH:\s*.+", f":TECH:     {args.tech}", content)
     if args.type_:
-        content = re.sub(r":TYPE:\s*.+", f":TYPE:     {args.type_}", content)
+        old_type = parse_org_prop(content, "TYPE") or DEFAULT_TYPE
+        if args.type_ != old_type:
+            # 与 add 相同的 type 门禁：防止通过 update 开新 type
+            index = _load_index(ctx)
+            known_types = Counter(c["type"] for c in index["cards"] if c.get("type"))
+            if args.type_ not in VALID_TYPES and args.type_ not in known_types:
+                if not getattr(args, "force", False):
+                    hint = ", ".join(
+                        f"{t}({n})" for t, n in known_types.most_common()
+                    )
+                    die(
+                        f"type '{args.type_}' 是新类型"
+                        f"（不在标准值中，知识库中也无该类型卡片）\n"
+                        f"      已有 type: {hint}\n"
+                        f"      请优先复用已有 type；确需新建请加 --force"
+                    )
+                print(
+                    f"警告: type '{args.type_}' 为新类型，已按 --force 强制写入",
+                    file=sys.stderr,
+                )
+            content = re.sub(r":TYPE:\s*.+", f":TYPE:     {args.type_}", content)
+            # 标签行同步：旧 type 段替换为新 type；新 type 已在标签中则移除旧段
+            m = re.search(r"^:(\S+)::$", content, re.MULTILINE)
+            if m and old_type in m.group(1).split(":"):
+                parts = m.group(1).split(":")
+                if args.type_ in parts:
+                    parts = [p for p in parts if p != old_type]
+                else:
+                    parts = [args.type_ if p == old_type else p for p in parts]
+                content = content.replace(
+                    m.group(0), ":" + ":".join(parts) + "::", 1
+                )
     if args.owner:
         content = re.sub(r":OWNER:\s*.+", f":OWNER:    {args.owner}", content)
 
@@ -604,7 +643,18 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
             content = content.rstrip("\n") + f"\n\n{extra.strip()}\n"
 
     atomic_write(card, content)
-    print(f"已更新: {card}")
+    # --type 重分类收尾：文件名同步为 {id}-{type}-{category}.org，并刷新索引
+    updated = card
+    if args.type_ and args.type_ != old_type:
+        card_id = parse_org_prop(content, "ID") or card.stem.split("-")[0]
+        category = parse_org_prop(content, "CATEGORY") or DEFAULT_CATEGORY
+        new_path = card.parent / f"{card_id}-{args.type_}-{category}.org"
+        if new_path != card and not new_path.exists():
+            card.rename(new_path)
+            updated = new_path
+        _upsert_card(index, updated, ctx)
+        _save_index(index, ctx)
+    print(f"已更新: {updated}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

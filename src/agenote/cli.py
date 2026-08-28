@@ -468,7 +468,7 @@ def print_help() -> None:
   add       添加经验卡片
             agenote add --title "标题" [--category 类别] [--tech 技术栈]
                     [--type 类型] [--owner 执行者] [--entry 条目语义]
-                    [--summary 总结] [--stdin]
+                    [--summary 总结] [--stdin] [--force]
 
   get       读取卡片详情
             agenote get <卡片文件名或ID>
@@ -531,6 +531,7 @@ def print_help() -> None:
   update   更新已有卡片
             agenote update <卡片ID> [--status STATUS] [--category 类别] [--tech 技术]
                      [--type 类型] [--owner 执行者] [--append-to 章节 --append-text 内容] [--stdin]
+                     [--force]
 
   init     初始化知识库
             agenote init            创建目录结构 + git 仓库 + 初始 commit
@@ -654,7 +655,9 @@ def main() -> None:
     )
     add_parser.add_argument("--tech", help="技术栈（自由输入，优先复用已有标签）")
     add_parser.add_argument(
-        "--type", help="类型（debug|refactor|research|workflow|feature|config）"
+        "--type",
+        help="类型（标准: debug|refactor|research|workflow|feature|config；"
+        "复用已有值免检，新类型需 --force）",
     )
     add_parser.add_argument("--owner", default="ai", help="执行者（human|ai|collab）")
     add_parser.add_argument(
@@ -666,6 +669,12 @@ def main() -> None:
     add_parser.add_argument("--summary", help="一句话总结")
     add_parser.add_argument(
         "--stdin", action="store_true", help="从标准输入读取详细内容"
+    )
+    add_parser.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="允许创建知识库中不存在的新 type",
     )
 
     # ── get ───────────────────────────────────────────────────────────────
@@ -834,10 +843,18 @@ def main() -> None:
     update_parser.add_argument("--status", help="新状态")
     update_parser.add_argument("--category", help="新类别")
     update_parser.add_argument("--tech", help="新技术栈")
-    update_parser.add_argument("--type", dest="type_", help="新类型")
+    update_parser.add_argument(
+        "--type", dest="type_", help="新类型（重分类：同步属性/标签/文件名/索引）"
+    )
     update_parser.add_argument("--owner", help="新执行者")
     update_parser.add_argument("--append-to", help="追加内容到指定章节")
     update_parser.add_argument("--append-text", help="要追加的内容")
+    update_parser.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="配合 --type 允许改为知识库中不存在的新 type",
+    )
     update_parser.add_argument(
         "--stdin", action="store_true", help="从标准输入读取追加内容"
     )
