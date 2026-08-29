@@ -4,6 +4,26 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.7] - 2026-08-29
+
+策展分工定型（ADR-0004）：CLI 收敛为「只读候选发现 + 原子写命令」两层，策展流程改由 agent 依据 agenote-curator skill 主导。
+
+### Added
+
+- **type 写入门禁**（`cli.py`）：`add` / `update` 对知识库中不存在的新 type 硬拒绝并提示已有合法集合，`--force` 逃生；替代原软警告（被各 agent 无视，非标准 type 持续增殖）。`update --type` 由仅改 `:TYPE:` 属性升级为完整重分类，同步标签行、文件名与索引，供策展 type 聚拢流程使用。
+- **`scan-memories` 子命令**（`memscan`）：只读扫描 zcode / claude / codex / pi / reasonix / hermes 六源持久记忆文件，输出条目清单供策展 agent 审查后显式导入，不自动写 KB；根目录解析复用 `resolve_xdg_path`（env > config.toml > XDG > ~/），`resolve_xdg_path` 增加 section 参数接入 `memories.sources` 配置节。
+- `list --json` compact 输出扩展 `status` / `last_used` / `usage_count` / `source_agent` / `file` 五字段（均为索引已有数据），供 agenote-el 总览界面做状态筛选、作者列与直开卡片文件等策展决策。
+- `list --unused-days N`：降级候选的只读发现入口；`archive` 支持批量 id。
+
+### Changed
+
+- **BREAKING**：移除 `curate` 一键策展编排及全部自动写盘路径，策展决策（状态转换、去留、权重取舍）交由 agent 显式执行。连带移除：`review --fix`、`deduplicate --merge`、`memory --auto-archive-days` / `--auto-update`、`search --regex`、`list --cagetory`、`dream` / `distill` 的 `--dry-run`；`archive --stale` 反转为只读归档候选清单；WEIGHT 改为派生值（按 usage/新鲜度公式重算），`add` 不再写文件层 WEIGHT 属性；shim 仅保留 `health`。
+- 决策记录 ADR-0004（含被拒方案：机械阶段一键 / `--apply` / 独立 reweight 命令）并同步 CONTEXT.md 术语（curate / distill / 候选清单）。
+
+### Fixed
+
+- omp 会话目录解析优先读 `PI_CODING_AGENT_SESSION_DIR`（顺序：`OMP_SESSIONS_DIR` > `PI_CODING_AGENT_SESSION_DIR` > config.toml > 默认值），修复 omp 18 迁移后 `reconcile` 的 omp 源一直抽不到事实的问题。
+
 ## [0.1.6] - 2026-08-24
 
 核心设计移植自 [claude-obsidian](https://github.com/AgriciDaniel/claude-obsidian)（写入安全 / BM25 检索 / doctor 能力检测 / lint 分类报告，详见 README 致谢）。
