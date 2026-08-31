@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -20,7 +21,9 @@ from agenote.core import (
     DEFAULT_OWNER,
     DEFAULT_TYPE,
     KBContext,
+    SEED_TYPES,
     STALE_DAYS,
+    TYPE_PROMOTE_MIN,
     WEIGHT_STALE_PENALTY,
     WEIGHT_USAGE_BONUS,
     WEIGHT_USAGE_CAP,
@@ -111,6 +114,23 @@ def _load_index(ctx: "KBContext | None" = None) -> dict:
         except (json.JSONDecodeError, OSError):
             pass
     return {"version": 1, "updated": "", "total": 0, "cards": []}
+
+
+def type_counts(ctx: "KBContext | None" = None) -> Counter:
+    """非归档卡片的 type 计数（门禁/聚拢共用同一口径）。"""
+    index = _load_index(ctx)
+    return Counter(
+        c["type"]
+        for c in index["cards"]
+        if c.get("type") and c.get("status") != "archived"
+    )
+
+
+def formal_types(ctx: "KBContext | None" = None) -> set[str]:
+    """正式 type 集合 = 种子集 ∪ 非归档卡片数达晋升阈值的 type（实时计算）。"""
+    return SEED_TYPES | {
+        t for t, n in type_counts(ctx).items() if n >= TYPE_PROMOTE_MIN
+    }
 
 
 def _save_index(index: dict, ctx: "KBContext | None" = None) -> None:

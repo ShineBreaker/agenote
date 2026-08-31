@@ -30,7 +30,7 @@ from agenote.core import (
     KB_MEMORY,
     KB_INDEX,
     KB_INBOX,
-    VALID_TYPES,
+    SEED_TYPES,
     VALID_OWNERS,
     VALID_ENTRY_TYPES,
     VALID_STATUSES,
@@ -597,7 +597,8 @@ def print_help() -> None:
 配置常量（修改文件头部即可调整）:
   KB_ROOT      人类知识库根 ({KB_ROOT})
   STALE_DAYS   陈旧记忆阈值 ({STALE_DAYS} 天)
-  VALID_TYPES  合法 type 值 ({", ".join(sorted(VALID_TYPES))})
+  SEED_TYPES  种子 type 值 ({", ".join(sorted(SEED_TYPES))})
+              正式 type = 种子 ∪ 索引中非归档卡片数达晋升阈值（默认 10）的 type
   VALID_OWNERS 合法 owner 值 ({", ".join(sorted(VALID_OWNERS))})
 
 默认操作域: agenote（~/Documents/Org/agenote/）

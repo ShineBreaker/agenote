@@ -25,12 +25,12 @@ import sys
 from pathlib import Path
 
 from agenote.core import (
-    VALID_TYPES,
     VALID_OWNERS,
     VALID_ENTRY_TYPES,
     die,
     default_context,
 )
+from agenote.index import formal_types
 from agenote.orgserde import (
     parse_org_prop,
 )
@@ -65,9 +65,10 @@ def cmd_lint(args: argparse.Namespace, ctx=None) -> None:
     total_issues = 0
     files_with_issues = 0
     report: dict[str, list[dict]] = {}
+    formal = formal_types(ctx)
 
     for filepath in target_files:
-        issues = _lint_file(filepath, do_fix=args.fix)
+        issues = _lint_file(filepath, do_fix=args.fix, formal_types=formal)
         if issues:
             total_issues += len(issues)
             files_with_issues += 1
@@ -109,11 +110,12 @@ def cmd_lint(args: argparse.Namespace, ctx=None) -> None:
         sys.exit(min(total_issues, 127))
 
 
-def _lint_file(filepath: str, do_fix: bool) -> list[tuple[str, str]]:
+def _lint_file(filepath: str, do_fix: bool, formal_types: set[str]) -> list[tuple[str, str]]:
     """检查（并可选修复格式问题）单个文件，返回 (分类, 描述) 列表。
 
     格式问题：do_fix=True 时调 format_org 写盘修复。
-    语义问题：始终只报告（不自动改）。
+    语义问题：始终只报告（不自动修）。formal_types 由调用方按索引
+    实时计算（种子 ∪ 非归档达晋升阈值），本函数不做 IO。
     """
     with open(filepath, "r", encoding="utf-8") as f:
         text = f.read()
@@ -141,7 +143,7 @@ def _lint_file(filepath: str, do_fix: bool) -> list[tuple[str, str]]:
 
     # ── 语义问题（始终只报告，--fix 不修）──
     # 用原始 text 检查（语义问题不依赖格式化结果）
-    issues += _check_semantic(text)
+    issues += _check_semantic(text, formal_types)
 
     return issues
 
@@ -162,10 +164,11 @@ _STANDARD_SECTIONS = [
 ]
 
 
-def _check_semantic(text: str) -> list[tuple[str, str]]:
+def _check_semantic(text: str, formal_types: set[str]) -> list[tuple[str, str]]:
     """检查 agenote 卡片语义问题（不自动修，只报告），返回 (分类, 描述) 列表。
 
     分类：missing_entry_type / enum_drift / fingerprint / missing_sections
+    formal_types：正式 type 集合（调用方按索引实时计算）
     """
     issues: list[tuple[str, str]] = []
 
@@ -176,13 +179,14 @@ def _check_semantic(text: str) -> list[tuple[str, str]]:
             ("missing_entry_type", "语义: 缺失 :ENTRY_TYPE: 字段（建议补 note/mistake/ascended）")
         )
 
-    # 2. TYPE 枚举
+    # 2. TYPE 枚举（正式集动态：种子 ∪ 索引非归档达晋升阈值）
     card_type = parse_org_prop(text, "TYPE")
-    if card_type and card_type not in VALID_TYPES:
+    if card_type and card_type not in formal_types:
         issues.append(
             (
                 "enum_drift",
-                f"语义: :TYPE: {card_type} 不在 VALID_TYPES（{sorted(VALID_TYPES)}）",
+                f"语义: :TYPE: {card_type} 不是正式 type"
+                f"（正式: {sorted(formal_types)}；观察期 type 待聚拢，延续需 --force）",
             )
         )
 

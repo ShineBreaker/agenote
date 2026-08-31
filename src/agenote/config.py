@@ -96,6 +96,7 @@ SCHEMA: dict[str, dict[str, Key]] = {
         "archive_days": Key(90, comment="stale→archived 状态机阈值（天，按 LAST_VERIFIED）"),
         "project_curate_days": Key(60, comment="memory 项目健康检查的策展建议阈值（天）"),
         "dedup_threshold": Key(0.7, comment="去重相似度阈值（0-1，越高越严）"),
+        "type_promote_min": Key(10, comment="type 晋升正式 tag 的最少非归档卡片数（全空时种子集免检）"),
     },
     "dream": {
         "min_term_freq": Key(5, comment="候选词频下限"),

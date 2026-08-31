@@ -27,7 +27,6 @@ from agenote.core import (
     DEDUP_TECH_BONUS,
     DEDUP_THRESHOLD,
     STALE_DAYS,
-    VALID_TYPES,
     default_context,
     ensure_dirs,
 )
@@ -39,6 +38,7 @@ from agenote.orgserde import (
 from agenote.index import (
     _card_dict,
     _load_index,
+    formal_types,
 )
 
 # 卡片陈旧阈值（时间维度）。区别于 core.STALE_DAYS（=30，memory 语义）。
@@ -359,11 +359,13 @@ def _quality_scan(ctx) -> dict:
 def find_gaps(ctx=None, stale_days: int = CARD_STALE_DAYS) -> dict:
     """缺失组合 / 陈旧卡片(时间维) / 薄弱类别 / 纯AI类别。
 
-    ALL_TYPES 复用 core.VALID_TYPES（原 find_gaps 硬编码已删除）。
+    ALL_TYPES 用 index.formal_types（种子 ∪ 非归档达晋升阈值）——
+    缺失组合只对正式 type 提示，不为观察期 type 制造覆盖空洞。
     """
     ctx = ctx or default_context()
     ensure_dirs(ctx)
     index = _load_index(ctx)
+    all_types = formal_types(ctx)
     cards = [c for c in index["cards"] if c.get("status") != "archived"]
 
     covered = defaultdict(set)  # category -> {types}
@@ -375,10 +377,10 @@ def find_gaps(ctx=None, stale_days: int = CARD_STALE_DAYS) -> dict:
         owner_coverage[c.get("category", "unknown")].add(c.get("owner", "unknown"))
         category_counts[c.get("category", "unknown")] += 1
 
-    # 缺失组合：已有 category × 全部 type（VALID_TYPES）的覆盖缺口
+    # 缺失组合：已有 category × 全部正式 type 的覆盖缺口
     missing_combos = []
     for cat in sorted(category_counts.keys()):
-        for typ in VALID_TYPES:
+        for typ in all_types:
             if typ not in covered.get(cat, set()):
                 missing_combos.append({"category": cat, "type": typ})
 
@@ -421,7 +423,7 @@ def find_gaps(ctx=None, stale_days: int = CARD_STALE_DAYS) -> dict:
         "stale_cards": stale_cards,
         "stale_count": len(stale_cards),
         "ai_only_categories": sorted(ai_only_categories),
-        "all_types": sorted(VALID_TYPES),
+        "all_types": sorted(all_types),
         "active_categories": sorted(category_counts.keys()),
     }
 

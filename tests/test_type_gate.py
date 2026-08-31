@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 BrokenShine <xchai404@gmail.com>
 #
 # SPDX-License-Identifier: MIT
-"""type 门禁与重分类测试：新 type 需 --force；update --type 同步属性/标签/文件名/索引。"""
+"""type 门禁与重分类测试：正式 type（种子 ∪ 非归档 ≥阈值）免检，其余需 --force；
+update --type 同步属性/标签/文件名/索引。"""
 
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ import re
 import pytest
 
 from agenote.cards import cmd_add, cmd_update
-from agenote.core import KBContext
+from agenote.core import KBContext, TYPE_PROMOTE_MIN
 
 
 @pytest.fixture
@@ -55,10 +56,10 @@ def _add_args(title, type_=None, force=False):
     )
 
 
-def _update_args(target, type_=None, force=False):
+def _update_args(target, type_=None, force=False, status=None):
     return argparse.Namespace(
         target=target,
-        status=None,
+        status=status,
         category=None,
         tech=None,
         type_=type_,
@@ -79,9 +80,10 @@ def _only_card(ctx):
 # ── add 门禁 ───────────────────────────────────────────────────────────────────
 
 
-def test_add_standard_type_ok(kb_root):
+def test_add_seed_type_ok(kb_root):
+    """全空 KB 时种子集免检（默认值的用途）。"""
     ctx = _ctx(kb_root)
-    cmd_add(_add_args("标准类型", type_="workflow"), ctx)
+    cmd_add(_add_args("种子类型", type_="workflow"), ctx)
     assert "-workflow-" in _only_card(ctx).name
 
 
@@ -102,12 +104,35 @@ def test_add_new_type_with_force(kb_root, capsys):
     assert "--force" in capsys.readouterr().err
 
 
-def test_add_existing_type_reuse_ok(kb_root):
-    """--force 建立 brandnew 后即成为已有 type，后续免检复用。"""
+def test_add_subthreshold_type_still_blocked(kb_root):
+    """--force 写入后卡片数未达晋升阈值，后续写入仍被拦。"""
     ctx = _ctx(kb_root)
     cmd_add(_add_args("第一张", type_="brandnew", force=True), ctx)
-    cmd_add(_add_args("第二张", type_="brandnew"), ctx)
-    assert len(list(ctx.experiences.rglob("*.org"))) == 2
+    with pytest.raises(SystemExit):
+        cmd_add(_add_args("第二张", type_="brandnew"), ctx)
+
+
+def test_add_promoted_type_free(kb_root):
+    """非归档卡片数达 type_promote_min 后自动晋升，免检写入。"""
+    ctx = _ctx(kb_root)
+    for i in range(TYPE_PROMOTE_MIN):
+        cmd_add(_add_args(f"第{i}张", type_="brandnew", force=True), ctx)
+    cmd_add(_add_args("晋升后免检", type_="brandnew"), ctx)
+    assert len(list(ctx.experiences.rglob("*.org"))) == TYPE_PROMOTE_MIN + 1
+
+
+def test_add_archived_cards_not_counted(kb_root):
+    """archived 卡片不计入晋升：10 张里归档 1 张后回到观察期。"""
+    ctx = _ctx(kb_root)
+    for i in range(TYPE_PROMOTE_MIN):
+        cmd_add(_add_args(f"第{i}张", type_="brandnew", force=True), ctx)
+    # update --status 不刷索引（轻量工具，索引由 reindex 刷新），直接构造
+    index_path = ctx.index
+    idx = json.loads(index_path.read_text(encoding="utf-8"))
+    idx["cards"][0]["status"] = "archived"
+    index_path.write_text(json.dumps(idx, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(SystemExit):
+        cmd_add(_add_args("降级后被拦", type_="brandnew"), ctx)
 
 
 # ── update --type 完整重分类 ───────────────────────────────────────────────────

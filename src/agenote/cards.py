@@ -18,12 +18,13 @@ from agenote.core import (
     KB_EXPERIENCES,
     KB_MEMORY,
     KB_INBOX,
-    VALID_TYPES,
+    SEED_TYPES,
     VALID_OWNERS,
     VALID_ENTRY_TYPES,
     KNOWN_AGENTS,
     VALID_STATUSES,
     STALE_DAYS,
+    TYPE_PROMOTE_MIN,
     CARD_TEMPLATES,
     ENTRY_BODY_DEFAULTS,
     DEFAULT_CATEGORY,
@@ -50,8 +51,47 @@ from agenote.index import (
     _load_index,
     _save_index,
     _upsert_card,
+    type_counts,
 )
 from agenote.safeio import atomic_write
+
+
+def _gate_type(type_: str, ctx, force: bool):
+    """type 门禁：正式 type（种子 ∪ 非归档数 ≥ 晋升阈值）免检，其余 die。
+
+    返回已加载的 index 供调用方后续 upsert 复用。--force 强制写入观察期
+    或全新 type，但该 type 在达到晋升阈值前始终不走免检。
+    """
+    index = _load_index(ctx)
+    counts = type_counts(ctx)
+    n = counts.get(type_, 0)
+    if type_ in SEED_TYPES or n >= TYPE_PROMOTE_MIN:
+        return index
+
+    formal = ", ".join(
+        f"{t}({c})" for t, c in counts.most_common() if c >= TYPE_PROMOTE_MIN
+    )
+    if not force:
+        if n:
+            reason = (
+                f"type '{type_}' 仅 {n} 张非归档卡片，未达晋升标准"
+                f"（需 ≥{TYPE_PROMOTE_MIN} 张），处于聚拢观察期"
+            )
+        else:
+            reason = f"type '{type_}' 是新类型（知识库中无此类型卡片）"
+        die(
+            f"{reason}\n"
+            f"      正式 type: {formal or '(无）'}\n"
+            f"      种子 type: {', '.join(sorted(SEED_TYPES))}\n"
+            f"      请复用已有 type（agenote fields --type 查看全量）；"
+            f"确需延续/新建请加 --force"
+        )
+    print(
+        f"警告: type '{type_}' 不在正式 type 中"
+        f"（{n} 张 < {TYPE_PROMOTE_MIN}），已按 --force 强制写入",
+        file=sys.stderr,
+    )
+    return index
 
 
 def cmd_add(args: argparse.Namespace, ctx=None) -> None:
@@ -104,19 +144,8 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
         elif entry_type == "note":
             type_ = "workflow"
 
-    # ── type 门禁：标准值或知识库已有 type 免检，新 type 需 --force ────────
-    index = _load_index(ctx)
-    known_types = Counter(c["type"] for c in index["cards"] if c.get("type"))
-    if type_ not in VALID_TYPES and type_ not in known_types:
-        if not getattr(args, "force", False):
-            hint = ", ".join(f"{t}({n})" for t, n in known_types.most_common())
-            die(
-                f"type '{type_}' 是新类型（不在标准值中，知识库中也无该类型卡片）\n"
-                f"      已有 type: {hint}\n"
-                f"      请优先复用已有 type（agenote fields --type 查看全量）；"
-                f"确需新建请加 --force"
-            )
-        print(f"警告: type '{type_}' 为新类型，已按 --force 强制写入", file=sys.stderr)
+    # ── type 门禁：正式 type（种子 ∪ 非归档 ≥阈值）免检，其余需 --force ──
+    index = _gate_type(type_, ctx, getattr(args, "force", False))
 
     if entry_type and not args.owner:
         owner = "collab"
@@ -608,24 +637,8 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
     if args.type_:
         old_type = parse_org_prop(content, "TYPE") or DEFAULT_TYPE
         if args.type_ != old_type:
-            # 与 add 相同的 type 门禁：防止通过 update 开新 type
-            index = _load_index(ctx)
-            known_types = Counter(c["type"] for c in index["cards"] if c.get("type"))
-            if args.type_ not in VALID_TYPES and args.type_ not in known_types:
-                if not getattr(args, "force", False):
-                    hint = ", ".join(
-                        f"{t}({n})" for t, n in known_types.most_common()
-                    )
-                    die(
-                        f"type '{args.type_}' 是新类型"
-                        f"（不在标准值中，知识库中也无该类型卡片）\n"
-                        f"      已有 type: {hint}\n"
-                        f"      请优先复用已有 type；确需新建请加 --force"
-                    )
-                print(
-                    f"警告: type '{args.type_}' 为新类型，已按 --force 强制写入",
-                    file=sys.stderr,
-                )
+            # 与 add 相同的 type 门禁：防止通过 update 绕过晋升规则
+            index = _gate_type(args.type_, ctx, getattr(args, "force", False))
             content = re.sub(r":TYPE:\s*.+", f":TYPE:     {args.type_}", content)
             # 标签行同步：旧 type 段替换为新 type；新 type 已在标签中则移除旧段
             m = re.search(r"^:(\S+)::$", content, re.MULTILINE)

@@ -37,9 +37,13 @@ CONVERSATIONS_ROOT = (  # extract 对话输出（extract/base.py 用）
 )
 AGENOTE_ROOT = KB_ROOT / AGENOTE_DIR_NAME  # agent 域根（reconcile/viz 共用）
 
-VALID_TYPES = {"debug", "refactor", "research", "workflow", "feature", "config"}
+# type 正式性是动态的：全空 KB 以 SEED_TYPES 为初始正式集；某 type 的非归档
+# 卡片数达 TYPE_PROMOTE_MIN 后即晋升正式（index.formal_types 实时计算，无持久
+# 状态——聚拢归零的 type 自动失去正式性，无需降级维护）
+SEED_TYPES = {"debug", "refactor", "research", "workflow", "feature", "config"}
 VALID_OWNERS = {"human", "ai", "collab"}
 VALID_ENTRY_TYPES = {"mistake", "note", "ascended"}
+TYPE_PROMOTE_MIN = int(config.get("curation", "type_promote_min"))
 
 # ── source_agent 体系（跨 agent 经验溯源）─────────────────────────────────────
 # 记录每张卡片由哪个 agent 写入，供跨 agent 检索/健康度统计/reconcile 使用。
