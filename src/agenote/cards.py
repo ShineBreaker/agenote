@@ -602,10 +602,41 @@ def _append_link(filepath: Path, target: Path, desc: str) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _rebuild_fingerprint_line(content: str) -> str:
+    """按属性重建 :END: 后的 fingerprint 标签行（与 cmd_add 同口径）。
+
+    格式 ``:category:type:owner:tech:entry_type::``；tech 与 category 相同则省略，
+    entry 为空则省略。只替换已存在的 fingerprint 行，不新增（旧卡片无则不动）。
+    """
+    category = parse_org_prop(content, "CATEGORY") or DEFAULT_CATEGORY
+    type_ = parse_org_prop(content, "TYPE") or DEFAULT_TYPE
+    owner = parse_org_prop(content, "OWNER") or DEFAULT_OWNER
+    tech = parse_org_prop(content, "TECH") or ""
+    entry = parse_org_prop(content, "ENTRY_TYPE") or ""
+    parts = [category, type_, owner]
+    if tech and tech != category:
+        parts.append(tech)
+    if entry:
+        parts.append(entry)
+    line = ":" + ":".join(parts) + "::"
+    lines = content.split("\n")
+    end_idx = next((i for i, ln in enumerate(lines) if ln.strip() == ":END:"), None)
+    if end_idx is None:
+        return content
+    for j in range(end_idx + 1, min(end_idx + 4, len(lines))):
+        stripped = lines[j].strip()
+        if stripped.startswith(":") and stripped.endswith("::"):
+            lines[j] = line
+            break
+    return "\n".join(lines)
+
+
 def cmd_update(args: argparse.Namespace, ctx=None) -> None:
     """更新已有卡片的属性或追加内容。
 
     属性替换使用 .+ 匹配到行尾，避免含空格的属性值被截断。
+    category/tech/type/owner 任一变更都会重建 fingerprint 标签行并刷新索引，
+    避免属性与标签/索引漂移（--status 保持轻量，仍由 reindex 刷新）。
     """
     ctx = ctx or default_context()
     target = args.target
@@ -613,9 +644,12 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
     if not card:
         die(f"未找到卡片: {target}")
 
+    index = _load_index(ctx)
     content = card.read_text(encoding="utf-8")
+    old_type = parse_org_prop(content, "TYPE") or DEFAULT_TYPE
+    reclassify = False
 
-    # ── 更新属性（用 .+ 匹配整行值，避免空格截断）────────────────────────
+    # ── 更新属性（用 .+ 匹配到行尾，避免含空格的属性值被截断）────────────
     if args.status:
         if args.status not in VALID_STATUSES:
             die(f"无效状态: {args.status}（可选: {', '.join(sorted(VALID_STATUSES))}）")
@@ -632,27 +666,21 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
                 )
     if args.category:
         content = re.sub(r":CATEGORY:\s*.+", f":CATEGORY: {args.category}", content)
+        reclassify = True
     if args.tech:
         content = re.sub(r":TECH:\s*.+", f":TECH:     {args.tech}", content)
-    if args.type_:
-        old_type = parse_org_prop(content, "TYPE") or DEFAULT_TYPE
-        if args.type_ != old_type:
-            # 与 add 相同的 type 门禁：防止通过 update 绕过晋升规则
-            index = _gate_type(args.type_, ctx, getattr(args, "force", False))
-            content = re.sub(r":TYPE:\s*.+", f":TYPE:     {args.type_}", content)
-            # 标签行同步：旧 type 段替换为新 type；新 type 已在标签中则移除旧段
-            m = re.search(r"^:(\S+)::$", content, re.MULTILINE)
-            if m and old_type in m.group(1).split(":"):
-                parts = m.group(1).split(":")
-                if args.type_ in parts:
-                    parts = [p for p in parts if p != old_type]
-                else:
-                    parts = [args.type_ if p == old_type else p for p in parts]
-                content = content.replace(
-                    m.group(0), ":" + ":".join(parts) + "::", 1
-                )
+        reclassify = True
+    if args.type_ and args.type_ != old_type:
+        # 与 add 相同的 type 门禁：防止通过 update 绕过晋升规则
+        index = _gate_type(args.type_, ctx, getattr(args, "force", False))
+        content = re.sub(r":TYPE:\s*.+", f":TYPE:     {args.type_}", content)
+        reclassify = True
     if args.owner:
         content = re.sub(r":OWNER:\s*.+", f":OWNER:    {args.owner}", content)
+        reclassify = True
+
+    if reclassify:
+        content = _rebuild_fingerprint_line(content)
 
     # 追加内容到指定章节
     if args.append_to and args.append_text:
@@ -673,7 +701,7 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
             content = content.rstrip("\n") + f"\n\n{extra.strip()}\n"
 
     atomic_write(card, content)
-    # --type 重分类收尾：文件名同步为 {id}-{type}-{category}.org，并刷新索引
+    # 重分类收尾：type 变更时文件名同步为 {id}-{type}-{category}.org，并刷新索引
     updated = card
     if args.type_ and args.type_ != old_type:
         card_id = parse_org_prop(content, "ID") or card.stem.split("-")[0]
@@ -682,6 +710,7 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
         if new_path != card and not new_path.exists():
             card.rename(new_path)
             updated = new_path
+    if reclassify:
         _upsert_card(index, updated, ctx)
         _save_index(index, ctx)
     print(f"已更新: {updated}")
