@@ -4,6 +4,16 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.8] - 2026-09-12
+
+### Added
+
+- **type 正式性动态晋升**（`cli.py`）：移除静态 type 白名单。正式 type = 种子 6 类 ∪ 非归档卡片数达晋升阈值（`curation.type_promote_min`，默认 10）的 type；门禁按同一口径实时计算——非正式 type 写入（`add`/`update --type`）被拒绝、`--force` 逃生，持续写入满阈值后自动转正免检。
+
+### Fixed
+
+- **`update --tech` 同步标签与索引**（`cards.py`）：`update` 改 `--tech` / `--category` / `--owner` 后按属性重建 `:END:` 后的 fingerprint 标签行并刷新索引，修复属性与 `tags` / `agenote tags` / `fields` 漂移（此前仅 `--type` 会同步）。供策展 tech 聚拢流程使用；`--status` 保持轻量（仍由 `reindex` 刷新）。
+
 ## [0.1.7] - 2026-08-29
 
 策展分工定型（ADR-0004）：CLI 收敛为「只读候选发现 + 原子写命令」两层，策展流程改由 agent 依据 agenote-curator skill 主导。
