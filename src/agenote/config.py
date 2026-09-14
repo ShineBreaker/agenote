@@ -167,7 +167,7 @@ SCHEMA: dict[str, dict[str, Key]] = {
         "codex_home": Key(
             "~/.codex", env="CODEX_HOME", comment="codex 根（记忆在 memories/）"
         ),
-        "pi_agent_dir": Key(
+        "pi_coding_agent_dir": Key(
             "$XDG_CONFIG_HOME/omp", env="PI_CODING_AGENT_DIR",
             comment="pi/omp 配置根（记忆在 agent/memory/）",
         ),

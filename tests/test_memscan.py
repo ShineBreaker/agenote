@@ -127,3 +127,27 @@ def test_cmd_json_output(tmp_path, monkeypatch, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["total"] == 1
     assert out["entries"][0]["name"] == "hard-gates-for-agents"
+
+
+def test_source_envs_have_matching_schema_keys():
+    """每个记忆源的 env 必须在 SCHEMA[memories.sources] 中有对应键（键名 = env 小写）。
+
+    resolve_xdg_path 在没有 env 时按 env.lower() 查配置，键名漂移会让该源
+    在 env 未设时抛 KeyError——见 test_pi_source_without_env_uses_xdg_default。
+    """
+    from agenote import config
+
+    section = config.SCHEMA["memories.sources"]
+    missing = sorted(s.env for s in memscan.SOURCES.values() if s.env.lower() not in section)
+    assert missing == []
+
+
+def test_pi_source_without_env_uses_xdg_default(tmp_path, monkeypatch):
+    """回归：PI_CODING_AGENT_DIR 未设时走配置/XDG 分支，不得 KeyError（曾键名漂移）。"""
+    monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    _write(tmp_path / "cfg/omp/agent/memory/note.md", ZCODE_FM)
+
+    report = scan_memories("pi")
+    assert report["total"] == 1
+    assert report["by_source"]["pi"] == 1
