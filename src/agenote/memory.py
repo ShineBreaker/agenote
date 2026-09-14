@@ -438,9 +438,15 @@ def _memory_stale(ctx=None) -> None:
     text = ctx.memory_org.read_text(encoding="utf-8")
     lines = text.split("\n")
     stale_count = 0
+    section = ""  # 当前一级节（deprecated 节下的条目不算陈旧——它们已被归档）
 
     for i, line in enumerate(lines):
+        if re.match(r"^\* ", line):
+            section = line[2:].strip()
+            continue
         if not re.match(r"^\*\* ", line):
+            continue
+        if section == "deprecated":
             continue
         # 向下查找 UPDATED
         for j in range(i + 1, min(i + 10, len(lines))):
