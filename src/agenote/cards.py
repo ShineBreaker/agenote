@@ -295,6 +295,10 @@ def cmd_list(args: argparse.Namespace, ctx=None) -> None:
             continue
         if unused_days is not None and _days_since(c.get("last_used") or c.get("created")) <= unused_days:
             continue
+        if unused_days is not None and (c.get("status") or "done") != "done":
+            # 降级候选只收 status=done：stable 是「>30 天且复核合格」的终态，
+            # archived 已出局——否则每轮策展都会把同一批老卡重审一遍。
+            continue
         matched.append(c)
         if recent > 0 and len(matched) >= recent:
             break
