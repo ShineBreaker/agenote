@@ -688,7 +688,11 @@ def main() -> None:
 
     # ── search ────────────────────────────────────────────────────────────
     search_parser = subparsers.add_parser("search", help="全文检索")
-    search_parser.add_argument("query", help="关键词；默认按多关键词相关度检索")
+    search_parser.add_argument(
+        "query",
+        nargs="+",
+        help="关键词；多个词可空格分隔（自动合并为一次查询）",
+    )
     search_parser.add_argument(
         "--context",
         type=int,

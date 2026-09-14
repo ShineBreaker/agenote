@@ -269,6 +269,27 @@ def _resolve_extractors() -> dict[str, Callable]:
     return {name: src.extract for name, src in SOURCES.items()}
 
 
+def filter_noise_facts(
+    facts: list[ReconciledFact],
+) -> tuple[list[ReconciledFact], list[ReconciledFact]]:
+    """按 core.is_noise_fact 把 harness 注入的元消息剔除（返回 (保留, 剔除)）。
+
+    extract 输出的 Org 文件是给人/agent 回顾用的，TodoWrite 提醒、task-notification、
+    system-reminder 这类模板消息在其中占 40~78%（zcode 单日实测），既稀释检索也
+    抬高回顾成本。过滤口径与 reconcile 写入层一致（同一个 is_noise_fact）。
+    """
+    from agenote.core import is_noise_fact
+
+    kept: list[ReconciledFact] = []
+    dropped: list[ReconciledFact] = []
+    for f in facts:
+        if is_noise_fact({"content": f.content, "title": f.title}):
+            dropped.append(f)
+        else:
+            kept.append(f)
+    return kept, dropped
+
+
 def run_extract(
     source: str = "all",
     date: str = "",
@@ -324,12 +345,17 @@ def run_extract(
     errors: list[str] = []
     total = 0
     filtered_total = 0
+    noise_total = 0
     effective_limit = limit if limit and limit > 0 else None
     for src in selected:
         try:
             facts, errs = extractors[src]()
             total += len(facts)
             errors.extend(errs)
+            facts, dropped = filter_noise_facts(facts)
+            if dropped:
+                noise_total += len(dropped)
+                errors.append(f"[info] {src} 过滤 {len(dropped)} 条元消息噪声")
             if date:
                 facts = [f for f in facts if not f.timestamp or _date_of(f.timestamp) == date]
             filtered_total += len(facts)
@@ -354,6 +380,7 @@ def run_extract(
     return {
         "source": source,
         "total_facts": total,
+        "noise_filtered": noise_total,
         "filtered_by_date": filtered_total,
         "output_dir": str(out_path),
         "files": files,

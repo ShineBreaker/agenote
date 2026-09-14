@@ -31,6 +31,7 @@ from agenote.core import (
     DEFAULT_LIST_COUNT,
     DEFAULT_OWNER,
     DEFAULT_TYPE,
+    build_fingerprint_line,
     die,
     now,
     today,
@@ -164,13 +165,8 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
     ts = now()
     filename = f"{id_}-{type_}-{category}.org"
 
-    # 构建标签行
-    tags_parts = [category, type_, owner]
-    if tech and tech != category:
-        tags_parts.append(tech)
-    if entry_type:
-        tags_parts.append(entry_type)
-    tags_line = ":" + ":".join(tags_parts) + "::"
+    # 构建标签行（fingerprint 单一真相源：core.build_fingerprint_line）
+    tags_line = build_fingerprint_line(category, type_, owner, tech, entry_type)
 
     filepath = ctx.experiences / category / filename
     filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -613,12 +609,7 @@ def _rebuild_fingerprint_line(content: str) -> str:
     owner = parse_org_prop(content, "OWNER") or DEFAULT_OWNER
     tech = parse_org_prop(content, "TECH") or ""
     entry = parse_org_prop(content, "ENTRY_TYPE") or ""
-    parts = [category, type_, owner]
-    if tech and tech != category:
-        parts.append(tech)
-    if entry:
-        parts.append(entry)
-    line = ":" + ":".join(parts) + "::"
+    line = build_fingerprint_line(category, type_, owner, tech, entry)
     lines = content.split("\n")
     end_idx = next((i for i, ln in enumerate(lines) if ln.strip() == ":END:"), None)
     if end_idx is None:

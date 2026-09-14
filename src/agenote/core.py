@@ -88,9 +88,11 @@ def default_agent() -> str:
 NOISE_MARKERS = re.compile(
     r"<system-reminder>|<command-instruction>|<command-name>|"
     r"<skill-instruction>|<auto-slash-command>|"
+    r"<task-notification>|<subagent-message>|"
     r"\[search-mode\]|\[analyze-mode\]|\[SYSTEM DIRECTIVE"
     r"|\[CONTEXT\]|\[GOAL\]|\[DOWNSTREAM\]|\[REQUEST\]"
-    r"|\[SYSTEM NOTIFICATION\]"
+    r"|\[SYSTEM NOTIFICATION\]|\[OUT-OF-BAND USER MESSAGE"
+    r"|Continuing toward your standing goal"
     r"|TodoWrite|BACKGROUND TASK|OMO_INTERNAL_INITIATOR|"
     r"delegate_task|subagent_type|run_in_background|"
     r"load_skills|checkpoint|MANDATORY",
@@ -398,6 +400,23 @@ DEDUP_TECH_BONUS = float(config.get("weights", "dedup_tech_bonus"))  # 去重：
 DEFAULT_CATEGORY = str(config.get("add", "default_category"))
 DEFAULT_TYPE = str(config.get("add", "default_type"))
 DEFAULT_OWNER = str(config.get("add", "default_owner"))
+
+
+def build_fingerprint_line(
+    category: str, type_: str, owner: str, tech: str = "", entry_type: str = ""
+) -> str:
+    """构建 :END: 后的 fingerprint 标签行（单一真相源：add 组装与 lint 校验共用）。
+
+    格式 ``:category:type:owner:tech:entry_type::``；tech 与 category 相同则省略，
+    entry_type 为空则省略——lint 必须按同一口径判定，否则会把合规卡片报成
+    「字段数不为 5」。
+    """
+    parts = [category, type_, owner]
+    if tech and tech != category:
+        parts.append(tech)
+    if entry_type:
+        parts.append(entry_type)
+    return ":" + ":".join(parts) + "::"
 PROJECT_CURATE_DAYS = int(config.get("curation", "project_curate_days"))  # memory 项目建议策展阈值（天）
 VALID_STATUSES = {"done", "stable", "stale", "archived"}
 

@@ -27,6 +27,10 @@ from pathlib import Path
 from agenote.core import (
     VALID_OWNERS,
     VALID_ENTRY_TYPES,
+    DEFAULT_CATEGORY,
+    DEFAULT_OWNER,
+    DEFAULT_TYPE,
+    build_fingerprint_line,
     die,
     default_context,
 )
@@ -230,10 +234,11 @@ def _check_semantic(text: str, formal_types: set[str]) -> list[tuple[str, str]]:
 
 
 def _check_fingerprint_fields(text: str) -> str | None:
-    """检查 fingerprint 行字段数是否为 5。
+    """校验 fingerprint 行与卡片属性推导出的一致（构建器为单一真相源）。
 
-    fingerprint 格式：:category:type:owner:tech:entry_type::
-    去掉首尾的 : 和 :: 后按 : 拆分应得 5 段。
+    格式由 `core.build_fingerprint_line` 定义：`:category:type:owner:tech:entry_type::`，
+    其中 tech 与 category 相同、entry_type 为空时**按设计省略**——按固定 5 段校验会把
+    这类合规卡片全部误报。这里改为按同一函数推导期望值再逐字比对。
     """
     lines = text.split("\n")
     # 找 :END: 后第一行
@@ -250,17 +255,16 @@ def _check_fingerprint_fields(text: str) -> str | None:
     if not m:
         return None  # 无 fingerprint 行（旧卡片），不报
 
-    # 解析字段：去掉首 : 和尾 ::，按 : 拆分
-    inner = fp_line.strip()
-    if inner.startswith(":"):
-        inner = inner[1:]
-    if inner.endswith("::"):
-        inner = inner[:-2]
-    fields = inner.split(":")
-    if len(fields) != 5:
+    expected = build_fingerprint_line(
+        parse_org_prop(text, "CATEGORY") or DEFAULT_CATEGORY,
+        parse_org_prop(text, "TYPE") or DEFAULT_TYPE,
+        parse_org_prop(text, "OWNER") or DEFAULT_OWNER,
+        parse_org_prop(text, "TECH") or "",
+        parse_org_prop(text, "ENTRY_TYPE") or "",
+    )
+    if fp_line.strip() != expected:
         return (
-            f"  语义: fingerprint 字段数 {len(fields)}（应为 5: "
-            f"category:type:owner:tech:entry_type）— {fp_line.strip()}"
+            f"  语义: fingerprint 行与卡片属性不一致（应为 {expected}）— {fp_line.strip()}"
         )
     return None
 

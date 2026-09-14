@@ -268,6 +268,12 @@ def _cmd_cross_domain_search(args: argparse.Namespace) -> None:
 
 def cmd_search(args: argparse.Namespace, ctx=None) -> None:
     """在 experiences/ 和 MEMORY.org 中检索（单域 BM25）。"""
+    # 多关键词位置参数（argparse nargs="+"）合并回单串：下游按空格/逗号/斜杠自行拆分，
+    # 与 `agenote --help` 的 `search <关键词...>` 说明一致（此前多词不加引号会
+    # 报 unrecognized arguments）。
+    if isinstance(args.query, list):
+        args.query = " ".join(args.query)
+
     # 跨域加权检索（默认，匹配 MCP agenote_search 行为）
     if getattr(args, "_cross_domain", False):
         _cmd_cross_domain_search(args)
