@@ -4,6 +4,14 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.10] - 2026-09-14
+
+### Fixed
+
+- **hermes 源记忆库按日整份重复导出**（`extract/hermes.py`）：hermes facts 不填 `timestamp`，而日期过滤对空时间戳「不过滤」（防静默丢数据），117 条记忆在 14 天产物里各出现一次。改为取 DB 的 `updated_at`（改写即算当天浮现）、缺值回落 `created_at`；实测 09-13 从 117 条降到 1 条，14 天语料 1.9MB → 0.85MB。
+- **`list --unused-days` 把复核过的老卡列回候选**（`cards.py`）：判定只看 `last_used`，转 `stable` 后仍被列出，同一批老卡每轮策展重审一遍。候选改为只收 `status=done`（`stable` 已是复核终态）。
+- **`memory --stale` 报出已归档条目**（`memory.py`）：`deprecated` 节下的条目仍按 `UPDATED` 日期出现在陈旧清单里。改为跟踪一级节并跳过 `deprecated`。
+
 ## [0.1.9] - 2026-09-14
 
 ### Fixed
