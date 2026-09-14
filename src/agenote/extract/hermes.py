@@ -61,7 +61,7 @@ def _hermes_to_fact(row: sqlite3.Row) -> ReconciledFact:
     """把 hermes facts 一行转成 ReconciledFact。
 
     row 列：fact_id, content, category, tags, trust_score, retrieval_count,
-            helpful_count（hrr_vector 不取，体积大且检索用不到）
+            helpful_count, created_at, updated_at（hrr_vector 不取）
     """
     fact_id = row["fact_id"]
     content = row["content"] or ""
@@ -81,6 +81,9 @@ def _hermes_to_fact(row: sqlite3.Row) -> ReconciledFact:
         trust_score=trust,
         weight=weight,
         tags=tags,
+        # 取 updated_at（记忆被改写时算「当天浮现」）；缺列/空值时留空，
+        # 交给 run_extract 的「空时间戳不过滤」兜底，不静默丢数据。
+        timestamp=str(row["updated_at"] or row["created_at"] or ""),
     )
 
 
@@ -100,7 +103,7 @@ def extract_hermes() -> tuple[list[ReconciledFact], list[str]]:
     try:
         rows = conn.execute(
             "SELECT fact_id, content, category, tags, trust_score, "
-            "retrieval_count, helpful_count FROM facts ORDER BY fact_id"
+            "retrieval_count, helpful_count, created_at, updated_at FROM facts ORDER BY fact_id"
         ).fetchall()
         for row in rows:
             try:

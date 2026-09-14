@@ -163,9 +163,10 @@ def test_extract_crush_global_tag(tmp_path):
 def test_extract_hermes_fact_mapping(tmp_path):
     db = tmp_path / "memory_store.db"
     conn = sqlite3.connect(db)
-    conn.execute("CREATE TABLE facts (fact_id TEXT, content TEXT, category TEXT, tags TEXT, trust_score REAL, retrieval_count INT, helpful_count INT)")
-    conn.execute("INSERT INTO facts VALUES (?,?,?,?,?,?,?)",
-                 ("f1", "【uv 技巧】uv run 可以临时带依赖", "tool", "uv,python", 0.8, 3, 2))
+    conn.execute("CREATE TABLE facts (fact_id TEXT, content TEXT, category TEXT, tags TEXT, trust_score REAL, retrieval_count INT, helpful_count INT, created_at TEXT, updated_at TEXT)")
+    conn.execute("INSERT INTO facts VALUES (?,?,?,?,?,?,?,?,?)",
+                 ("f1", "【uv 技巧】uv run 可以临时带依赖", "tool", "uv,python", 0.8, 3, 2,
+                  "2026-09-01 10:00:00", "2026-09-01 10:00:00"))
     conn.commit()
     conn.close()
 
@@ -179,7 +180,7 @@ def test_extract_hermes_fact_mapping(tmp_path):
     assert f.category == "tool"
     assert f.tags == ["uv", "python"]
     assert f.weight == 1.0  # 0.7 + (0.8-0.5) = 1.0 封顶
-    assert f.timestamp == ""
+    assert f.timestamp == "2026-09-01 10:00:00"  # 取 updated_at（日期过滤用）
 
 
 # ── dispatch 统一（SOURCES 是唯一真相源；trace 走 Source.trace）─────────────
