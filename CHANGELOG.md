@@ -4,6 +4,18 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.9] - 2026-09-14
+
+### Fixed
+
+- **`scan-memories` 在 pi 源崩溃**（`config.py`）：`memories.sources` 键名 `pi_agent_dir` 与 `resolve_xdg_path` 的查表口径（`env.lower()` = `pi_coding_agent_dir`）不一致，`PI_CODING_AGENT_DIR` 未设时（日常终端）直接 `KeyError`。键名对齐 SCHEMA 注释声明的「键名 = env 小写」，并补两项回归测试：六源 env 与 SCHEMA 键一致性、env 未设走配置/XDG 分支。
+- **lint 误报 fingerprint 字段数**（`lint.py` / `core.py`）：构建器在 tech 与 category 相同、entry 为空时按设计省略对应段，lint 却按固定 5 段判定，把合规卡片成片报成问题。现将 fingerprint 收敛为单一真相源 `core.build_fingerprint_line`，add 组装与 lint 校验共用，lint 改为逐字比对期望值。
+- **`search` 裸多关键词报错**（`cli.py` / `search.py`）：位置参数改 `nargs="+"`，`agenote search a b` 不再报 `unrecognized arguments`，与 `--help` 的 `<关键词...>` 一致；多词在 `cmd_search` 内合并回单串，下游拆分逻辑不变。
+
+### Changed
+
+- **extract 落盘前过滤 harness 元消息**（`extract/base.py` / `core.py`）：复用 reconcile 的 `is_noise_fact`（口径统一），剔除 TodoWrite 提醒、`<task-notification>`、`<system-reminder>` 等模板消息；`NOISE_MARKERS` 补 `<task-notification>` / `<subagent-message>` / `[OUT-OF-BAND USER MESSAGE` / `Continuing toward your standing goal` 四类此前漏检的标记。实测单日 zcode 4323 条、opencode 1016 条被剔除，报告新增 `noise_filtered` 计数。
+
 ## [0.1.8] - 2026-09-12
 
 ### Added
