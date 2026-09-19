@@ -38,8 +38,10 @@ node --input-type=module -e "import('./lib.js').then(m=>console.log(m.healthSumm
 dsh --profile <profile> --no-open --port 3099
 ```
 
-运行中进程的 `plugin_manager set_bundle` 可能报 `failed to import`（旧模块图），
-**以冷启动结果为准**，不要据此改代码。
+运行中进程的 `plugin_manager set_bundle` 可能报 `failed to import`——那是该次调用自身的
+诊断，**不代表 bundle 未被采用**（profile 为 `patchReload: live` 时新行会热挂载）。判断依据是
+「冷启动日志无失败」+「会话里是否真的看到注入」，不要据此改代码。反之，**改了源码**才必须
+冷启动：运行中的进程持有旧模块图。
 
 ## 技能索引
 

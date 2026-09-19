@@ -35,7 +35,12 @@ DeepSeek Harness（DSH）的 [agenote](https://github.com/ShineBreaker/agenote) 
 
 安装会在当前 profile 的 `package.json` 里以 `link:` 方式登记依赖，并把 `dsh-agenote` 追加进 `dsh.profile.bundles`。
 
-首次安装后**需重启 DSH 会话/进程**才会加载新 bundle——插件变更不是热更新。
+profile 为 `patchReload: live` 时（web profile 默认如此），新 bundle 会**热挂载到已存在的会话**，无需重启即可生效——实测：安装后同一会话的下一轮就出现了 `agent/created` 注入的健康度摘要。
+
+两条注意事项：
+
+- `install_bundle` / `set_bundle` 在**运行中**的进程上可能返回 `application: failed` + `agenote (dsh-agenote): failed to import`。这是该次调用自身的诊断，**不代表 bundle 未被采用**——请以「冷启动日志无失败」与「会话里是否真的看到注入」为准，不要据此改代码。
+- **改了源码之后**需要重启：运行中的进程持有旧的模块图，重新加载要冷启动。
 
 ### 依赖
 
@@ -92,7 +97,7 @@ node --check index.js hooks.js commands.js lib.js   # 语法检查
 dsh --profile <profile> --no-open --port 3099       # 新进程冷启动，确认无激活失败
 ```
 
-`plugin_manager set_bundle` 在**运行中**的进程上可能报 `failed to import`：运行中的进程持有旧的模块图，重新加载需要冷启动。以新进程冷启动的结果为准。
+`plugin_manager set_bundle` 在**运行中**的进程上可能报 `failed to import`——那是该次调用自身的诊断，旧模块图仍能服务已挂载的行。判断依据看「冷启动日志无失败」+「会话里是否真的看到注入」，不要据此改代码。
 
 ## 许可
 
