@@ -134,7 +134,7 @@ export function apply(ctx, config = {}) {
 	// ── 每会话触发状态 ──
 	// 用 Map<sessionId, state> 而非模块级标量：一个进程里可以并存多个会话
 	// （web 端多标签、subagent），模块级状态会串台——这正是 pi 版修过的 bug。
-	/** @type {Map<string, {lastTrigger:number, signalFired:boolean, idleFired:boolean, turns:number, lastUserText:string, selfInjected:boolean, timer:any}>} */
+	/** @type {Map<string, {lastTrigger:number, signalFired:boolean, idleFired:boolean, workTurns:number, toolActivity:boolean, lastUserText:string, selfInjected:boolean, timer:any}>} */
 	const sessions = new Map();
 
 	function stateOf(agent) {
@@ -145,7 +145,8 @@ export function apply(ctx, config = {}) {
 				lastTrigger: 0,
 				signalFired: false,
 				idleFired: false,
-				turns: 0,
+				workTurns: 0,
+				toolActivity: false,
 				lastUserText: "",
 				selfInjected: false,
 				timer: undefined,
@@ -171,7 +172,8 @@ export function apply(ctx, config = {}) {
 		state.lastTrigger = 0;
 		state.signalFired = false;
 		state.idleFired = false;
-		state.turns = 0;
+		state.workTurns = 0;
+		state.toolActivity = false;
 		state.lastUserText = "";
 		state.selfInjected = false;
 
@@ -208,10 +210,22 @@ export function apply(ctx, config = {}) {
 		clearIdle(stateOf(agent));
 	});
 
+	// ── 'tools/result'：记录「本轮是否真的干过活」──
+	// 空闲兜底不能用裸 turn 数判定：纯对话轮次（回答提问、只读核对）也会推进 turn，
+	// 把它当"一段工作已结束"会误报（本插件实测误报过两次）。只有真的跑过工具
+	// 的 turn 才算"有工作的会话"，用它作为兜底门槛。
+	ctx.on("tools/result", ({ agent }) => {
+		const state = stateOf(agent);
+		state.toolActivity = true;
+	});
+
 	// ── 'agent/turn-stopping'：turn 即将关闭 → 检测完成信号 + 武装空闲兜底 ──
 	ctx.on("agent/turn-stopping", ({ agent }) => {
 		const state = stateOf(agent);
-		state.turns += 1;
+		if (state.toolActivity) {
+			state.workTurns += 1;
+			state.toolActivity = false;
+		}
 
 		// 显式完成信号
 		if (cfg.completionSignals && !state.selfInjected) {
@@ -235,7 +249,8 @@ export function apply(ctx, config = {}) {
 		state.timer = setTimeout(() => {
 			state.timer = undefined;
 			if (state.idleFired || state.signalFired) return;
-			if (state.turns < 1) return;
+			// 门槛：本会话至少有过一轮「跑过工具」的工作，否则纯聊天不该被兜底打扰。
+			if (state.workTurns < 1) return;
 			state.idleFired = true;
 			state.lastTrigger = Date.now();
 			try {
