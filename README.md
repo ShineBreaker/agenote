@@ -13,6 +13,7 @@ DeepSeek Harness（DSH）的 [agenote](https://github.com/ShineBreaker/agenote) 
 | 会话开始 | `agent/created` | 注入 `agenote health` 摘要（总数/孤立率/过时率/薄弱类别/记忆统计） |
 | 用户消息进入 | `agent/inbox/inserted` | 记住最近一条**真实用户**发言，用于信号判定 |
 | 新一轮开始 | `agent/status`(running) | 作废待发的空闲计时器 |
+| 工具执行完毕 | `tools/result` | 标记本轮「真的干过活」（空闲兜底的门槛依据） |
 | turn 收尾 | `agent/turn-stopping` | 检测完成信号 → 注入 review 提示；并武装空闲兜底 |
 | 会话销毁 | `agent/disposed` | 清计时器、释放会话状态 |
 
@@ -74,6 +75,7 @@ profile 为 `patchReload: live` 时（web profile 默认如此），新 bundle �
 - **每会话状态用 `Map<sessionId, state>`**，不用模块级标量。一个进程里可并存多个会话（web 多标签、subagent），模块级状态会串台——这正是 pi 版历史上修过的 bug。
 - **自注入反馈环防护**。注入的提示词自身含「完成」等信号词；靠 `agent/inbox/inserted` 只认 `source.kind === 'user'` 且排除含 `HOOK_MARKER` 的文本来断开回路。
 - **不 import `@deepseek-ai/*`**。本包经 `link:` 部署时模块 realpath 落在源码目录，Node 的 `node_modules` 父级检索够不到 `$DSH_HOME/profiles/node_modules` 共享 fallback。需要上游纯函数（`createUserMessage`）时在 `lib.js` 里复刻并注明出处；上游改语义需手动同步。
+- **空闲兜底以「跑过工具的轮次」为门槛**，不用裸 turn 数。turn 数无法区分「完成了一段工作」与「回答了一个问题」——纯对话轮同样推进 turn，会导致兜底在纯聊天上误报（实测发生过）。判据是 `workTurns`（仅在该轮 `tools/result` 触发过时才累加）。
 - **不重复实现行为规范**。信号清单、写入流程、卡片格式全部归 `agenote-skills`；插件只做「事件触发 + 命令快捷入口」。
 - **归因**。所有 CLI 调用都带 `AGENOTE_AGENT=dsh`（`lib.js:runKb`）。该变量只给卡片打归因标签，不做写入隔离，但不带的话归因会错误落到默认 agent（`omp`）。
 
