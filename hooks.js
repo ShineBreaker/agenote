@@ -212,8 +212,10 @@ export function apply(ctx, config = {}) {
 
 	// ── 'tools/result'：记录「本轮是否真的干过活」──
 	// 空闲兜底不能用裸 turn 数判定：纯对话轮次（回答提问、只读核对）也会推进 turn，
-	// 把它当"一段工作已结束"会误报（本插件实测误报过两次）。只有真的跑过工具
-	// 的 turn 才算"有工作的会话"，用它作为兜底门槛。
+	// 把它当"一段工作已结束"会误报。只有真的跑过工具的 turn 才算"有工作的轮次"。
+	//
+	// 判据必须绑在**当轮**上，不能用累计计数：累计值一旦 ≥1 就永久成立，
+	// 之后任何纯对话轮都会照样越过门槛（本插件的第一次修复就踩了这个坑）。
 	ctx.on("tools/result", ({ agent }) => {
 		const state = stateOf(agent);
 		state.toolActivity = true;
@@ -222,10 +224,10 @@ export function apply(ctx, config = {}) {
 	// ── 'agent/turn-stopping'：turn 即将关闭 → 检测完成信号 + 武装空闲兜底 ──
 	ctx.on("agent/turn-stopping", ({ agent }) => {
 		const state = stateOf(agent);
-		if (state.toolActivity) {
-			state.workTurns += 1;
-			state.toolActivity = false;
-		}
+		// 本轮的产出，先落定再清标志——它要随该轮武装的 timer 一起带到回调里。
+		const workedThisTurn = state.toolActivity;
+		state.toolActivity = false;
+		if (workedThisTurn) state.workTurns += 1;
 
 		// 显式完成信号
 		if (cfg.completionSignals && !state.selfInjected) {
@@ -246,11 +248,13 @@ export function apply(ctx, config = {}) {
 		// 一旦被显式信号触发过就永久禁用本条路径，避免与信号路径重复打扰。
 		if (!cfg.idleFallback) return;
 		clearIdle(state);
+		// 只有"刚结束的这一轮真的干过活"才武装：纯对话轮不该在 5 分钟后收到
+		// "一段工作已结束"的提示。workedThisTurn 随闭包进入本次 timer 的回调，
+		// 因此判定的是**触发本轮**，不受后续轮次影响。
+		if (!workedThisTurn) return;
 		state.timer = setTimeout(() => {
 			state.timer = undefined;
 			if (state.idleFired || state.signalFired) return;
-			// 门槛：本会话至少有过一轮「跑过工具」的工作，否则纯聊天不该被兜底打扰。
-			if (state.workTurns < 1) return;
 			state.idleFired = true;
 			state.lastTrigger = Date.now();
 			try {
