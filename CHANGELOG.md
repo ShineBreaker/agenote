@@ -4,6 +4,18 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.11] - 2026-09-22
+
+### Changed
+
+- **`KNOWN_AGENTS` 硬打表改为动态收录**（`core.py` / `index.py` / `cards.py`）：写死的 9 项 agent 白名单删掉，与 type 门禁（SEED_TYPES/formal_types）同构——已知 agent = `SEED_AGENTS` 种子集 ∪ index 中出现过的 `source_agent`，实时计算零持久状态。新 agent（如 dsh）首张卡给提示性警告（注明写入后自动收录），第二张起静默；无需为接入新 agent 改代码。
+- **completions 枚举全部改为从真相源派生**（`completions.py`）：`CONFIG_SOURCES`/`MEMSCAN_SOURCES`/`TYPE_VALUES`/`OWNER_VALUES`/`ENTRY_VALUES`/`STATUS_VALUES` 等手抄第二份删掉，fish/bash/zsh 生成器内的内联字符串改为运行时从 extract registry、memscan registry、`core` 领域枚举拼装——新增 extract adapter 或领域枚举调整自动反映到三个 shell 的补全，不再出现补全与实际 choices 漂移。
+- **`MEMORY_SECTIONS` 收敛为 `MEMORY_TYPES` 派生**（`core.py`）：`feedback/project/reference` 只在 `MEMORY_TYPES` 声明一次，`MEMORY_SECTIONS = [*MEMORY_TYPES, "deprecated"]`（deprecated 是生命周期终态语义特例）。
+
+### Added
+
+- 回归测试两套：`test_agent_registry.py`（首卡警告→收录→次卡静默、空 KB 种子集、归档卡写入者不失联）、`test_completions_derived.py`（枚举跟随真相源、生成脚本携带派生值）。全量 130 passed。
+
 ## [0.1.10] - 2026-09-14
 
 ### Fixed
