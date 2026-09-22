@@ -61,17 +61,57 @@ CONFIG_SUBS: dict[str, str] = {
     "show": "打印当前生效配置及来源",
 }
 
-# ── 常用枚举值（补全候选用）──────────────────────────────────────────────
+# ── 枚举值（补全候选；从各真相源派生，不再手抄第二份）─────────────────────
+# 语义枚举（DOMAIN/SHELLS/THEMES）是 CLI 自身的接口契约，留在此处即真相源；
+# 数据型枚举必须跟随其真相源：源注册表（extract/memscan）、领域枚举（core）。
 DOMAIN_VALUES = ["human", "agenote"]
 COMPLETIONS_SHELLS = ["bash", "zsh", "fish"]
-CONFIG_SOURCES = ["hermes", "opencode", "zcode", "omp", "crush", "codex", "claude", "all"]
-MEMSCAN_SOURCES = ["zcode", "claude", "codex", "pi", "reasonix", "hermes", "all"]
-MEMORY_TYPES = ["feedback", "project", "reference"]
-OWNER_VALUES = ["human", "ai", "collab"]
-TYPE_VALUES = ["debug", "refactor", "research", "workflow", "feature", "config"]
-ENTRY_VALUES = ["mistake", "note", "ascended"]
-STATUS_VALUES = ["done", "stable", "stale", "archived"]
 VIZ_THEMES = ["light", "dark", "auto"]
+
+
+def _extract_sources() -> str:
+    """reconcile/extract 的 --source 候选（extract registry + all）。"""
+    from agenote.extract.base import _resolve_extractors
+
+    return " ".join(sorted(_resolve_extractors()) + ["all"])
+
+
+def _memscan_sources() -> str:
+    """scan-memories 的 --source 候选（memscan 注册表 + all）。"""
+    from agenote.memscan import SOURCES as MEMSCAN_REGISTRY
+
+    return " ".join(sorted(MEMSCAN_REGISTRY) + ["all"])
+
+
+def _type_values() -> str:
+    from agenote.core import SEED_TYPES
+
+    return " ".join(sorted(SEED_TYPES))
+
+
+def _owner_values() -> str:
+    from agenote.core import VALID_OWNERS
+
+    return " ".join(sorted(VALID_OWNERS))
+
+
+def _entry_values() -> str:
+    from agenote.core import VALID_ENTRY_TYPES
+
+    return " ".join(sorted(VALID_ENTRY_TYPES))
+
+
+def _memory_types() -> str:
+    from agenote.core import MEMORY_TYPES
+
+    return " ".join(MEMORY_TYPES)
+
+
+def _memory_types_csv() -> str:
+    """bash/zsh 生成器用的逗号分隔形态（zsh {} 内联、bash compgen 均吃逗号表）。"""
+    from agenote.core import MEMORY_TYPES
+
+    return ",".join(MEMORY_TYPES)
 
 
 def _subcmd_list() -> list[str]:
@@ -93,24 +133,24 @@ def _gen_fish() -> str:
         # 全局
         "complete -c agenote -s h -l help -d '显示帮助'",
         "complete -c agenote -l version -d '显示版本号'",
-        "complete -c agenote -l domain -x -a 'human agenote' -d '操作域'",
+        f"complete -c agenote -l domain -x -a '{' '.join(DOMAIN_VALUES)}' -d '操作域'",
         # completions 自身
         "complete -c agenote -n '__fish_seen_subcommand_from completions' -f -a 'bash zsh fish' -d '目标 shell'",
         # config 二级
         "complete -c agenote -n '__fish_seen_subcommand_from config' -f -a 'init show' -d 'config 子命令'",
         # 常用枚举（按子命令条件补全）
-        "complete -c agenote -n '__fish_seen_subcommand_from add' -l type -x -a 'debug refactor research workflow feature config' -d '卡片类型'",
-        "complete -c agenote -n '__fish_seen_subcommand_from add' -l owner -x -a 'human ai collab' -d '执行者'",
-        "complete -c agenote -n '__fish_seen_subcommand_from add' -l entry -x -a 'mistake note ascended' -d '条目语义'",
+        f"complete -c agenote -n '__fish_seen_subcommand_from add' -l type -x -a '{_type_values()}' -d '卡片类型'",
+        f"complete -c agenote -n '__fish_seen_subcommand_from add' -l owner -x -a '{_owner_values()}' -d '执行者'",
+        f"complete -c agenote -n '__fish_seen_subcommand_from add' -l entry -x -a '{_entry_values()}' -d '条目语义'",
         "complete -c agenote -n '__fish_seen_subcommand_from add' -l category -d '类别'",
         "complete -c agenote -n '__fish_seen_subcommand_from add' -l tech -d '技术栈'",
-        "complete -c agenote -n '__fish_seen_subcommand_from viz' -l theme -x -a 'light dark auto' -d '主题'",
+        f"complete -c agenote -n '__fish_seen_subcommand_from viz' -l theme -x -a '{' '.join(VIZ_THEMES)}' -d '主题'",
         "complete -c agenote -n '__fish_seen_subcommand_from viz' -l port -d '监听端口'",
         "complete -c agenote -n '__fish_seen_subcommand_from viz' -l output -d '输出文件'",
-        "complete -c agenote -n '__fish_seen_subcommand_from reconcile' -l source -x -a 'hermes opencode zcode omp crush codex claude all' -d '来源'",
-        "complete -c agenote -n '__fish_seen_subcommand_from extract' -l source -x -a 'hermes opencode zcode omp crush codex claude all' -d '来源'",
-        "complete -c agenote -n '__fish_seen_subcommand_from scan-memories' -l source -x -a 'zcode claude codex pi reasonix hermes all' -d '来源'",
-        "complete -c agenote -n '__fish_seen_subcommand_from memory' -l type -x -a 'feedback project reference' -d '记忆类型'",
+        f"complete -c agenote -n '__fish_seen_subcommand_from reconcile' -l source -x -a '{_extract_sources()}' -d '来源'",
+        f"complete -c agenote -n '__fish_seen_subcommand_from extract' -l source -x -a '{_extract_sources()}' -d '来源'",
+        f"complete -c agenote -n '__fish_seen_subcommand_from scan-memories' -l source -x -a '{_memscan_sources()}' -d '来源'",
+        f"complete -c agenote -n '__fish_seen_subcommand_from memory' -l type -x -a '{_memory_types()}' -d '记忆类型'",
         # 文件补全（lint/format/commit 的 files 位置参数）
         "complete -c agenote -n '__fish_seen_subcommand_from lint; and not __fish_seen_subcommand_from --fix --check' -F",
         "complete -c agenote -n '__fish_seen_subcommand_from format' -F",
@@ -120,6 +160,13 @@ def _gen_fish() -> str:
 
 def _gen_bash() -> str:
     subs = " ".join(_subcmd_list())
+    ext_src = _extract_sources()
+    mem_src = _memscan_sources()
+    type_vals = _type_values()
+    owner_vals = _owner_values()
+    entry_vals = _entry_values()
+    theme_vals = ",".join(VIZ_THEMES)
+    mem_types = _memory_types_csv()
     return textwrap.dedent(
         f"""\
         # agenote bash completion — generated by `agenote completions bash`
@@ -153,27 +200,27 @@ def _gen_bash() -> str:
                     ;;
                 add)
                     case "$prev" in
-                        --type) COMPREPLY=( $(compgen -W "debug refactor research workflow feature config" -- "$cur") );;
-                        --owner) COMPREPLY=( $(compgen -W "human ai collab" -- "$cur") );;
-                        --entry|--entry-type) COMPREPLY=( $(compgen -W "mistake note ascended" -- "$cur") );;
+                        --type) COMPREPLY=( $(compgen -W "{type_vals}" -- "$cur") );;
+                        --owner) COMPREPLY=( $(compgen -W "{owner_vals}" -- "$cur") );;
+                        --entry|--entry-type) COMPREPLY=( $(compgen -W "{entry_vals}" -- "$cur") );;
                         *) COMPREPLY=( $(compgen -W "--title --category --tech --type --owner --entry --entry-type --summary --stdin -h --help" -- "$cur") );;
                     esac
                     ;;
                 viz)
                     case "$prev" in
-                        --theme) COMPREPLY=( $(compgen -W "light dark auto" -- "$cur") );;
+                        --theme) COMPREPLY=( $(compgen -W "{theme_vals}" -- "$cur") );;
                         *) COMPREPLY=( $(compgen -W "--output --open --no-open --serve --port --theme --filter --search -h --help" -- "$cur") );;
                     esac
                     ;;
                 reconcile|extract)
                     case "$prev" in
-                        --source) COMPREPLY=( $(compgen -W "hermes opencode zcode omp crush codex claude all" -- "$cur") );;
+                        --source) COMPREPLY=( $(compgen -W "{ext_src}" -- "$cur") );;
                         *) COMPREPLY=( $(compgen -W "--source --dry-run --json -h --help" -- "$cur") );;
                     esac
                     ;;
                 memory)
                     case "$prev" in
-                        --type) COMPREPLY=( $(compgen -W "feedback project reference" -- "$cur") );;
+                        --type) COMPREPLY=( $(compgen -W "{mem_types}" -- "$cur") );;
                     esac
                     ;;
                 *) COMPREPLY=() ;;
@@ -186,6 +233,12 @@ def _gen_bash() -> str:
 
 def _gen_zsh() -> str:
     subs = " ".join(f'"{k}:{v}"' for k, v in sorted(COMMANDS.items()))
+    ext_src = ",".join(_extract_sources().split())
+    type_vals = ",".join(_type_values().split())
+    owner_vals = ",".join(_owner_values().split())
+    entry_vals = ",".join(_entry_values().split())
+    theme_vals = ",".join(VIZ_THEMES)
+    mem_types = _memory_types_csv()
     return textwrap.dedent(
         f"""\
         #compdef agenote
@@ -200,7 +253,7 @@ def _gen_zsh() -> str:
             (( $+functions[_describe] )) || autoload -U _describe
 
             _arguments -C \\
-                '--domain[操作域]:domain:(human agenote)' \\
+                '--domain[操作域]:domain:({"".join(DOMAIN_VALUES)})' \\
                 '--version[显示版本号]' \\
                 '(-h --help)'{{ -h,--help}}'[显示帮助]' \\
                 '1: :->subcmd' \\
@@ -224,9 +277,9 @@ def _gen_zsh() -> str:
                                 '--title[任务标题]:' \\
                                 '--category[类别]:' \\
                                 '--tech[技术栈]:' \\
-                                '--type[类型]:{{debug,refactor,research,workflow,feature,config}}' \\
-                                '--owner[执行者]:{{human,ai,collab}}' \\
-                                '--entry[条目语义]:{{mistake,note,ascended}}' \\
+                                '--type[类型]:{{{type_vals}}}' \\
+                                '--owner[执行者]:{{{owner_vals}}}' \\
+                                '--entry[条目语义]:{{{entry_vals}}}' \\
                                 '--summary[一句话总结]:' \\
                                 '--stdin[从标准输入读取]'
                             ;;
@@ -237,10 +290,13 @@ def _gen_zsh() -> str:
                                 '--no-open[不打开浏览器]' \\
                                 '--serve[启动本地 HTTP 服务器]' \\
                                 '--port[监听端口]:' \\
-                                '--theme[主题]:{{light,dark,auto}}'
+                                '--theme[主题]:{{{theme_vals}}}'
                             ;;
                         reconcile|extract)
-                            _arguments '--source[来源]:{{hermes,opencode,zcode,omp,crush,codex,claude,all}}' '--dry-run[只预览不落盘]'
+                            _arguments '--source[来源]:{{{ext_src}}}' '--dry-run[只预览不落盘]'
+                            ;;
+                        memory)
+                            _arguments '--type[记忆类型]:{{{mem_types}}}'
                             ;;
                     esac
                     ;;

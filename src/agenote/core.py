@@ -46,10 +46,12 @@ VALID_ENTRY_TYPES = {"mistake", "note", "ascended"}
 TYPE_PROMOTE_MIN = int(config.get("curation", "type_promote_min"))
 
 # ── source_agent 体系（跨 agent 经验溯源）─────────────────────────────────────
-# 记录每张卡片由哪个 agent 写入，供跨 agent 检索/健康度统计/reconcile 使用。
+# 记录每张卡片由哪个 agent 写入，供跨 agent 检验/健康度统计/reconcile 使用。
 # 写入时从 os.environ["AGENOTE_AGENT"] 取值；人类手写的卡片留空（source_agent=""）。
-# 白名单用于 sanity check（缺失或不在白名单只警告，不阻塞，便于新增 agent）。
-KNOWN_AGENTS = {
+# 与 type 门禁同构（SEED_TYPES/formal_types）：已知 agent = 种子集 ∪ index 中
+# 出现过的 source_agent，实时计算无持久状态——新增 agent 写第一张卡即自动收录，
+# 无需同步改代码（首张卡的警告是提示性的，不阻塞写入）。
+SEED_AGENTS = {
     "omp",  # omp (oh-my-pi, pi 下游)
     "hermes",  # hermes-agent
     "crush",  # crush agent
@@ -136,7 +138,10 @@ WEIGHT_USAGE_BONUS = float(config.get("weights", "usage_bonus"))  # 每次 touch
 WEIGHT_USAGE_CAP = int(config.get("weights", "usage_cap"))  # 使用次数提升上限（×bonus）
 WEIGHT_STALE_PENALTY = float(config.get("weights", "stale_penalty"))  # 超 STALE_DAYS 未用的惩罚系数
 
-MEMORY_SECTIONS = ["feedback", "project", "reference", "deprecated"]
+# 记忆一级节：deprecated 是生命周期终态（语义特例，排末尾），前三节即可添加的
+# 记忆类型（memory --type 补全与校验从 MEMORY_TYPES 派生，不在此重复罗列）。
+MEMORY_TYPES = ["feedback", "project", "reference"]
+MEMORY_SECTIONS = [*MEMORY_TYPES, "deprecated"]
 
 # 每个模板是一个行列表，用于 cmd_add 生成新卡片
 CARD_TEMPLATES = {

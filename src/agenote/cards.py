@@ -21,7 +21,6 @@ from agenote.core import (
     SEED_TYPES,
     VALID_OWNERS,
     VALID_ENTRY_TYPES,
-    KNOWN_AGENTS,
     VALID_STATUSES,
     STALE_DAYS,
     TYPE_PROMOTE_MIN,
@@ -52,6 +51,7 @@ from agenote.index import (
     _load_index,
     _save_index,
     _upsert_card,
+    known_agents,
     type_counts,
 )
 from agenote.safeio import atomic_write
@@ -129,12 +129,14 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
         )
 
     # source_agent：从 ctx.agent_name 取（agenote 域有值、人类域为空串）。
-    # 不在白名单只警告不阻塞，便于新增 agent 而无需同步改代码。
+    # 已知 agent = 种子 ∪ index 出现过（index.known_agents 实时计算）：新 agent
+    # 的首张卡会警告提示，第二张起自动收录，无需同步改代码。
     source_agent = getattr(ctx, "agent_name", "") or ""
-    if source_agent and source_agent not in KNOWN_AGENTS:
+    if source_agent and source_agent not in known_agents(ctx):
         print(
-            f"警告: source_agent '{source_agent}' 不在已知 agent 列表中 "
-            f"({', '.join(sorted(KNOWN_AGENTS))})",
+            f"警告: source_agent '{source_agent}' 不在已知 agent 列表中"
+            f"（首次出现，写入后自动收录；已知: "
+            f"{', '.join(sorted(known_agents(ctx)))}）",
             file=sys.stderr,
         )
 

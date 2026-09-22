@@ -21,6 +21,7 @@ from agenote.core import (
     DEFAULT_OWNER,
     DEFAULT_TYPE,
     KBContext,
+    SEED_AGENTS,
     SEED_TYPES,
     STALE_DAYS,
     TYPE_PROMOTE_MIN,
@@ -130,6 +131,17 @@ def formal_types(ctx: "KBContext | None" = None) -> set[str]:
     """正式 type 集合 = 种子集 ∪ 非归档卡片数达晋升阈值的 type（实时计算）。"""
     return SEED_TYPES | {
         t for t, n in type_counts(ctx).items() if n >= TYPE_PROMOTE_MIN
+    }
+
+
+def known_agents(ctx: "KBContext | None" = None) -> set[str]:
+    """已知 agent 集合 = 种子集 ∪ index 中出现过的 source_agent（实时计算）。
+
+    含归档卡片（历史写入者仍是已知 agent）；与 formal_types 同构、无持久状态。
+    """
+    index = _load_index(ctx)
+    return SEED_AGENTS | {
+        a for a in (c.get("source_agent", "") for c in index["cards"]) if a
     }
 
 
