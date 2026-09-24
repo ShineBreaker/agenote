@@ -351,7 +351,11 @@ def _print_report(
 def cmd_reconcile(args: argparse.Namespace, ctx=None) -> None:
     """跨 agent memory 只读 reconcile：抽取事实到 .reconcile/index.json。"""
     try:
-        report = reconcile_source(source=args.source, dry_run=args.dry_run)
+        report = reconcile_source(
+            source=args.source,
+            dry_run=args.dry_run,
+            prune_orphans=getattr(args, "prune_orphans", False),
+        )
     except UnknownSourceError as exc:
         die(str(exc))
     except ValueError as exc:
@@ -622,10 +626,10 @@ def print_help() -> None:
             agenote gaps [--stale-days {CARD_STALE_DAYS}] [--json]
 
   reconcile 跨 agent memory 只读 reconcile（抽取事实到 .reconcile/，不写回源）
-            agenote reconcile [--source all] [--dry-run]
+            agenote reconcile [--source all] [--dry-run] [--prune-orphans]
             agenote reconcile --source opencode --dry-run
 
-  dream    从 reconcile 事实启发式提炼候选新卡片（只读，不调 LLM，零候选即成功）
+  dream    从 reconcile 事实启发式提炼候选新卡片（不调 LLM；唯一落盘是游标 dream-cursor.json）
             agenote dream [--window-days {DEFAULT_DREAM_WINDOW_DAYS}] [--offset N] [--limit N]
             候选含 source_trace 字段——用 trace 命令回查完整原始对话
 
@@ -1038,12 +1042,17 @@ def _main() -> None:
         help="opencode|zcode|omp|crush|codex|claude|all（默认 all）",
     )
     reconcile_parser.add_argument("--dry-run", action="store_true", help="只预览不落盘")
+    reconcile_parser.add_argument(
+        "--prune-orphans",
+        action="store_true",
+        help="显式清理 orphan 标记的旧事实（单源模式只清本源）",
+    )
     reconcile_parser.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
 
     # ── dream ───────────────────────────────────────────────────────────────
     dream_parser = subparsers.add_parser(
         "dream",
-        help="从 reconcile 事实启发式提炼候选新卡片（只读，不调 LLM，不写 KB）",
+        help="从 reconcile 事实启发式提炼候选新卡片（不调 LLM；唯一落盘是 dream-cursor.json 游标）",
     )
     dream_parser.add_argument(
         "--window-days",
@@ -1174,6 +1183,7 @@ def _main() -> None:
         "lint", "format", "commit", "init",
         "distill", "reconcile", "extract",
     }
+    # dream 保持只读：游标写在 run_dream 内自持 kb_lock，不进全局锁。
     if args.command == "get" and getattr(args, "used", False):
         MUTATING_COMMANDS.add("get")
 

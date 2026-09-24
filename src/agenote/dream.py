@@ -49,18 +49,21 @@
 """
 
 import hashlib
+import json
 import math
 import re
 import warnings
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from agenote.core import NOISE_MIN_LEN, is_noise_fact
 from agenote.reconcile import (
     AGENOTE_ROOT,
     load_reconcile_facts,
 )
+from agenote.safeio import atomic_write, kb_lock
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # jieba 分词（可选优化；缺失则回退到下方 2-gram 启发式）
@@ -377,6 +380,7 @@ class DreamReport:
     skipped_existing: int = 0  # 因 KB 已覆盖而跳过的候选
     error_details: list[str] = field(default_factory=list)
     message: str = ""  # 人类可读结论（含"零产物即成功"语义）
+    unchanged: bool = False  # S4：snapshot 与游标一致时 True（候选未变，省复核）
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -550,6 +554,36 @@ def _gather_candidates(
     return sliced, total, total_facts, snapshot_hash
 
 
+DREAM_CURSOR_NAME = "dream-cursor.json"
+
+
+def _dream_cursor_path() -> Path:
+    return AGENOTE_ROOT / DREAM_CURSOR_NAME
+
+
+def _load_dream_cursor() -> dict:
+    """读 agent 域 dream-cursor.json；缺失/损坏回空 dict（不 fail-closed，下轮重建）。"""
+    try:
+        data = json.loads(_dream_cursor_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_dream_cursor(snapshot_hash: str) -> None:
+    """写游标（dream 唯一的落盘）：safeio 原子写 + kb_lock，与其它写命令同锁。"""
+    payload = {
+        "snapshot_hash": snapshot_hash,
+        "last_run_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    AGENOTE_ROOT.mkdir(parents=True, exist_ok=True)
+    with kb_lock(AGENOTE_ROOT / ".agenote.lock"):
+        atomic_write(
+            _dream_cursor_path(),
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        )
+
+
 def run_dream(
     window_days: int = DEFAULT_WINDOW_DAYS,
     offset: int = 0,
@@ -652,4 +686,14 @@ def run_dream(
                 drift_hint if offset > 0 else "",
             )
         )
+    # S4 持久游标短路：snapshot 与上次一致 → 标「未变化」，省 agent 复核注意力。
+    # ponytail: 先重算后比对（评分离线幂等且便宜）；真跳过评分需输入指纹， scoring 变贵时再加。
+    cursor = _load_dream_cursor()
+    if snapshot_hash and cursor.get("snapshot_hash") == snapshot_hash:
+        report.unchanged = True
+        report.message = (
+            "【未变化】snapshot %s 与上次（%s）一致，候选未变，无需复核。\n%s"
+            % (snapshot_hash, cursor.get("last_run_at", "?"), report.message)
+        )
+    _save_dream_cursor(snapshot_hash)
     return report
