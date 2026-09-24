@@ -413,7 +413,7 @@ def find_gaps(ctx=None, stale_days: int = CARD_STALE_DAYS) -> dict:
     ai_only_categories = [
         cat
         for cat, owners in owner_coverage.items()
-        if "human" not in owners and "collaborative" not in owners
+        if "human" not in owners and "collab" not in owners
     ]
 
     return {
