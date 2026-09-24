@@ -159,6 +159,22 @@ def test_update_type_index_failure_restores_renamed_card(kb_root, monkeypatch, c
     assert capsys.readouterr().out == ""
 
 
+def test_bom_prefixed_card_can_be_updated_and_keeps_bom(kb_root):
+    """首行 UTF-8 BOM 不应让卡片变成不可策展；写回保留 BOM 原字节。"""
+    ctx = _ctx(kb_root)
+    cmd_add(_add_args("原始"), ctx)
+    card = _only_card(ctx)
+    card.write_bytes(b"\xef\xbb\xbf" + card.read_bytes())
+    assert card.read_bytes().startswith(b"\xef\xbb\xbf")
+
+    cmd_update(_update_args(str(card), tech="rust"), ctx)
+
+    after = card.read_bytes()
+    assert after.startswith(b"\xef\xbb\xbf")
+    assert b":TECH:     rust" in after
+    assert parse_org_prop(card.read_text(encoding="utf-8"), "TECH") == "rust"
+
+
 def test_rollback_preserves_original_bytes(kb_root, monkeypatch):
     """回滚快照用原始字节，不把 CRLF 归一化。"""
     ctx = _ctx(kb_root)

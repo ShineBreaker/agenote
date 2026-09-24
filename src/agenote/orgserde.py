@@ -38,11 +38,24 @@ _PLANNING_LINE = re.compile(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _heading_probe(line: str, index: int) -> str:
+    """匹配用行文本：首行 UTF-8 BOM 会让 ``^\\* `` 失配，只在匹配时剥离，
+    写回仍使用原始行，BOM 字节不会被顺手改掉。"""
+    return line[1:] if index == 0 and line.startswith("\ufeff") else line
+
+
 def _top_property_drawer(
     lines: list[str],
 ) -> tuple[int, int, str] | None:
     """返回顶层属性抽屉的起止行和缩进；正文示例不算元数据。"""
-    heading = next((i for i, line in enumerate(lines) if re.match(r"^\* ", line)), None)
+    heading = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if re.match(r"^\* ", _heading_probe(line, i))
+        ),
+        None,
+    )
     if heading is None:
         return None
     for start in range(heading + 1, len(lines)):

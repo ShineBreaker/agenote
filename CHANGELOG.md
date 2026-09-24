@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- **带 BOM 的卡片无法被策展**（`orgserde.py`）：首行 UTF-8 BOM 会让顶层标题匹配 `^\* ` 失配，`update` / `touch` / `archive` / `restore` / `merge` 一律以 `OrgPropertyDrawerError` 失败（fail-closed，不损坏数据但卡片等于只读）。现在只在标题匹配时剥离首行 BOM，写回仍使用原始行，BOM 字节保持不变。
 - **`inbox-archive` 失败后留下 `ensure_dirs` 骨架文件**（`inbox_archive.py`）：事务快照原本在 `ensure_dirs` 之后读取，索引 / inbox 原本不存在时会被补建成空文件，回滚只能恢复到「空骨架」而非「不存在」。快照前移到 `ensure_dirs` 之前，并把 inbox 纳入回滚集（无论是否 `--prune`）。
 - **reconcile 索引写入缺校验、读取放行非法数值**（`reconcile.py`）：`trust_score` / `weight` 增加有限性校验（NaN / Infinity 不再落盘或回读），`id` 必须以 `source` 前缀派生；顶层 `version` / `updated` / `by_source` 类型错误一律 fail-closed；`_save_reconcile_index()` 落盘前复用同一 `_valid_reconcile_fact()` 校验。
 - **`reconcile --source all` 留下半更新索引**（`reconcile.py`）：非 dry-run 现在先计算所有已注册 source，全部成功后才一次性落盘并清理退役 source；任一 adapter 失败时索引保持不变。全量模式只保留本轮各注册源的新结果，退役 source 计入 `pruned`；单 source reconcile 仍只替换自己，dry-run 不落盘；单源或全量遇到 adapter 返回错误时同样 fail-closed，不覆盖 last-known-good 索引。
