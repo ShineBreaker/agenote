@@ -21,7 +21,7 @@ import urllib.request
 from pathlib import Path
 
 from agenote import config
-from agenote.core import KB_ROOT, agenote_context, default_context
+from agenote.core import KB_ROOT, agenote_context, default_context, die, safe_error_message
 from agenote.index import _load_index
 
 from agenote.viz.data import compute_stats, parse_filter, top_techs
@@ -50,17 +50,27 @@ SERVE_PROBE_INTERVAL = float(config.get("viz", "serve_probe_interval"))
 
 
 def _open_in_browser(path: str) -> None:
-    """用 xdg-open 打开本地文件或 URL。"""
+    """用 xdg-open 打开本地文件或 URL；启动失败不伪装成成功。"""
     try:
-        subprocess.Popen(["xdg-open", path])
-        print("🌐 已在浏览器中打开。")
-    except FileNotFoundError:
-        print("⚠ xdg-open 不可用，请手动打开:", path)
-    except OSError as e:
-        print(f"⚠ xdg-open 失败: {e}")
+        subprocess.Popen(
+            ["xdg-open", path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except (KeyboardInterrupt, GeneratorExit, SystemExit):
+        raise
+    except BaseException as exc:
+        die(f"xdg-open 失败（{type(exc).__name__}）")
+    print("🌐 已请求浏览器打开。")
 
 
-def _serve(path: Path, port: int, should_open: bool) -> None:
+def _serve(
+    path: Path,
+    port: int,
+    should_open: bool,
+    *,
+    success: str | None = None,
+) -> None:
     """阻塞式 HTTP 服务器，Ctrl-C 退出。"""
     workdir = path.parent
     workdir.mkdir(parents=True, exist_ok=True)
@@ -105,6 +115,8 @@ def _serve(path: Path, port: int, should_open: bool) -> None:
             print(f"⚠ 端口 {port} 在 {SERVE_PROBE_TIMEOUT}s 内未就绪，仍尝试打开。")
         if should_open:
             _open_in_browser(url)
+        if success:
+            print(success)
         print(f"🌐 浏览器已请求: {url}")
         print("按 Ctrl-C 停止服务器。")
 
@@ -196,13 +208,14 @@ def cmd_viz(args: argparse.Namespace, ctx=None) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")  # --output 用户显式指定，保留直接写
     domains_desc = args.domain if args.domain != "all" else "human+agenote"
-    print(f"✅ 可视化页面已生成: {out}（{len(cards)} 张卡片，域: {domains_desc}）")
+    success = f"✅ 可视化页面已生成: {out}（{len(cards)} 张卡片，域: {domains_desc}）"
 
     if args.serve:
-        _serve(out, args.port, args.open_browser)
+        _serve(out, args.port, args.open_browser, success=success)
         return
-    if args.open_browser:
+    if getattr(args, "open_browser", True):
         _open_in_browser(str(out))
+    print(success)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -275,6 +288,23 @@ def add_viz_parser(subparsers) -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except SystemExit as exc:
+        if exc.code is None or isinstance(exc.code, int):
+            raise
+        print("错误: 操作失败（SystemExit）", file=sys.stderr)
+        raise SystemExit(1) from None
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None
+    except GeneratorExit:
+        raise
+    except BaseException as exc:
+        print(f"错误: {safe_error_message(exc)}", file=sys.stderr)
+        raise SystemExit(1) from None
+
+
+def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="kb_viz", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     add_viz_parser(sub)

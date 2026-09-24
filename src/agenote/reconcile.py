@@ -10,12 +10,8 @@
 设计参考 MiMoCode `memory/reconcile.ts` 的 cc_index 模式（只读 + 类型映射 +
 不写回），适配到本机的真实数据源：
 
-当前接入的 source（见 KNOWN_SOURCES）：
-- hermes：`~/.local/share/hermes/memory_store.db`（holographic store）
-  真实 schema：facts(fact_id, content, category, tags, trust_score, ...)
-              + facts_fts(content, tags)  FTS5
-  映射：content → 卡片正文（提取【...】括号标题）；category → kb category；
-        trust_score → 影响检索 weight。
+当前接入的 source 由 `extract.base.SOURCES` 注册表派生；每个 source 只提供自己的
+抽取适配器，reconcile 负责去重、噪声过滤、KB 优先和低权重索引。
 
 关键约束（抄 MiMoCode 设计意图）：
 1. **只读**：sqlite3 用 `file:...?mode=ro` URI 打开 + `pragma query_only=1`
@@ -26,13 +22,20 @@
 """
 
 import json
+import math
 import re
-import sqlite3
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from agenote.core import AGENOTE_ROOT, is_noise_fact
+from agenote.core import (
+    AGENOTE_ROOT,
+    PublicError,
+    ReconcileIndexError,
+    is_noise_fact,
+    safe_error_message,
+)
+from agenote.extract.base import AdapterMessage, UnknownSourceError, safe_adapter_error
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT, ReconciledFact
 from agenote import config
 from agenote.safeio import atomic_write
@@ -77,7 +80,7 @@ class ReconcileReport:
 # ═══════════════════════════════════════════════════════════════════════════════
 # source 分发 — 统一由 agenote.extract.base.SOURCES registry 提供
 # ═══════════════════════════════════════════════════════════════════════════════
-# 原 KNOWN_SOURCES（7 项 lambda __import__ 分发）已删除：新增 source 只需在
+# 原 KNOWN_SOURCES lambda 分发已删除：新增 source 只需在
 # agenote/extract/<name>.py 写 @register 装饰的 adapter，extract/reconcile/
 # dream trace 三条路径自动可用。三重只读保护由 open_sqlite_ro() 保证。
 
@@ -94,18 +97,73 @@ def _known_extractors() -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _load_reconcile_index() -> dict:
-    """加载 .reconcile/index.json，失败返回空骨架。"""
-    if RECONCILE_INDEX.exists():
-        try:
-            return json.loads(RECONCILE_INDEX.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
+def _valid_reconcile_fact(fact: object) -> bool:
+    """返回事实元素是否满足 reconcile 读取与写回所需的完整结构。"""
+    if not isinstance(fact, dict):
+        return False
+    string_fields = (
+        "id",
+        "source",
+        "native_id",
+        "title",
+        "category",
+        "content",
+        "retrieved_at",
+        "timestamp",
+    )
+    if not all(isinstance(fact.get(key), str) for key in string_fields):
+        return False
+    if not isinstance(fact.get("tags"), list) or not all(
+        isinstance(tag, str) for tag in fact["tags"]
+    ):
+        return False
+    if not all(
+        isinstance(fact.get(key), (int, float))
+        and not isinstance(fact[key], bool)
+        and math.isfinite(fact[key])
+        for key in ("trust_score", "weight")
+    ):
+        return False
+    # id 必须由 source 前缀派生（trace 依赖它分发），拒绝跨字段不一致。
+    return fact["id"] == fact["source"] or fact["id"].startswith(fact["source"] + ":")
+
+
+def _empty_reconcile_index() -> dict:
     return {"version": 1, "updated": "", "by_source": {}, "facts": []}
 
 
+def _load_reconcile_index() -> dict:
+    """加载 .reconcile/index.json；已有文件损坏或事实结构非法时 fail-closed。"""
+    if not RECONCILE_INDEX.exists():
+        return _empty_reconcile_index()
+    try:
+        index = json.loads(RECONCILE_INDEX.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeError) as exc:
+        raise ReconcileIndexError(f"reconcile 索引损坏: {RECONCILE_INDEX}") from exc
+    if not isinstance(index, dict) or not isinstance(index.get("facts"), list):
+        raise ReconcileIndexError(f"reconcile 索引结构非法: {RECONCILE_INDEX}")
+    if not all(_valid_reconcile_fact(fact) for fact in index["facts"]):
+        raise ReconcileIndexError(
+            f"reconcile 索引事实结构非法: {RECONCILE_INDEX}"
+        )
+    # 顶层字段同样 fail-closed；旧格式缺失时按默认值容忍，类型错误必须拒绝。
+    if (
+        not isinstance(index.get("version", 1), int)
+        or isinstance(index.get("version", 1), bool)
+        or not isinstance(index.get("updated", ""), str)
+        or not isinstance(index.get("by_source", {}), dict)
+    ):
+        raise ReconcileIndexError(f"reconcile 索引结构非法: {RECONCILE_INDEX}")
+    return index
+
+
 def _save_reconcile_index(index: dict) -> None:
-    """写入 .reconcile/index.json。"""
+    """写入 .reconcile/index.json；非法事实拒绝落盘，避免污染 LKG。"""
+    facts = index.get("facts")
+    if not isinstance(facts, list) or not all(
+        _valid_reconcile_fact(fact) for fact in facts
+    ):
+        raise ReconcileIndexError("reconcile 索引事实结构非法（拒绝写入）")
     RECONCILE_DIR.mkdir(parents=True, exist_ok=True)
     index["updated"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     index["facts"] = sorted(index["facts"], key=lambda f: f["id"])
@@ -142,34 +200,38 @@ def _kb_titles() -> set[str]:
     return titles
 
 
-def reconcile_source(source: str = "hermes", dry_run: bool = False) -> ReconcileReport:
-    """对单个 source 跑一次只读 reconcile。
-
-    Args:
-        source: SOURCES registry 中的 source 名（或 "all" 跑全部）
-        dry_run: True 只返回报告不落盘（首次/审核场景）
-
-    Returns:
-        ReconcileReport（含 indexed/skipped/pruned/errors）
-    """
-    if source == "all":
-        return reconcile_all(dry_run=dry_run)
-    extractors = _known_extractors()
-    if source not in extractors:
-        raise ValueError(f"未知 source: {source}；已注册: {sorted(extractors)}")
-
-    extractor = extractors[source]
-    facts, extract_errors = extractor()
+def _reconcile_source(
+    source: str,
+    extractor,
+    old_facts: list[dict],
+) -> tuple[ReconcileReport, list[dict]]:
+    """计算单个 source 的结果，但不写入索引。"""
+    try:
+        facts, extract_errors = extractor()
+    except ValueError:
+        # schema/信任边界错误必须传播到 CLI；不能伪装成可恢复的 source 报告。
+        raise
+    except Exception as exc:
+        # 普通 adapter 异常属于 source 级失败：保留报告并阻止索引写入，
+        # 由 reconcile_all 汇总为整体失败，而不是向交互终端泄漏 traceback。
+        facts, extract_errors = [], [
+            AdapterMessage(f"{source}: {safe_error_message(exc)}")
+        ]
 
     report = ReconcileReport(source=source)
-    report.error_details.extend(extract_errors)
-    report.errors = len(extract_errors)
+    report.error_details.extend(
+        safe_adapter_error(error, source=source) for error in extract_errors
+    )
+    report.errors = len(report.error_details)
+    report.pruned = sum(1 for f in old_facts if f.get("source") == source)
 
     # 0-fact 警告：extractor 跑通但抽不到任何事实（数据未生成 / schema 漂移）
     if not facts and not extract_errors:
         report.error_details.append(
             f"[warn] {source} 抽取到 0 facts（数据未生成或 schema 漂移）"
         )
+        # 空结果没有证据证明源已清空；按失败处理，保留旧索引。
+        report.errors = 1
 
     # Dedup：跨 DB 重复（如 crush 全局 + 项目级，或 bind-mount 同源）
     # 按 id 去重，保留先出现的（数据库读取顺序由 extractor 决定）
@@ -197,13 +259,6 @@ def reconcile_source(source: str = "hermes", dry_run: bool = False) -> Reconcile
     if noise:
         report.error_details.append(f"[info] {source} 过滤 {len(noise)} 条元消息噪声")
 
-    # 加载现有 reconcile 索引，剔除该 source 的旧条目（重新填），保留其他 source
-    old_index = _load_reconcile_index()
-    pruned_old = [f for f in old_index.get("facts", []) if f.get("source") != source]
-    report.pruned = sum(
-        1 for f in old_index.get("facts", []) if f.get("source") == source
-    )
-
     now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     new_entries = []
     for f in kept:
@@ -212,18 +267,42 @@ def reconcile_source(source: str = "hermes", dry_run: bool = False) -> Reconcile
     report.indexed = len(new_entries)
     report.indexed_items = [
         {"id": e["id"], "title": e["title"], "category": e["category"]}
-        for e in new_entries[:REPORT_ITEMS]  # 报告里只放前 N 条摘要
+        for e in new_entries[:REPORT_ITEMS]
     ]
+    return report, new_entries
 
-    if not dry_run:
+
+def reconcile_source(source: str = "all", dry_run: bool = False) -> ReconcileReport:
+    """对单个 source 跑一次只读 reconcile。
+
+    Args:
+        source: SOURCES registry 中的 source 名（或 "all" 跑全部）
+        dry_run: True 只返回报告不落盘（首次/审核场景）
+
+    Returns:
+        ReconcileReport（含 indexed/skipped/pruned/errors）
+    """
+    if source == "all":
+        return reconcile_all(dry_run=dry_run)
+    extractors = _known_extractors()
+    if source not in extractors:
+        raise UnknownSourceError(
+            f"未知 source: {source}；已注册: {sorted(extractors)}"
+        )
+
+    # dry-run 仍会读取既有 LKG 以计算替换/清理范围；损坏索引必须显式失败，
+    # 不能因为“不落盘”就静默降级为空库。
+    old_index = _load_reconcile_index()
+    old_facts = old_index.get("facts", [])
+    report, new_entries = _reconcile_source(source, extractors[source], old_facts)
+    if not dry_run and report.errors == 0:
         merged = {
             "version": 1,
             "updated": "",
             "by_source": {},
-            "facts": pruned_old + new_entries,
+            "facts": [f for f in old_facts if f.get("source") != source] + new_entries,
         }
         _save_reconcile_index(merged)
-
     return report
 
 
@@ -231,24 +310,52 @@ def reconcile_all(dry_run: bool = False) -> ReconcileReport:
     """对所有已注册 source 跑 reconcile，返回合并报告。
 
     source 字段为 "all"，indexed/skipped/pruned/errors 是各 source 之和，
-    indexed_items 是各 source 前 5 条的合并摘要。
+    indexed_items 是各 source 前 5 条的合并摘要。非 dry-run 会先删除索引里
+    已不在 registry 的历史 source，避免退役 adapter 的旧事实继续被 search/dream 消费。
+    所有 source 计算成功后才一次性落盘，避免部分失败留下半更新索引。
     """
+    extractors = _known_extractors()
     merged = ReconcileReport(source="all")
-    for src in _known_extractors():
-        sub = reconcile_source(src, dry_run=dry_run)
+
+    # dry-run 仍会读取既有 LKG 以计算替换/清理范围；损坏索引必须显式失败，
+    # 不能因为“不落盘”就静默降级为空库。
+    old_index = _load_reconcile_index()
+    old_facts = old_index.get("facts", [])
+    unregistered_facts = [
+        f for f in old_facts if f.get("source") not in extractors
+    ]
+    merged.pruned = len(unregistered_facts)
+    if unregistered_facts:
+        sources = sorted({str(f.get("source", "")) for f in unregistered_facts})
+        merged.error_details.append(f"[info] 清理未注册 source: {', '.join(sources)}")
+
+    new_facts: list[dict] = []
+    for src, extractor in extractors.items():
+        sub, entries = _reconcile_source(src, extractor, old_facts)
+        new_facts.extend(entries)
         merged.indexed += sub.indexed
         merged.skipped += sub.skipped
         merged.pruned += sub.pruned
         merged.errors += sub.errors
         merged.error_details.extend(sub.error_details)
         merged.indexed_items.extend(sub.indexed_items[:REPORT_ITEMS_ALL])
+
+    if not dry_run and merged.errors == 0:
+        _save_reconcile_index(
+            {
+                "version": 1,
+                "updated": "",
+                "by_source": {},
+                "facts": new_facts,
+            }
+        )
     return merged
 
 
 def load_reconcile_facts() -> list[dict]:
     """供 agenote_search 调用：返回当前 reconcile 索引里的全部事实。
 
-    search 层把这些事实作为额外检索目标（带 source=hermes 标记），
+    search 层把这些事实作为额外检索目标（带 source 标记），
     权重用 fact 自带的 weight（低于 KB 卡片）。
     """
     idx = _load_reconcile_index()
@@ -257,7 +364,7 @@ def load_reconcile_facts() -> list[dict]:
 
 # ── trace 溯源（dream 候选 → 回查原始完整对话）─────────────────
 # fact_id 三段式："{source}:{session_id}:{msg_id}"（opencode/zcode/omp/claude 等）
-# 或两段式："{source}:{native_id}"（hermes/crush 等）。trace 从中拆出 source +
+# 或两段式：f"{source}:{native_id}"（crush 等）。trace 从中拆出 source +
 # session_id，按 source 分发到对应 extractor 的 trace_session（不截断回查原始 DB）。
 # 未实现 trace_session 的 source 优雅降级：返回索引层 content（截断摘要）+ 说明。
 
@@ -269,7 +376,7 @@ def trace_fact(fact_id: str) -> dict:
     解析三段式拆出 source + session_id，按 source 分发：
       - opencode/zcode：trace_session 查 SQLite（完整 message+part，不截断）
       - omp：trace_session 读 .jsonl（完整 parentId 树，不截断）
-      - 其余（hermes/crush/codex/claude）：暂未实现 trace_session，降级返回
+      - 其余（crush/codex/claude）：暂未实现 trace_session，降级返回
         索引层 content（截断摘要）+ 降级说明
 
     返回 dict（含 source/session_id/session 元信息 + messages 列表）。
@@ -277,7 +384,10 @@ def trace_fact(fact_id: str) -> dict:
     """
     parts = fact_id.split(":", 2)
     if len(parts) < 2:
-        return {"error": f"fact_id 格式无法解析: {fact_id}", "fact_id": fact_id}
+        return {
+            "error": AdapterMessage(f"fact_id 格式无法解析: {fact_id}"),
+            "fact_id": fact_id,
+        }
     source = parts[0]
     session_id = parts[1] if len(parts) >= 2 else ""
 
@@ -291,13 +401,16 @@ def trace_fact(fact_id: str) -> dict:
             result = src_entry.trace(session_id)
             result.setdefault("fact_id", fact_id)
             return result
-        except Exception as e:
+        except Exception as exc:
             return {
-                "error": f"trace {source}/{session_id} 失败: {e}",
+                "error": AdapterMessage(
+                    f"trace {source}/{session_id} 失败（{type(exc).__name__}）"
+                ),
                 "fact_id": fact_id,
             }
 
-    # 未实现 trace_session 的 source：降级返回索引层 content
+    # 未实现 trace_session 的 source：降级返回索引层 content；索引损坏时
+    # 与其它公共读路径一致 fail-closed，不返回“未找到”来掩盖结构错误。
     idx = _load_reconcile_index()
     for f in idx.get("facts", []):
         if f.get("id") == fact_id:
@@ -312,4 +425,7 @@ def trace_fact(fact_id: str) -> dict:
                 "content": f.get("content", ""),
                 "title": f.get("title", ""),
             }
-    return {"error": f"fact_id {fact_id} 在 reconcile 索引中未找到", "fact_id": fact_id}
+    return {
+        "error": AdapterMessage(f"fact_id {fact_id} 在 reconcile 索引中未找到"),
+        "fact_id": fact_id,
+    }

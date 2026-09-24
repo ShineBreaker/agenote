@@ -9,6 +9,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
+
 import agenote.core as core
 import agenote.index as index_mod
 import agenote.orgserde as orgserde
@@ -74,6 +76,39 @@ def test_render_facts_org_format():
     assert ":TIMESTAMP:" not in out2
     assert "#+FILTERED_BY_DATE: no" in out2
     assert "#+LIMIT: unlimited" in out2
+
+
+def test_index_loader_rejects_existing_malformed_top_level(tmp_path):
+    from agenote.index import InvalidIndexError
+
+    index_path = tmp_path / "index.json"
+    index_path.write_text('{"cards": []}', encoding="utf-8")
+    ctx = type("Ctx", (), {"index": index_path})()
+
+    with pytest.raises(InvalidIndexError, match="索引结构非法"):
+        index_mod._load_index(ctx)
+
+
+def test_index_loader_rejects_existing_malformed_schema(tmp_path):
+    from agenote.index import InvalidIndexError
+
+    index_path = tmp_path / "index.json"
+    index_path.write_text('{"cards": [42]}', encoding="utf-8")
+    ctx = type("Ctx", (), {"index": index_path})()
+
+    with pytest.raises(InvalidIndexError, match="索引结构非法"):
+        index_mod._load_index(ctx)
+
+
+def test_index_loader_missing_file_is_empty_skeleton(tmp_path):
+    ctx = type("Ctx", (), {"index": tmp_path / "index.json"})()
+
+    assert index_mod._load_index(ctx) == {
+        "version": 1,
+        "updated": "",
+        "total": 0,
+        "cards": [],
+    }
 
 
 def test_index_roundtrip(tmp_path, monkeypatch):

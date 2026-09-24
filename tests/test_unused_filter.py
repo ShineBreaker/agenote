@@ -30,7 +30,7 @@ def test_unused_days_only_lists_done_cards(monkeypatch, capsys):
         _card("20260101-000003", "archived", "[2026-01-01 Mon 00:00]"),  # 出局 → 排除
         _card("20260101-000004", "done", "[2026-09-13 Sun 00:00]"),      # 刚用过 → 排除
     ]}
-    monkeypatch.setattr(cards, "_load_index", lambda ctx=None: index)
+    monkeypatch.setattr(cards, "_load_index", lambda ctx=None, **kwargs: index)
     args = argparse.Namespace(category=None, type=None, owner=None, all=True,
                               recent=0, unused_days=30, json=True)
     cards.cmd_list(args, ctx=None)

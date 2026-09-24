@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from agenote.extract import _resolve_extractors, run_extract
+from agenote.extract.models import ReconciledFact
 
 
 def _seed_db(path: Path) -> None:
@@ -109,6 +110,81 @@ def test_run_extract_dry_run_via_framework(opencode_db):
     with patch.object(mod, "OPENCODE_DB", opencode_db):
         report = run_extract(source="opencode", dry_run=True)
 
-    assert "error" not in report
+    assert report["errors"] == []
+    assert report["failed"] is False
     assert report["total_facts"] == 1
     assert report["source"] == "opencode"
+
+
+def test_run_extract_does_not_publish_partial_batch(tmp_path):
+    """任一 source 失败时，整批 extract 不得留下部分输出。"""
+    out = tmp_path / "out"
+    good = ReconciledFact(
+        id="fake:s:m1",
+        source="fake",
+        native_id="m1",
+        title="健康来源",
+        category="general",
+        content="用户询问配置并得到具体步骤。",
+        trust_score=0.7,
+        weight=1.0,
+    )
+    with patch("agenote.extract.base._resolve_extractors", return_value={
+        "bad": lambda: ([], ["partial"]),
+        "fake": lambda: ([good], []),
+    }):
+        report = run_extract(source="all", output_dir=str(out))
+
+    assert report["failed"] is True
+    assert report["files"] == []
+    assert not any(out.glob("*.org"))
+
+
+def test_run_extract_reports_adapter_errors(opencode_db):
+    import agenote.extract.opencode as mod
+
+    secret = "SECRET_CANARY=/private/token.db"
+    with patch.object(mod, "OPENCODE_DB", opencode_db), \
+         patch.object(mod, "_categorize", lambda *args: (_ for _ in ()).throw(RuntimeError(secret))):
+        report = run_extract(source="opencode", dry_run=True)
+
+    assert report["failed"] is True
+    assert any("opencode" in error and "RuntimeError" in error for error in report["errors"])
+    assert secret not in "\n".join(report["errors"])
+
+
+def test_run_extract_restores_existing_targets_on_publish_failure(tmp_path):
+    """渲染完成后若第二个文件写入失败，第一份旧输出也必须恢复。"""
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "a.org").write_text("old a", encoding="utf-8")
+    (out / "b.org").write_text("old b", encoding="utf-8")
+    facts = [
+        ReconciledFact(
+            id=f"fake:{source}:1",
+            source=source,
+            native_id="1",
+            title=f"{source} 事实",
+            category="general",
+            content="用户询问配置并得到具体步骤。",
+            trust_score=0.7,
+            weight=1.0,
+        )
+        for source in ("a", "b")
+    ]
+    original_write_text = Path.write_text
+
+    def fail_second(path, *args, **kwargs):
+        if path.name == "b.org":
+            raise OSError("second write failed")
+        return original_write_text(path, *args, **kwargs)
+
+    with patch("agenote.extract.base._resolve_extractors", return_value={
+        "a": lambda: ([facts[0]], []),
+        "b": lambda: ([facts[1]], []),
+    }), patch.object(Path, "write_text", fail_second):
+        with pytest.raises(OSError, match="second write failed"):
+            run_extract(source="all", output_dir=str(out))
+
+    assert (out / "a.org").read_text(encoding="utf-8") == "old a"
+    assert (out / "b.org").read_text(encoding="utf-8") == "old b"

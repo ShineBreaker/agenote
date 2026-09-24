@@ -44,7 +44,9 @@ _Avoid_: 卡片（它不是 experiences 卡片）、记录、record
 _Avoid_: 解析器、parser、importer、同步器
 
 **turn（对话回合）**:
-抽取器处理的最小单位——user 或 assistant 的一回合。配对型源的 user→assistant 配对产出一条事实；事实型源（hermes）无 turn，直接产出。
+抽取器处理的最小单位——user 或 assistant 的一回合。每个对话源都通过 user→assistant
+配对产出一条事实；Hermes 的内置 `MEMORY.md` / `USER.md` 由 `scan-memories` 单独只读扫描，
+不进入 reconcile/extract 管道。
 _Avoid_: 消息、message、轮次
 
 ### 知识维护

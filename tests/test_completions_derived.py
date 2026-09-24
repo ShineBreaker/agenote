@@ -10,6 +10,10 @@ types 领域枚举。语义枚举（DOMAIN/SHELLS/THEMES）是 CLI 接口契约�
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+from pathlib import Path
+
 from agenote.completions import (
     generate,
     _entry_values,
@@ -45,7 +49,7 @@ def test_memory_types_follow_core():
 
 
 def test_extract_sources_follow_registry():
-    """extract registry 的 7 个 adapter + all；新增 adapter 自动出现。"""
+    """extract registry 的 6 个 adapter + all；新增 adapter 自动出现。"""
     from agenote.extract.base import SOURCES, _resolve_extractors
 
     _resolve_extractors()  # 触发注册
@@ -81,6 +85,86 @@ def test_zsh_script_carries_derived_values():
     zsh = generate("zsh")
     assert ",".join(_extract_sources().split()) in zsh
     assert ",".join(MEMORY_TYPES) in zsh
+
+
+def test_commands_match_cli_handlers():
+    """补全顶层命令必须与 CLI dispatch 一致，禁止已删除命令残留。"""
+    import ast
+    from pathlib import Path
+
+    from agenote.cli import main
+    from agenote.completions import COMMANDS
+
+    tree = ast.parse(Path(main.__code__.co_filename).read_text(encoding="utf-8"))
+    dispatch = next(
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "commands" for target in node.targets)
+    )
+    assert isinstance(dispatch, ast.Dict)
+    assert set(COMMANDS) == {
+        key.value for key in dispatch.keys if isinstance(key, ast.Constant)
+    }
+
+
+def test_bash_completion_runtime_enum_values(tmp_path):
+    """Bash 候选必须按空格拆分，scan-memories 与全局域也有真实补全。"""
+    bash = shutil.which("bash")
+    assert bash, "测试环境需要 bash"
+    script = tmp_path / "agenote.bash"
+    script.write_text(generate("bash"), encoding="utf-8")
+    probe = r'''
+source "$1"
+_init_completion() {
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  words=("${COMP_WORDS[@]}")
+  cword=$COMP_CWORD
+}
+run() {
+  COMP_WORDS=("$@")
+  COMP_CWORD=$((${#COMP_WORDS[@]} - 1))
+  _agenote_completions
+  printf '%s\n' "${COMPREPLY[@]}"
+}
+run agenote memory --type ""
+run agenote viz --theme ""
+run agenote scan-memories --source ""
+run agenote --domain ""
+run agenote curate ""
+'''
+    result = subprocess.run(
+        [bash, "-c", probe, "_", str(script)],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    lines = result.stdout.splitlines()
+    assert lines[:3] == ["feedback", "project", "reference"]
+    assert lines[3:6] == ["light", "dark", "auto"]
+    assert "hermes" in lines[6:13] and "all" in lines[6:13]
+    assert lines[13:15] == ["human", "agenote"]
+    assert lines[15:] in ([], [""])
+
+
+def test_zsh_completion_uses_separated_values():
+    zsh = generate("zsh")
+    assert ":domain:(human,agenote)" in zsh
+    assert ":domain:(humanagenote)" not in zsh
+    assert "(-h --help)-h[显示帮助]" in zsh
+    assert "(-h --help)--help[显示帮助]" in zsh
+    assert "scan-memories)" in zsh
+
+
+def test_static_completion_scripts_match_generator():
+    root = Path(__file__).resolve().parents[1] / "completions"
+    for shell, filename in (
+        ("bash", "agenote.bash"),
+        ("fish", "agenote.fish"),
+        ("zsh", "_agenote"),
+    ):
+        assert (root / filename).read_text(encoding="utf-8") == generate(shell)
 
 
 def test_seed_agents_untouched():

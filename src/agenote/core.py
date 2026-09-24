@@ -11,9 +11,10 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import NoReturn
 
 from agenote import config
-from agenote.safeio import atomic_write
+from agenote.safeio import atomic_write, restore_text_files
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 配置常量 — 默认值与覆盖入口见 agenote/config.py SCHEMA 与 ~/.config/agenote/config.toml
@@ -312,10 +313,31 @@ def _build_template(entry_type: str, body: str) -> list[str]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def die(msg: str) -> None:
+class PublicError(ValueError):
+    """可安全向 CLI 用户展示的错误。"""
+
+
+class ReconcileIndexError(PublicError):
+    """reconcile 索引损坏或结构非法。"""
+
+
+def safe_error_message(exc: BaseException) -> str:
+    """只向公共边界暴露受控错误或异常类型，不转发内部异常正文。"""
+    if isinstance(exc, PublicError):
+        return str(exc)
+    return f"操作失败（{type(exc).__name__}）"
+
+
+def die(msg: str) -> NoReturn:
     """打印错误信息并退出。"""
     print(f"错误: {msg}", file=sys.stderr)
     sys.exit(1)
+
+
+def validate_category(category: str) -> None:
+    """拒绝会逃逸 experiences/<category>/ 的类别名。"""
+    if "/" in category or "\\" in category or ".." in category:
+        die(f"类别名不能包含路径分隔符或 '..': {category}")
 
 
 def now() -> str:
@@ -445,44 +467,99 @@ def touch_card(
     if not filepath.exists():
         return
     content = filepath.read_text(encoding="utf-8")
-    ts = f"[{now()}]"
-    if f":{field}:" in content:
-        content = re.sub(rf":{field}:\s*\[.+?\]", f":{field}:   {ts}", content)
-    else:
-        # 在 :STATUS: 行后插入
-        if ":STATUS:" in content:
-            content = content.replace(f":STATUS:", f":{field}:   {ts}\n:STATUS:", 1)
-        else:
-            # 在 :END: 前插入
-            content = content.replace(":END:", f":{field}:   {ts}\n:END:", 1)
-    # 递增 USAGE_COUNT（留痕核心：每次 touch 表示该卡片被实际使用）
-    if ":USAGE_COUNT:" in content:
-        m = re.search(r":USAGE_COUNT:\s*(\d+)", content)
-        if m:
-            new_count = int(m.group(1)) + 1
-            content = re.sub(
-                r":USAGE_COUNT:\s*\d+", f":USAGE_COUNT: {new_count}", content
-            )
-    else:
-        # 旧卡片无此字段，初始化为 1（首次留痕）
-        content = content.replace(":END:", ":USAGE_COUNT: 1\n:END:", 1)
-    atomic_write(filepath, content)
+    from agenote.index import _load_index
+    from agenote.orgserde import parse_org_prop, set_org_prop
 
-    # 同步更新索引
-    from agenote.index import _load_index, _save_index, _upsert_card  # lazy：避免 core↔index 顶层循环
-
+    # 先验证将要读改写的持久状态，避免卡片已写而索引失败。
     index = _load_index(ctx)
-    _upsert_card(index, filepath, ctx)
-    _save_index(index, ctx)
+    ts = f"[{now()}]"
+    content = set_org_prop(content, field, ts)
+    # 递增 USAGE_COUNT（留痕核心：每次 touch 表示该卡片被实际使用）
+    try:
+        count = int(parse_org_prop(content, "USAGE_COUNT") or 0) + 1
+    except ValueError:
+        count = 1
+    content = set_org_prop(content, "USAGE_COUNT", str(count))
+    original = filepath.read_bytes()
+    original_index = ctx.index.read_bytes() if ctx.index.exists() else None
+    try:
+        from agenote.index import _save_index, _upsert_card
+
+        atomic_write(filepath, content)
+        _upsert_card(index, filepath, ctx)
+        _save_index(index, ctx)
+    except BaseException as exc:
+        failures = restore_text_files(
+            {filepath: original, ctx.index: original_index}
+        )
+        if failures:
+            raise RuntimeError(
+                f"touch 回滚失败（{', '.join(failures)}）"
+            ) from exc
+        raise
 
 
 def _resolve_card(id_or_path: str, ctx: "KBContext | None" = None) -> Path | None:
-    """通过 ID 或文件名解析卡片路径。"""
+    """通过精确 ID、路径或文件名片段解析卡片路径。"""
+    from agenote.orgserde import parse_org_prop
+
+    if not isinstance(id_or_path, str) or id_or_path.strip() in {"", ".", ".."}:
+        return None
+
     ctx = ctx or default_context()
+
+    def in_experiences(path: Path) -> bool:
+        try:
+            experiences = ctx.experiences.resolve(strict=True)
+            # experiences 根本身不能是符号链接；否则 resolve() 会把跨域目标
+            # 重新定义成“合法根”，绕过 containment。
+            if ctx.experiences.is_symlink():
+                return False
+            return path.resolve().is_relative_to(experiences)
+        except (OSError, RuntimeError):
+            return False
+
     p = Path(id_or_path)
-    if p.is_file():
+    if p.is_symlink():
+        return None
+    try:
+        is_file = p.is_file()
+    except OSError:
+        is_file = False
+    if is_file:
+        if p.suffix != ".org" or not in_experiences(p):
+            return None
+        try:
+            p.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return None
         return p
-    candidates = list(ctx.experiences.rglob(f"*{id_or_path}*"))
-    # 过滤掉符号链接，只返回实际文件
-    candidates = [c for c in candidates if not c.is_symlink()]
-    return candidates[0] if candidates else None
+
+    # 卡片可能已被重命名，不能只靠文件名 glob；遍历本域全部 Org 卡片，
+    # 先读取 PROPERTIES 抽屉里的精确 ID，再保留唯一文件名片段回退。
+    candidates = [
+        c
+        for c in ctx.experiences.rglob("*.org")
+        if not c.is_symlink() and c.is_file() and in_experiences(c)
+    ]
+    exact: list[Path] = []
+    readable: list[Path] = []
+    for candidate in candidates:
+        try:
+            content = candidate.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        readable.append(candidate)
+        if parse_org_prop(content, "ID") == id_or_path:
+            exact.append(candidate)
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        return None
+
+    fallback = [c for c in readable if id_or_path in c.name]
+    if len(fallback) == 1:
+        return fallback[0]
+    if len(fallback) > 1:
+        return None
+    return None

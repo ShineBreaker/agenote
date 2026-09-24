@@ -29,6 +29,7 @@ from agenote.extract import extract_title, resolve_xdg_path
 from agenote.extract.base import (
     TRUNC_TOOL_INPUT,
     TRUNC_TOOL_RESULT,
+    AdapterMessage,
     Turn,
     pair_turns,
     register,
@@ -170,7 +171,7 @@ def extract_claude() -> tuple[list, list[str]]:
     facts = []
     errors: list[str] = []
     if not CLAUDE_TRANSCRIPTS_DIR.exists():
-        return [], [f"transcripts dir 不存在: {CLAUDE_TRANSCRIPTS_DIR}"]
+        return [], [AdapterMessage(f"transcripts dir 不存在: {CLAUDE_TRANSCRIPTS_DIR}")]
     for jsonl_path in sorted(CLAUDE_TRANSCRIPTS_DIR.glob("ses_*.jsonl")):
         try:
             facts.extend(
@@ -181,6 +182,6 @@ def extract_claude() -> tuple[list, list[str]]:
                     categorize=lambda session, user_text, assistant_text: "general",
                 )
             )
-        except OSError as e:
-            errors.append(str(e))
+        except OSError as exc:
+            errors.append(AdapterMessage(f"session 文件读取失败（{type(exc).__name__}）"))
     return facts, errors

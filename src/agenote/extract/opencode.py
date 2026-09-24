@@ -23,7 +23,7 @@ import os
 from pathlib import Path
 
 from agenote.extract import resolve_xdg_path
-from agenote.extract.base import SOURCES, register, run_sqlite_extractor
+from agenote.extract.base import SOURCES, AdapterMessage, register, run_sqlite_extractor
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
 
 # Path resolution: env override → XDG default → ~/local/share/opencode/opencode-stable.db
@@ -72,15 +72,21 @@ def trace_session(session_id: str) -> dict:
 
     try:
         conn = open_sqlite_ro(OPENCODE_DB)
-    except FileNotFoundError as e:
-        return {"error": str(e), "session_id": session_id}
+    except FileNotFoundError as exc:
+        return {
+            "error": AdapterMessage(f"数据库不存在（{type(exc).__name__}）"),
+            "session_id": session_id,
+        }
     try:
         sess = conn.execute(
             "SELECT id, title, directory, time_created FROM session WHERE id = ?",
             (session_id,),
         ).fetchone()
         if sess is None:
-            return {"error": f"session {session_id} 不存在", "session_id": session_id}
+            return {
+                "error": AdapterMessage(f"session {session_id} 不存在"),
+                "session_id": session_id,
+            }
         messages_raw = conn.execute(
             "SELECT id, time_created, data FROM message " "WHERE session_id = ? ORDER BY time_created",
             (session_id,),

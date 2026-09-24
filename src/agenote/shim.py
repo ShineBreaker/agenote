@@ -15,12 +15,30 @@ pi 的 ExtensionAPI 不提供 MCP 调用接口，TS 插件只能 execSync 外部
 """
 
 import argparse
+import sys
 
-from agenote.core import agenote_context, ensure_dirs
+from agenote.core import agenote_context, ensure_dirs, safe_error_message
 from agenote.health import cmd_health
 
 
 def main() -> None:
+    try:
+        _main()
+    except SystemExit as exc:
+        if exc.code is None or isinstance(exc.code, int):
+            raise
+        print("错误: 操作失败（SystemExit）", file=sys.stderr)
+        raise SystemExit(1) from None
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None
+    except GeneratorExit:
+        raise
+    except BaseException as exc:
+        print(f"错误: {safe_error_message(exc)}", file=sys.stderr)
+        raise SystemExit(1) from None
+
+
+def _main() -> None:
     parser = argparse.ArgumentParser(
         prog="agenote_cli",
         description="agenote 轻量 CLI（pi 插件入口，不走 MCP）",

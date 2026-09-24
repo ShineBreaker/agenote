@@ -23,7 +23,9 @@
   8. _normalize_blank_lines — 空行规则（最后跑，基于已规范化的结构）
 """
 
+import os
 import re
+import sys
 import unicodedata
 from pathlib import Path
 
@@ -114,11 +116,26 @@ def cmd_format(args, ctx=None) -> None:
     do_check = getattr(args, "check", False)
     total_changes = 0
     files_changed = 0
+    failed_files = 0
+    reports: list[tuple[str, list[str]]] = []
     for filepath in target_files:
         try:
             changes = format_file(filepath, strict=True, dry_run=do_check)
-        except OSError as e:
-            print(f"错误 {filepath}: {e}", file=__import__("sys").stderr)
+        except OSError as exc:
+            print(
+                f"错误 {filepath}: 读取或写入失败（{type(exc).__name__}）",
+                file=sys.stderr,
+            )
+            failed_files += 1
+            continue
+        except (KeyboardInterrupt, GeneratorExit, SystemExit):
+            raise
+        except BaseException as exc:
+            print(
+                f"错误 {filepath}: 操作失败（{type(exc).__name__}）",
+                file=sys.stderr,
+            )
+            failed_files += 1
             continue
         if changes:
             total_changes += len(changes)
@@ -126,11 +143,15 @@ def cmd_format(args, ctx=None) -> None:
             import os
 
             basename = os.path.basename(filepath)
-            print(f"\n{basename} ({len(changes)} 项):")
-            for ch in changes:
-                print(ch)
+            reports.append((basename, changes))
 
     action = "检查" if do_check else "格式化"
+    if failed_files:
+        raise SystemExit(1)
+    for basename, changes in reports:
+        print(f"\n{basename} ({len(changes)} 项):")
+        for ch in changes:
+            print(ch)
     print(
         f"\n{action}完成: {files_changed}/{len(target_files)} 个文件有变更, "
         f"共 {total_changes} 处"

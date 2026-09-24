@@ -1,19 +1,29 @@
 # SPDX-FileCopyrightText: 2026 BrokenShine <xchai404@gmail.com>
 #
 # SPDX-License-Identifier: MIT
-"""阶段 1c 迁移回归：codex/claude/crush/hermes 四个 adapter + dispatch 统一。"""
+"""阶段 1c 迁移回归：六个对话 adapter + dispatch 统一。"""
 
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 from unittest.mock import patch
+
+import pytest
 
 import agenote.extract.claude as claude_mod
 import agenote.extract.codex as codex_mod
 import agenote.extract.crush as crush_mod
-import agenote.extract.hermes as hermes_mod
-from agenote.extract.base import SOURCES, Turn, _resolve_extractors, pair_turns
+from agenote.extract.base import (
+    SOURCES,
+    AdapterMessage,
+    Turn,
+    _resolve_extractors,
+    pair_turns,
+)
 
 
 # ── pair_turns 空回合语义（1c 收紧：空 text 不参与配对）──────────────────────
@@ -157,40 +167,79 @@ def test_extract_crush_global_tag(tmp_path):
     assert errors == [] and facts[0].tags == ["crush-global"]
 
 
-# ── hermes（事实型源：trust → weight 映射）──────────────────────────────────
-
-
-def test_extract_hermes_fact_mapping(tmp_path):
-    db = tmp_path / "memory_store.db"
-    conn = sqlite3.connect(db)
-    conn.execute("CREATE TABLE facts (fact_id TEXT, content TEXT, category TEXT, tags TEXT, trust_score REAL, retrieval_count INT, helpful_count INT, created_at TEXT, updated_at TEXT)")
-    conn.execute("INSERT INTO facts VALUES (?,?,?,?,?,?,?,?,?)",
-                 ("f1", "【uv 技巧】uv run 可以临时带依赖", "tool", "uv,python", 0.8, 3, 2,
-                  "2026-09-01 10:00:00", "2026-09-01 10:00:00"))
-    conn.commit()
-    conn.close()
-
-    with patch.object(hermes_mod, "HERMES_DB", db):
-        facts, errors = hermes_mod.extract_hermes()
-
-    assert errors == [] and len(facts) == 1
-    f = facts[0]
-    assert f.id == "hermes:f1"
-    assert f.title == "uv 技巧"
-    assert f.category == "tool"
-    assert f.tags == ["uv", "python"]
-    assert f.weight == 1.0  # 0.7 + (0.8-0.5) = 1.0 封顶
-    assert f.timestamp == "2026-09-01 10:00:00"  # 取 updated_at（日期过滤用）
-
-
 # ── dispatch 统一（SOURCES 是唯一真相源；trace 走 Source.trace）─────────────
 
 
-def test_all_seven_sources_registered():
+def test_all_six_sources_registered():
     ex = _resolve_extractors()
-    assert set(ex) == {"opencode", "zcode", "omp", "crush", "codex", "claude", "hermes"}
+    assert set(ex) == {"opencode", "zcode", "omp", "crush", "codex", "claude"}
     for name, fn in ex.items():
         assert SOURCES[name].extract is fn
+
+
+def test_hermes_is_not_an_extract_or_reconcile_source():
+    from agenote.extract import run_extract
+    import agenote.reconcile as reconcile
+
+    assert "hermes" not in _resolve_extractors()
+    with pytest.raises(ValueError, match="未知 source: hermes"):
+        run_extract("hermes", dry_run=True)
+    with pytest.raises(ValueError, match="未知 source: hermes"):
+        reconcile.reconcile_source("hermes", dry_run=True)
+
+
+@pytest.mark.parametrize("command", ["extract", "reconcile"])
+def test_retired_source_cli_fails_without_traceback(tmp_path, command):
+    env = os.environ.copy()
+    env["KB_ROOT"] = str(tmp_path)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "agenote.cli", command, "--source", "hermes", "--dry-run"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "未知 source: hermes" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("command", ["extract", "reconcile"])
+def test_adapter_value_error_exits_nonzero(tmp_path, command):
+    env = os.environ.copy()
+    env["KB_ROOT"] = str(tmp_path)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    script = f"""
+import sys
+from agenote.extract.base import SOURCES, AdapterMessage, Source, _resolve_extractors
+
+def broken_extractor():
+    raise ValueError("adapter schema invalid")
+
+# 先完成一次真实注册导入，再替换 registry；避免后续 lazy import 覆盖故障 adapter。
+_resolve_extractors()
+SOURCES["zcode"] = Source(name="zcode", extract=broken_extractor)
+sys.argv = ["agenote", "{command}", "--source", "zcode", "--dry-run"]
+from agenote.cli import main
+main()
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "ValueError" in result.stderr
+    assert "adapter schema invalid" not in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
 
 
 def test_trace_dispatched_via_source_trace():
@@ -209,14 +258,504 @@ def test_trace_dispatched_via_source_trace():
     assert result["fact_id"] == "opencode:some-session:m9"
 
 
+@pytest.mark.parametrize("fact_id", ["bad", "opencode:no-such:m"])
+def test_trace_errors_exit_nonzero_without_stdout(tmp_path, fact_id):
+    """trace 失败必须走 stderr + rc1，不能伪装成功输出。"""
+    env = os.environ.copy()
+    env.update(KB_ROOT=str(tmp_path), PYTHONDONTWRITEBYTECODE="1")
+    result = subprocess.run(
+        [sys.executable, "-m", "agenote.cli", "trace", "--id", fact_id],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "[trace 错误]" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def _stored_fact(fact_id: str, source: str, *, title: str = "old") -> dict:
+    """构造符合当前 reconcile 索引 schema 的历史事实。"""
+    return {
+        "id": fact_id,
+        "source": source,
+        "native_id": fact_id.rsplit(":", 1)[-1],
+        "title": title,
+        "category": "general",
+        "content": "old content",
+        "trust_score": 0.5,
+        "weight": 0.5,
+        "tags": [],
+        "retrieved_at": "",
+        "timestamp": "",
+    }
+
+
+def test_reconcile_all_prunes_unregistered_sources(tmp_path):
+    import agenote.reconcile as r
+    from agenote.extract.models import ReconciledFact
+
+    reconcile_dir = tmp_path / ".reconcile"
+    reconcile_dir.mkdir()
+    reconcile_index = reconcile_dir / "index.json"
+    reconcile_index.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated": "",
+                "by_source": {"hermes": 1, "retired": 1},
+                "facts": [
+                    _stored_fact("hermes:old", "hermes"),
+                    _stored_fact("retired:old", "retired"),
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    fresh = ReconciledFact(
+        id="fake:session:message",
+        source="fake",
+        native_id="message",
+        title="保留的迁移后记忆",
+        category="general",
+        content="这是一条应当保留的普通迁移后记忆。",
+        trust_score=0.7,
+        weight=0.7,
+    )
+
+    with patch.object(r, "RECONCILE_DIR", reconcile_dir), \
+         patch.object(r, "RECONCILE_INDEX", reconcile_index), \
+         patch.object(r, "_known_extractors", lambda: {"fake": lambda: ([fresh], [])}), \
+         patch.object(r, "_kb_titles", lambda: set()), \
+         patch("agenote.core.KB_ROOT", tmp_path):
+        dry_report = r.reconcile_all(dry_run=True)
+        dry_saved = json.loads(reconcile_index.read_text(encoding="utf-8"))
+        report = r.reconcile_all()
+
+    assert dry_report.pruned == 2
+    assert dry_saved["by_source"] == {"hermes": 1, "retired": 1}
+    assert [fact["id"] for fact in dry_saved["facts"]] == ["hermes:old", "retired:old"]
+    saved = json.loads(reconcile_index.read_text(encoding="utf-8"))
+    assert report.pruned == 2
+    assert [fact["id"] for fact in saved["facts"]] == [fresh.id]
+    assert saved["by_source"] == {"fake": 1}
+
+
+def test_reconcile_corrupt_index_is_reported_without_overwrite(tmp_path):
+    """已有 LKG 损坏时必须报错保留原文，不能静默重建覆盖。"""
+    import agenote.reconcile as r
+    from agenote.extract.models import ReconciledFact
+
+    reconcile_dir = tmp_path / ".reconcile"
+    reconcile_dir.mkdir()
+    reconcile_index = reconcile_dir / "index.json"
+    reconcile_index.write_text("{broken", encoding="utf-8")
+    before = reconcile_index.read_bytes()
+    fresh = ReconciledFact(
+        id="fake:new",
+        source="fake",
+        native_id="new",
+        title="新事实",
+        category="general",
+        content="用户询问配置并得到具体步骤。",
+        trust_score=0.7,
+        weight=0.7,
+    )
+
+    with patch.object(r, "RECONCILE_DIR", reconcile_dir), \
+         patch.object(r, "RECONCILE_INDEX", reconcile_index), \
+         patch.object(r, "_known_extractors", lambda: {"fake": lambda: ([fresh], [])}), \
+         patch.object(r, "_kb_titles", lambda: set()), \
+         patch("agenote.core.KB_ROOT", tmp_path):
+        with pytest.raises(ValueError, match="索引损坏"):
+            r.reconcile_source("fake")
+
+    assert reconcile_index.read_bytes() == before
+
+
+def test_reconcile_malformed_fact_public_cli_fails_closed(tmp_path):
+    """search/dream 必须报告损坏的 reconcile 索引，不能静默当空库。"""
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    index = tmp_path / "agenote" / ".reconcile" / "index.json"
+    index.parent.mkdir(parents=True)
+    index.write_text('{"facts":[{"tags":[1]}]}', encoding="utf-8")
+    before = index.read_bytes()
+    env = os.environ.copy()
+    env.update(KB_ROOT=str(tmp_path), PYTHONDONTWRITEBYTECODE="1")
+
+    for command in (["search", "needle"], ["dream", "--limit", "1"]):
+        result = subprocess.run(
+            [sys.executable, "-m", "agenote.cli", *command],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 1, (command, result)
+        assert "事实结构非法" in result.stderr
+        assert "Traceback" not in result.stderr
+        assert result.stdout == ""
+        assert index.read_bytes() == before
+
+
+def test_reconcile_malformed_fact_reads_fail_closed(tmp_path, monkeypatch):
+    """公共读路径不能把损坏索引悄悄降成空数据。"""
+    import agenote.reconcile as r
+
+    reconcile_index = tmp_path / "index.json"
+    reconcile_index.write_text(
+        '{"facts":[{"id":"x","source":"fake","native_id":"x",'
+        '"title":"x","category":"general","content":"x",'
+        '"trust_score":0.5,"weight":0.5,"tags":[1],'
+        '"retrieved_at":"","timestamp":""}]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(r, "RECONCILE_INDEX", reconcile_index)
+
+    with pytest.raises(ValueError, match="事实结构非法"):
+        r.load_reconcile_facts()
+
+
+def _full_fact(**overrides) -> dict:
+    fact = {
+        "id": "fake:x", "source": "fake", "native_id": "x", "title": "t",
+        "category": "general", "content": "c", "trust_score": 0.5, "weight": 0.5,
+        "tags": [], "retrieved_at": "", "timestamp": "",
+    }
+    fact.update(overrides)
+    return fact
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"version": "BAD", "updated": 123, "by_source": "BAD", "facts": []},
+         "索引结构非法"),
+        ({"facts": [_full_fact(trust_score=float("nan"))]}, "事实结构非法"),
+        ({"facts": [_full_fact(id="other:x")]}, "事实结构非法"),
+    ],
+)
+def test_reconcile_rejects_bad_top_level_and_cross_field_facts(
+    tmp_path, monkeypatch, payload, message
+):
+    """顶层字段类型、非有限数值、id/source 不一致都必须 fail-closed。"""
+    import agenote.reconcile as r
+
+    index = tmp_path / "index.json"
+    index.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(r, "RECONCILE_INDEX", index)
+
+    with pytest.raises(ValueError, match=message):
+        r._load_reconcile_index()
+
+
+def test_reconcile_write_rejects_invalid_fact(tmp_path, monkeypatch):
+    """非法事实不得落盘污染 LKG。"""
+    import agenote.reconcile as r
+
+    reconcile_dir = tmp_path / ".reconcile"
+    reconcile_dir.mkdir()
+    index = reconcile_dir / "index.json"
+    monkeypatch.setattr(r, "RECONCILE_DIR", reconcile_dir)
+    monkeypatch.setattr(r, "RECONCILE_INDEX", index)
+
+    with pytest.raises(ValueError, match="事实结构非法"):
+        r._save_reconcile_index({"facts": [_full_fact(tags=[1])]})
+    assert not index.exists()
+
+
+def test_trace_plain_string_adapter_error_is_sanitized(monkeypatch, capsys):
+    """adapter 返回普通字符串错误时，公共 trace 只能显示稳定摘要。"""
+    import argparse
+
+    import agenote.cli as cli
+
+    monkeypatch.setattr(
+        cli, "trace_fact", lambda fid: {"error": "SECRET_PLAIN", "fact_id": fid}
+    )
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_trace(argparse.Namespace(id="fake:x", json=False))
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "SECRET_PLAIN" not in captured.err
+    assert captured.out == ""
+
+
+@pytest.mark.parametrize("facts", [[42], [None], [{}], [{"id": "x"}], [{"id": "x", "source": "fake", "weight": True}]])
+def test_reconcile_rejects_malformed_fact_elements(tmp_path, facts):
+    """strict loader 必须在 f.get() 前拒绝非法事实元素并保留 LKG。"""
+    import agenote.reconcile as r
+
+    reconcile_dir = tmp_path / ".reconcile"
+    reconcile_dir.mkdir()
+    reconcile_index = reconcile_dir / "index.json"
+    reconcile_index.write_text(json.dumps({"facts": facts}), encoding="utf-8")
+    before = reconcile_index.read_bytes()
+
+    with patch.object(r, "RECONCILE_DIR", reconcile_dir), \
+         patch.object(r, "RECONCILE_INDEX", reconcile_index), \
+         patch.object(r, "_known_extractors", lambda: {"fake": lambda: ([], ["unused"])}), \
+         patch.object(r, "_kb_titles", lambda: set()), \
+         patch("agenote.core.KB_ROOT", tmp_path):
+        with pytest.raises(ValueError, match="事实结构非法"):
+            r.reconcile_source("fake")
+
+    assert reconcile_index.read_bytes() == before
+
+
+def test_trace_fallback_fails_closed_on_malformed_reconcile_index(tmp_path):
+    """trace 的索引降级路径也不能把损坏索引伪装成“未找到”。"""
+    import agenote.reconcile as reconcile
+
+    index = tmp_path / "index.json"
+    index.write_text('{"facts": [42]}', encoding="utf-8")
+    with pytest.raises(ValueError, match="事实结构非法"):
+        with patch.object(reconcile, "RECONCILE_INDEX", index):
+            reconcile.trace_fact("codex:missing")
+
+
+def test_reconcile_dry_run_fails_closed_on_malformed_index(tmp_path):
+    """dry-run 也必须报告损坏的既有索引，不能把它当成空库。"""
+    import agenote.reconcile as r
+
+    reconcile_dir = tmp_path / ".reconcile"
+    reconcile_dir.mkdir()
+    reconcile_index = reconcile_dir / "index.json"
+    reconcile_index.write_text('{"facts": [42]}', encoding="utf-8")
+    before = reconcile_index.read_bytes()
+
+    with patch.object(r, "RECONCILE_DIR", reconcile_dir), \
+         patch.object(r, "RECONCILE_INDEX", reconcile_index), \
+         patch.object(r, "_known_extractors", lambda: {"fake": lambda: ([], [])}), \
+         patch.object(r, "_kb_titles", lambda: set()), \
+         patch("agenote.core.KB_ROOT", tmp_path):
+        with pytest.raises(ValueError, match="事实结构非法"):
+            r.reconcile_source("fake", dry_run=True)
+
+    assert reconcile_index.read_bytes() == before
+
+
+def test_reconcile_all_replaces_registered_source_facts(tmp_path):
+    import agenote.reconcile as r
+    from agenote.extract.models import ReconciledFact
+
+    reconcile_dir = tmp_path / ".reconcile"
+    reconcile_dir.mkdir()
+    reconcile_index = reconcile_dir / "index.json"
+    reconcile_index.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated": "",
+                "by_source": {"fake": 1},
+                "facts": [_stored_fact("fake:old", "fake")],
+            }
+        ),
+        encoding="utf-8",
+    )
+    fresh = ReconciledFact(
+        id="fake:new",
+        source="fake",
+        native_id="new",
+        title="新事实",
+        category="general",
+        content="用户询问如何配置 Guix，助手给出具体步骤和验证命令。",
+        trust_score=0.7,
+        weight=0.7,
+    )
+
+    with patch.object(r, "RECONCILE_DIR", reconcile_dir), \
+         patch.object(r, "RECONCILE_INDEX", reconcile_index), \
+         patch.object(r, "_known_extractors", lambda: {"fake": lambda: ([fresh], [])}), \
+         patch.object(r, "_kb_titles", lambda: set()), \
+         patch("agenote.core.KB_ROOT", tmp_path):
+        report = r.reconcile_all()
+
+    saved = json.loads(reconcile_index.read_text(encoding="utf-8"))
+    assert report.indexed == 1
+    assert [fact["id"] for fact in saved["facts"]] == [fresh.id]
+    assert saved["by_source"] == {"fake": 1}
+
+
+def test_reconcile_all_does_not_write_when_extractor_fails(tmp_path):
+    import agenote.reconcile as r
+
+    reconcile_dir = tmp_path / ".reconcile"
+    reconcile_dir.mkdir()
+    reconcile_index = reconcile_dir / "index.json"
+    initial = {
+        "version": 1,
+        "updated": "old",
+        "by_source": {"hermes": 1, "fake": 1},
+        "facts": [
+            _stored_fact("hermes:old", "hermes", title="retired"),
+            _stored_fact("fake:old", "fake"),
+        ],
+    }
+    reconcile_index.write_text(json.dumps(initial), encoding="utf-8")
+    before = reconcile_index.read_bytes()
+
+    def broken_extractor():
+        raise ValueError("adapter schema invalid")
+
+    with patch.object(r, "RECONCILE_DIR", reconcile_dir), \
+         patch.object(r, "RECONCILE_INDEX", reconcile_index), \
+         patch.object(r, "_known_extractors", lambda: {"fake": broken_extractor}), \
+         patch.object(r, "_kb_titles", lambda: set()), \
+         patch("agenote.core.KB_ROOT", tmp_path):
+        with pytest.raises(ValueError, match="adapter schema invalid"):
+            r.reconcile_all()
+
+    assert reconcile_index.read_bytes() == before
+
+
+def test_reconcile_all_does_not_write_when_extractor_reports_errors(tmp_path):
+    import agenote.reconcile as r
+    from agenote.extract.models import ReconciledFact
+
+    reconcile_dir = tmp_path / ".reconcile"
+    reconcile_dir.mkdir()
+    reconcile_index = reconcile_dir / "index.json"
+    initial = {
+        "version": 1,
+        "updated": "old",
+        "by_source": {"a": 1, "b": 1},
+        "facts": [
+            _stored_fact("a:old", "a", title="a-old"),
+            _stored_fact("b:old", "b", title="b-old"),
+        ],
+    }
+    reconcile_index.write_text(json.dumps(initial), encoding="utf-8")
+    before = reconcile_index.read_bytes()
+    fresh = ReconciledFact(
+        id="a:new",
+        source="a",
+        native_id="new",
+        title="a-new",
+        category="general",
+        content="用户询问配置并得到具体步骤。",
+        trust_score=0.7,
+        weight=0.7,
+    )
+
+    with patch.object(r, "RECONCILE_DIR", reconcile_dir), \
+         patch.object(r, "RECONCILE_INDEX", reconcile_index), \
+         patch.object(r, "_known_extractors", lambda: {
+             "a": lambda: ([fresh], []),
+             "b": lambda: ([], ["partial failure"]),
+         }), \
+         patch.object(r, "_kb_titles", lambda: set()), \
+         patch("agenote.core.KB_ROOT", tmp_path):
+        report = r.reconcile_all()
+
+    assert report.errors == 1
+    assert reconcile_index.read_bytes() == before
+
+
+def test_reconcile_source_does_not_write_when_extractor_reports_errors(tmp_path):
+    import agenote.reconcile as r
+
+    reconcile_dir = tmp_path / ".reconcile"
+    reconcile_dir.mkdir()
+    reconcile_index = reconcile_dir / "index.json"
+    initial = {
+        "version": 1,
+        "updated": "old",
+        "by_source": {"b": 1},
+        "facts": [_stored_fact("b:old", "b", title="b-old")],
+    }
+    reconcile_index.write_text(json.dumps(initial), encoding="utf-8")
+    before = reconcile_index.read_bytes()
+
+    with patch.object(r, "RECONCILE_DIR", reconcile_dir), \
+         patch.object(r, "RECONCILE_INDEX", reconcile_index), \
+         patch.object(r, "_known_extractors", lambda: {
+             "b": lambda: ([], ["partial failure"]),
+         }), \
+         patch.object(r, "_kb_titles", lambda: set()), \
+         patch("agenote.core.KB_ROOT", tmp_path):
+        report = r.reconcile_source("b")
+
+    assert report.errors == 1
+    assert reconcile_index.read_bytes() == before
+
+
+def test_reconcile_empty_extractor_result_preserves_index(tmp_path):
+    import agenote.reconcile as r
+
+    reconcile_dir = tmp_path / ".reconcile"
+    reconcile_dir.mkdir()
+    reconcile_index = reconcile_dir / "index.json"
+    initial = {
+        "version": 1,
+        "updated": "old",
+        "by_source": {"fake": 1},
+        "facts": [_stored_fact("fake:old", "fake")],
+    }
+    reconcile_index.write_text(json.dumps(initial), encoding="utf-8")
+    before = reconcile_index.read_bytes()
+
+    with patch.object(r, "RECONCILE_DIR", reconcile_dir), \
+         patch.object(r, "RECONCILE_INDEX", reconcile_index), \
+         patch.object(r, "_known_extractors", lambda: {"fake": lambda: ([], [])}), \
+         patch.object(r, "_kb_titles", lambda: set()), \
+         patch("agenote.core.KB_ROOT", tmp_path):
+        report = r.reconcile_source("fake")
+
+    assert report.errors == 1
+    assert "0 facts" in report.error_details[0]
+    assert reconcile_index.read_bytes() == before
+
+
 def test_reconcile_source_uses_registry():
     import agenote.reconcile as r
     from agenote.extract.base import Source
 
-    SOURCES["fake"] = Source(name="fake", extract=lambda: ([], ["fake done"]))
+    SOURCES["fake"] = Source(
+        name="fake", extract=lambda: ([], [AdapterMessage("fake done")])
+    )
     try:
         rep = r.reconcile_source("fake", dry_run=True)
     finally:
         del SOURCES["fake"]
     assert rep.errors == 1
     assert "fake done" in rep.error_details[0]
+
+
+def test_reconcile_runtime_error_is_reported_without_traceback(tmp_path):
+    """非 ValueError 异常也必须走报告通道，不能泄漏 traceback。"""
+    import agenote.reconcile as r
+
+    reconcile_dir = tmp_path / ".reconcile"
+    reconcile_dir.mkdir()
+    reconcile_index = reconcile_dir / "index.json"
+    initial = {
+        "version": 1,
+        "updated": "old",
+        "by_source": {"fake": 1},
+        "facts": [_stored_fact("fake:old", "fake")],
+    }
+    reconcile_index.write_text(json.dumps(initial), encoding="utf-8")
+    before = reconcile_index.read_bytes()
+
+    def broken_extractor():
+        raise RuntimeError("RUNTIME_REAL")
+
+    with patch.object(r, "RECONCILE_DIR", reconcile_dir), \
+         patch.object(r, "RECONCILE_INDEX", reconcile_index), \
+         patch.object(r, "_known_extractors", lambda: {"fake": broken_extractor}), \
+         patch.object(r, "_kb_titles", lambda: set()), \
+         patch("agenote.core.KB_ROOT", tmp_path):
+        report = r.reconcile_source("fake")
+
+    assert report.errors == 1
+    assert "RuntimeError" in report.error_details[0]
+    assert "RUNTIME_REAL" not in report.error_details[0]
+    assert reconcile_index.read_bytes() == before

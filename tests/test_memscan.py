@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import agenote.memscan as memscan
 from agenote.memscan import _parse_frontmatter, scan_memories
@@ -61,6 +62,24 @@ def test_scan_dir_source_parses_and_skips_index(tmp_path, monkeypatch):
     assert first["type"] == "feedback"
     assert "硬拒绝" in first["body"]
     assert report["by_source"]["zcode"] == 2
+
+
+def test_scan_dir_source_read_error_is_sanitized(tmp_path, monkeypatch):
+    root = tmp_path / "memories"
+    card = _write(root / "projects/proj-a/memory/broken.md", ZCODE_FM)
+    monkeypatch.setenv("ZCODE_MEMORIES_DIR", str(root))
+    real_read_text = Path.read_text
+
+    def fail_card_read(path, *args, **kwargs):
+        if path == card:
+            raise OSError("RUNTIME_REAL_7f1b")
+        return real_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fail_card_read)
+    report = scan_memories("zcode")
+    assert report["total"] == 0
+    assert report["notes"] == ["记忆文件读取失败（OSError）"]
+    assert "RUNTIME_REAL_7f1b" not in report["notes"][0]
 
 
 def test_scan_missing_dir_returns_note(tmp_path, monkeypatch):

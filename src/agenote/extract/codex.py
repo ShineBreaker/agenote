@@ -26,14 +26,14 @@ from pathlib import Path
 
 from agenote import config
 from agenote.extract import resolve_xdg_path
-from agenote.extract.base import Turn, pair_turns, register
+from agenote.extract.base import AdapterMessage, Turn, pair_turns, register
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
 
 CODEX_HOME = resolve_xdg_path("CODEX_HOME", "$XDG_CONFIG_HOME/codex")
 HISTORY_JSONL = CODEX_HOME / "history.jsonl"
 SESSIONS_ROOT = CODEX_HOME / "sessions"
 
-# codex 外部源：trust 0.5 → weight 0.6（略低于 hermes/omp；external_delta 默认 -0.1）
+# codex 外部源：trust 0.5 → weight 0.6（低于其他对话源；external_delta 默认 -0.1）
 EXTERNAL_RECONCILE_WEIGHT = round(
     RECONCILE_DEFAULT_WEIGHT + float(config.get("weights", "external_delta")), 2
 )
@@ -155,7 +155,7 @@ def extract_codex() -> tuple[list, list[str]]:
     facts = []
     errors: list[str] = []
     if not CODEX_HOME.exists():
-        return [], [f"CODEX_HOME 不存在: {CODEX_HOME}"]
+        return [], [AdapterMessage(f"CODEX_HOME 不存在: {CODEX_HOME}")]
     history_idx = _load_history_index()
     if SESSIONS_ROOT.exists():
         for jsonl_path in sorted(SESSIONS_ROOT.rglob("rollout-*.jsonl")):
@@ -168,6 +168,6 @@ def extract_codex() -> tuple[list, list[str]]:
                         categorize=lambda session, user_text, assistant_text: "general",
                     )
                 )
-            except OSError as e:
-                errors.append(str(e))
+            except OSError as exc:
+                errors.append(AdapterMessage(f"session 文件读取失败（{type(exc).__name__}）"))
     return facts, errors

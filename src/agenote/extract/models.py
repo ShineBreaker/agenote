@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 from agenote import config
 
-# 自家 agent（opencode/zcode/omp/hermes）的统一检索权重基准；
+# 六个对话源（opencode/zcode/omp/crush/codex/claude）的统一检索权重基准；
 # 外部源（codex/claude/crush …）在此基础上加 external_delta（默认 -0.1）。
 RECONCILE_DEFAULT_WEIGHT = float(config.get("weights", "reconcile_default"))
 
@@ -28,10 +28,10 @@ class ReconciledFact:
     .reconcile/index.json 里，是纯检索辅助。
     """
 
-    id: str  # 跨源唯一：f"{source}:{native_id}"
-    source: str  # 来源 agent 名（hermes / crush / claude-code …）
-    native_id: str  # 源系统的原始 id（hermes 的 fact_id）
-    title: str  # 提取的标题（hermes 的【...】）
+    id: str  # 跨源唯一：f"{source}:{session_id}:{native_id}" 或 f"{source}:{native_id}"
+    source: str  # 来源 agent 名（opencode / crush / claude 等）
+    native_id: str  # 源系统的原始 message 或 session id
+    title: str  # 抽取的标题
     category: str  # 映射后的 kb category
     content: str  # 完整正文
     trust_score: float  # 原始信任度（影响 weight）

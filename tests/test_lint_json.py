@@ -8,6 +8,8 @@ from __future__ import annotations
 import argparse
 import json
 
+import pytest
+
 import agenote.lint as lint_mod
 
 _BAD_CARD = """* DONE 测试卡片
@@ -66,3 +68,15 @@ def test_lint_human_readable_unchanged(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "检查完成" in out
     assert "bad.org" in out
+
+
+def test_format_missing_file_fails_without_success_output(tmp_path, capsys):
+    """format 单文件失败必须非零退出，且不打印成功汇总或变更报告。"""
+    from agenote.orgfmt import cmd_format
+
+    with pytest.raises(SystemExit) as exc:
+        cmd_format(argparse.Namespace(files=[str(tmp_path / "missing.org")], check=False))
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "missing.org" in captured.err

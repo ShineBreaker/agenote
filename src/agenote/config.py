@@ -75,7 +75,6 @@ SCHEMA: dict[str, dict[str, Key]] = {
         "reconcile_default": Key(0.7, comment="reconcile 自家 agent 源基准权重"),
         "external_delta": Key(-0.1, comment="外部 reconcile 源相对基准的偏移"),
         "default_trust": Key(0.5, comment="对话型源默认 trust 分"),
-        "hermes_weight_cap": Key(1.0, comment="hermes trust→weight 公式封顶"),
         "score_term_hit": Key(100, comment="命中块排序：块内每命中词得分（展示层，非全局排序）"),
         "dedup_category_bonus": Key(0.15, comment="去重相似度：category 相同加成"),
         "dedup_tech_bonus": Key(0.1, comment="去重相似度：tech 相同加成"),
@@ -151,9 +150,6 @@ SCHEMA: dict[str, dict[str, Key]] = {
         "crush_search_roots": Key(
             ["~/Documents", "~/Documents/Repo", "~/Documents/Org", "~/.emacs.d", "/data/Documents"],
             comment="项目级 crush.db 扫描根列表",
-        ),
-        "hermes_db": Key(
-            "~/.local/share/hermes/memory_store.db", env="HERMES_DB", comment="hermes 事实库"
         ),
     },
     "memories.sources": {
@@ -247,9 +243,18 @@ def _load_file() -> dict:
                 data = tomllib.load(f)
         except FileNotFoundError:
             data = {}
-        except tomllib.TOMLDecodeError as e:
-            print(f"错误: 配置文件解析失败 {CONFIG_PATH}: {e}", file=sys.stderr)
-            sys.exit(1)
+        except tomllib.TOMLDecodeError:
+            print(
+                f"错误: 配置文件解析失败 {CONFIG_PATH}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from None
+        except (OSError, UnicodeError):
+            print(
+                f"错误: 配置文件读取失败 {CONFIG_PATH}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from None
         _warn_unknown_keys(data)
         _file_config = data
         _validate_types()
@@ -280,10 +285,10 @@ def _validate_types() -> None:
             if not ok:
                 print(
                     f"错误: 配置键 [{section}].{key} 类型应为 "
-                    f"{type(expected).__name__}，得到 {type(val).__name__}（{val!r}）",
+                    f"{type(expected).__name__}，得到 {type(val).__name__}",
                     file=sys.stderr,
                 )
-                sys.exit(1)
+                raise SystemExit(1) from None
 
 
 def _file_value(section: str, key: str) -> object:

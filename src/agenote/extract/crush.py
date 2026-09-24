@@ -22,7 +22,7 @@ from typing import Any
 
 from agenote import config
 from agenote.extract import open_sqlite_ro, resolve_xdg_path
-from agenote.extract.base import Turn, pair_turns, register
+from agenote.extract.base import AdapterMessage, Turn, pair_turns, register
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
 
 CRUSH_GLOBAL_DB = resolve_xdg_path(
@@ -125,8 +125,8 @@ def extract_crush() -> tuple[list, list[str]]:
     for db_path in find_crush_dbs():
         try:
             conn = open_sqlite_ro(db_path)
-        except FileNotFoundError as e:
-            errors.append(str(e))
+        except FileNotFoundError as exc:
+            errors.append(AdapterMessage(f"数据库不存在（{type(exc).__name__}）"))
             continue
         try:
             if ".config/crush" in str(db_path):
@@ -146,8 +146,16 @@ def extract_crush() -> tuple[list, list[str]]:
                             categorize=_categorize,
                         )
                     )
-                except Exception as e:  # 单个 session 失败不中断整库
-                    errors.append(f"session={sess['id']}: {e}")
+                except ValueError:
+                    # ValueError 表示 adapter/schema 信任边界失效，不能伪装成可恢复的
+                    # 单 session 错误；让它到统一编排层失败并保护 last-known-good 索引。
+                    raise
+                except Exception as exc:  # 单个 session 失败不中断整库
+                    errors.append(
+                        AdapterMessage(
+                            f"session={sess['id']}: 操作失败（{type(exc).__name__}）"
+                        )
+                    )
         finally:
             conn.close()
     return facts, errors

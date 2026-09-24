@@ -9,6 +9,8 @@
   - 打开 DB / 遍历 session / 收集 errors 的通用壳（run_sqlite_extractor）
   - source 注册中心（SOURCES / register）与跨 agent 编排（run_extract）
 
+Hermes 的内置 `MEMORY.md` / `USER.md` 不进入本模块；它由 `scan-memories` 单独只读扫描。
+
 每个 source 的 adapter 只需提供差异部分：
   - db 路径、source 名、weight
   - categorize(session) 启发式（zcode 比 opencode 多一个 "config" 类别）
@@ -28,8 +30,9 @@ from pathlib import Path
 from typing import Any
 
 from agenote import config
-from agenote.core import CONVERSATIONS_ROOT
+from agenote.core import CONVERSATIONS_ROOT, PublicError, safe_error_message
 from agenote.extract.models import ReconciledFact
+from agenote.safeio import restore_text_files
 
 # 索引层截断链与默认 trust（config [extract] / [weights] 覆盖）。
 # trunc_user/trunc_assistant 是 dream trace「回查不截断」设计的前提，勿轻易改小。
@@ -42,6 +45,33 @@ DEFAULT_TRUST = float(config.get("weights", "default_trust"))
 FALLBACK_TITLE_MAX = 80  # session 标题兜底截断（展示层，不进配置）
 EXTRACT_LIMIT = int(config.get("extract", "limit"))  # 每源抽取上限（0 = 不限）
 DATE_OFFSET_DAYS = int(config.get("extract", "date_offset_days"))  # 默认抽取偏移（1 = 昨天）
+
+
+class UnknownSourceError(PublicError):
+    """用户请求了 adapter registry 中不存在的 source。"""
+
+
+class AdapterMessage(str):
+    """adapter 明确标记为可公开展示的消息。"""
+
+
+_SAFE_ADAPTER_ERRORS = frozenset()
+
+
+def safe_adapter_error(error: object, *, source: str | None = None) -> str:
+    """把 adapter 返回的异常或错误字符串收敛为可公开的诊断摘要。"""
+    if isinstance(error, BaseException):
+        text = safe_error_message(error)
+    elif isinstance(error, PublicError):
+        text = str(error)
+    elif isinstance(error, AdapterMessage):
+        text = str(error)
+    else:
+        text = "adapter 内部错误（Exception）"
+    if source and not text.startswith(f"{source}:"):
+        return f"{source}: {text}"
+    return text
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 数据模型
@@ -73,12 +103,11 @@ def pair_turns(
 ) -> Iterator[ReconciledFact]:
     """配对状态机：user 回合累积，assistant 回合到达时配对产出一条 ReconciledFact。
 
-    空 text 的回合不参与配对（对齐 7 个源的原版语义）。
+    空 text 的回合不参与配对；Hermes 的内置文件由 `scan-memories` 单独处理。
     categorize(session, user_text, assistant_text)：按需用 session 元数据
     （opencode/zcode 的 title 启发式）或对话内容（crush 的关键词启发式）分类。
 
-    配对逻辑 7 个源里有 6 个完全相同，故由 framework 拥有，消除 ~60 处 current_user 重复。
-    事实型源（hermes）不走此函数，直接产出。
+    配对逻辑 6 个源完全相同，故由 framework 拥有，消除 ~60 处 current_user 重复。
     """
     # lazy：import agenote.extract 会回到本模块（循环），故运行时再取 extract_title
     from agenote.extract import extract_title
@@ -188,8 +217,8 @@ def run_sqlite_extractor(
     errors: list[str] = []
     try:
         conn = open_sqlite_ro(db_path)
-    except FileNotFoundError as e:
-        return [], [str(e)]
+    except FileNotFoundError:
+        return [], [AdapterMessage("数据库不存在")]
     try:
         sessions = conn.execute(
             "SELECT id, title, directory, time_created, time_updated "
@@ -205,8 +234,12 @@ def run_sqlite_extractor(
                         categorize=categorize,
                     )
                 )
-            except Exception as e:  # 单个 session 失败不中断整源
-                errors.append(f"session={sess['id']}: {e}")
+            except ValueError:
+                # ValueError 表示 adapter/schema 信任边界失效，不能伪装成可恢复的
+                # 单 session 错误；让它到统一编排层失败并保护 last-known-good 索引。
+                raise
+            except Exception as exc:  # 单个 session 失败不中断整源
+                errors.append(AdapterMessage(f"session={sess['id']}: {safe_error_message(exc)}"))
     finally:
         conn.close()
     return facts, errors
@@ -254,13 +287,12 @@ def _resolve_extractors() -> dict[str, Callable]:
     """返回 source → extract callable 的映射（全部来自 SOURCES registry）。
 
     import 全部 adapter 模块以触发 @register 注册；SOURCES 是三套分发表
-    （extract 编排 / reconcile KNOWN_SOURCES / trace 分发）的唯一真相源。
+    （extract 编排 / reconcile / trace 分发）的唯一真相源。
     """
     from agenote.extract import (  # noqa: F401  (import 即注册)
         claude,
         codex,
         crush,
-        hermes,
         omp,
         opencode,
         zcode,
@@ -300,7 +332,7 @@ def run_extract(
     """跨 agent 对话抽取编排：把多个 AI 工具的原始对话抽取为 Org-mode 文件。
 
     与 reconcile_source 的区别：
-      - reconcile_source：抽取已沉淀的经验（agent memory store），写 .reconcile/index.json
+      - reconcile_source：抽取已沉淀的跨源记忆索引，写 .reconcile/index.json
       - run_extract：抽取原始对话（DB/JSONL），输出 Org 文件供人/agent 提炼新经验
     """
     extractors = _resolve_extractors()
@@ -310,7 +342,9 @@ def run_extract(
     elif source in extractors:
         selected = [source]
     else:
-        return {"error": f"未知 source: {source}；可选: {sorted(extractors)}"}
+        raise UnknownSourceError(
+            f"未知 source: {source}；可选: {sorted(extractors)}"
+        )
 
     # 输出目录（config paths.conversations_root 收敛；此前独立硬编码 ~/Documents/Org）
     if not output_dir:
@@ -319,8 +353,6 @@ def run_extract(
         ).strftime("%Y-%m-%d")
         output_dir = str(CONVERSATIONS_ROOT / target_date)
     out_path = Path(output_dir).expanduser()
-    if not dry_run:
-        out_path.mkdir(parents=True, exist_ok=True)
 
     # 日期过滤：把 ISO 时间戳归一到 YYYY-MM-DD 比对。
     # extractor 未填 timestamp 的事实（timestamp=""）不过滤，避免静默丢数据。
@@ -342,7 +374,9 @@ def run_extract(
         return ""
 
     files: list[str] = []
+    rendered: list[tuple[Path, str]] = []
     errors: list[str] = []
+    failed = False
     total = 0
     filtered_total = 0
     noise_total = 0
@@ -351,7 +385,9 @@ def run_extract(
         try:
             facts, errs = extractors[src]()
             total += len(facts)
-            errors.extend(errs)
+            if errs:
+                failed = True
+            errors.extend(safe_adapter_error(error, source=src) for error in errs)
             facts, dropped = filter_noise_facts(facts)
             if dropped:
                 noise_total += len(dropped)
@@ -367,15 +403,39 @@ def run_extract(
             from agenote.orgserde import render_facts_org  # lazy：避免包初始化链拉 orgserde
 
             # --output-dir 用户显式指定（可配 KB 外目录），保留直接写
-            src_file.write_text(
-                render_facts_org(shown, source=src, date=date, limit=effective_limit),
-                encoding="utf-8",
+            rendered.append(
+                (
+                    src_file,
+                    render_facts_org(
+                        shown, source=src, date=date, limit=effective_limit
+                    ),
+                )
             )
-            files.append(str(src_file))
             if truncated:
                 errors.append(f"{src}: 截断 {truncated} 条（达 limit={effective_limit}）")
-        except Exception as e:
-            errors.append(f"{src}: {e}")
+        except ValueError:
+            raise
+        except Exception as exc:
+            failed = True
+            errors.append(f"{src}: {safe_error_message(exc)}")
+
+    if not dry_run and not failed:
+        out_path.mkdir(parents=True, exist_ok=True)
+        previous = {
+            path: path.read_bytes() if path.exists() else None
+            for path, _ in rendered
+        }
+        try:
+            for path, text in rendered:
+                path.write_text(text, encoding="utf-8")
+        except BaseException as exc:
+            failures = restore_text_files(previous, allow_outside=True)
+            if failures:
+                raise RuntimeError(
+                    f"extract 发布回滚失败（{', '.join(failures)}）"
+                ) from exc
+            raise
+        files = [str(path) for path, _ in rendered]
 
     return {
         "source": source,
@@ -385,6 +445,7 @@ def run_extract(
         "output_dir": str(out_path),
         "files": files,
         "errors": errors,
+        "failed": failed,
         "dry_run": dry_run,
         "limit": effective_limit,
     }

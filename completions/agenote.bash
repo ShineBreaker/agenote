@@ -11,21 +11,31 @@ _agenote_completions() {
         words=("${COMP_WORDS[@]}")
         cword=$COMP_CWORD
     }
-    local subcmds="add archive commit completions config connect curate deduplicate distill doctor dream extract fields format gaps get health inbox inbox-archive init lint list memory merge reconcile reindex restore review scan-memories search stats tags touch trace update viz"
+    local subcmds="add archive commit completions config connect deduplicate distill doctor dream extract fields format gaps get health inbox inbox-archive init lint list memory merge reconcile reindex restore review scan-memories search stats tags touch trace update viz"
     local globals="--domain --version -h --help"
     # 顶层：补子命令 + 全局选项
-    if [[ $cword -eq 1 ]] || [[ "${words[1]}" == --* ]]; then
+    if [[ $cword -eq 1 ]]; then
         local all="$subcmds $globals"
         COMPREPLY=( $(compgen -W "$all" -- "$cur") )
         return
     fi
     local sub="${words[1]}"
     case "$sub" in
+        --domain)
+            case "$prev" in
+                --domain) COMPREPLY=( $(compgen -W "human agenote" -- "$cur") );;
+            esac
+            ;;
         config)
             COMPREPLY=( $(compgen -W "init show" -- "$cur") )
             ;;
         completions)
             COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )
+            ;;
+        get)
+            case "$prev" in
+                *) COMPREPLY=( $(compgen -W "--used -h --help" -- "$cur") );;
+            esac
             ;;
         add)
             case "$prev" in
@@ -37,19 +47,26 @@ _agenote_completions() {
             ;;
         viz)
             case "$prev" in
-                --theme) COMPREPLY=( $(compgen -W "light,dark,auto" -- "$cur") );;
+                --theme) COMPREPLY=( $(compgen -W "light dark auto" -- "$cur") );;
                 *) COMPREPLY=( $(compgen -W "--output --open --no-open --serve --port --theme --filter --search -h --help" -- "$cur") );;
             esac
             ;;
         reconcile|extract)
             case "$prev" in
-                --source) COMPREPLY=( $(compgen -W "claude codex crush hermes omp opencode zcode all" -- "$cur") );;
+                --source) COMPREPLY=( $(compgen -W "claude codex crush omp opencode zcode all" -- "$cur") );;
                 *) COMPREPLY=( $(compgen -W "--source --dry-run --json -h --help" -- "$cur") );;
+            esac
+            ;;
+        scan-memories)
+            case "$prev" in
+                --source) COMPREPLY=( $(compgen -W "claude codex hermes pi reasonix zcode all" -- "$cur") );;
+                *) COMPREPLY=( $(compgen -W "--source --json -h --help" -- "$cur") );;
             esac
             ;;
         memory)
             case "$prev" in
-                --type) COMPREPLY=( $(compgen -W "feedback,project,reference" -- "$cur") );;
+                --type) COMPREPLY=( $(compgen -W "feedback project reference" -- "$cur") );;
+                *) COMPREPLY=( $(compgen -W "--type --project --add --get --title --stdin --stale --touch --archive --archive-to-file --project-touch -h --help" -- "$cur") );;
             esac
             ;;
         *) COMPREPLY=() ;;

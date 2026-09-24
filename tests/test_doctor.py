@@ -41,3 +41,17 @@ def test_unknown_config_key_flags_warn(tmp_path, monkeypatch):
     result = _check_config()
     assert result["status"] == "warn"
     assert "未知" in result["detail"]
+
+
+def test_malformed_config_detail_omits_parser_body(tmp_path, monkeypatch):
+    """doctor 是只读报告，也不得转发 TOML 解析器的异常正文。"""
+    from agenote import config as config_mod
+    from agenote.doctor import _check_config
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[curation\nbroken", encoding="utf-8")
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", cfg)
+    result = _check_config()
+    assert result["status"] == "missing"
+    assert "解析失败" in result["detail"]
+    assert "Expected ']'" not in result["detail"]

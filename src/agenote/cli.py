@@ -42,6 +42,7 @@ from agenote.core import (
     ensure_dirs,
     default_context,
     agenote_context,
+    safe_error_message,
 )
 from agenote.index import (
     _load_index,
@@ -83,7 +84,11 @@ from agenote.dream import DEFAULT_LIMIT as DEFAULT_DREAM_LIMIT, run_dream
 from agenote.dream import DEFAULT_WINDOW_DAYS as DEFAULT_DREAM_WINDOW_DAYS
 from agenote.distill import run_distill
 from agenote.extract import run_extract
-from agenote.extract.base import EXTRACT_LIMIT
+from agenote.extract.base import (
+    EXTRACT_LIMIT,
+    UnknownSourceError,
+    safe_adapter_error,
+)
 from agenote.memscan import SOURCES as MEMSCAN_SOURCES, cmd_scan_memories
 
 # 本 CLI 默认操作 agenote 域（~/Documents/Org/agenote/），与 MCP server 对齐。
@@ -270,7 +275,7 @@ def _run_git(args: list[str], cwd: Path) -> str:
         cwd=str(cwd),
     )
     if result.returncode != 0:
-        die(f"git {' '.join(args)} 失败: {result.stderr.strip()}")
+        die(f"git {' '.join(args)} 失败（GitError）")
     return result.stdout
 
 
@@ -304,15 +309,22 @@ def cmd_reindex(args: argparse.Namespace, ctx=None) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _print_report(d: dict, json_flag: bool, title: str) -> None:
-    """统一报告输出：--json 走 JSON，否则人类可读摘要。"""
+def _print_report(
+    d: dict,
+    json_flag: bool,
+    title: str,
+    *,
+    stream=None,
+) -> None:
+    """统一报告输出；失败报告可显式写 stderr，避免伪装成成功 stdout。"""
+    output = stream or sys.stdout
     if json_flag:
-        print(json.dumps(d, ensure_ascii=False, indent=2))
+        print(json.dumps(d, ensure_ascii=False, indent=2), file=output)
         return
-    print(f"=== {title} ===")
+    print(f"=== {title} ===", file=output)
     for k, v in d.items():
         if isinstance(v, list):
-            print(f"{k}: {len(v)} 项")
+            print(f"{k}: {len(v)} 项", file=output)
             for it in v[:10]:
                 if isinstance(it, dict):
                     # 取最像标题/来源的字段
@@ -322,24 +334,39 @@ def _print_report(d: dict, json_flag: bool, title: str) -> None:
                         or it.get("id")
                         or str(it)[:60]
                     )
-                    print(f"  + {label}")
+                    print(f"  + {label}", file=output)
                 else:
-                    print(f"  + {it}")
+                    print(f"  + {it}", file=output)
         elif isinstance(v, dict):
-            print(f"{k}:")
+            print(f"{k}:", file=output)
             for sk, sv in v.items():
-                print(f"  {sk}: {sv}")
+                print(f"  {sk}: {sv}", file=output)
         else:
-            print(f"{k}: {v}")
+            print(f"{k}: {v}", file=output)
 
 
 def cmd_reconcile(args: argparse.Namespace, ctx=None) -> None:
     """跨 agent memory 只读 reconcile：抽取事实到 .reconcile/index.json。"""
-    report = reconcile_source(source=args.source, dry_run=args.dry_run)
+    try:
+        report = reconcile_source(source=args.source, dry_run=args.dry_run)
+    except UnknownSourceError as exc:
+        die(str(exc))
+    except ValueError as exc:
+        # adapter/schema 错误已由编排层向上传播；CLI 只展示受控提示或异常类型。
+        die(safe_error_message(exc))
+    title = f"reconcile ({args.source}, dry_run={args.dry_run})"
+    if report.errors:
+        _print_report(
+            report.to_dict(),
+            getattr(args, "json", False),
+            title,
+            stream=sys.stderr,
+        )
+        die("reconcile 完成但存在 adapter 错误；索引未更新")
     _print_report(
         report.to_dict(),
         getattr(args, "json", False),
-        f"reconcile ({args.source}, dry_run={args.dry_run})",
+        title,
     )
 
 
@@ -360,12 +387,10 @@ def cmd_dream(args: argparse.Namespace, ctx=None) -> None:
 def cmd_trace(args: argparse.Namespace, ctx=None) -> None:
     """回查 dream 候选的原始完整对话（溯源，不截断）。"""
     result = trace_fact(args.id)
+    if "error" in result:
+        die(f"[trace 错误] {safe_adapter_error(result['error'])}")
     if getattr(args, "json", False):
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        return
-    # 人类可读模式
-    if "error" in result:
-        print(f"[trace 错误] {result['error']}")
         return
     source = result.get("source", "?")
     sess = result.get("session", {})
@@ -430,17 +455,32 @@ def cmd_distill(args: argparse.Namespace, ctx=None) -> None:
 
 def cmd_extract(args: argparse.Namespace, ctx=None) -> None:
     """跨 agent 对话抽取为 Org 文件。"""
-    d = run_extract(
-        source=args.source,
-        date=args.date,
-        output_dir=args.output_dir,
-        dry_run=args.dry_run,
-        limit=args.limit,
-    )
+    try:
+        d = run_extract(
+            source=args.source,
+            date=args.date,
+            output_dir=args.output_dir,
+            dry_run=args.dry_run,
+            limit=args.limit,
+        )
+    except UnknownSourceError as exc:
+        die(str(exc))
+    except ValueError as exc:
+        # adapter/schema 错误已由编排层向上传播；CLI 只展示受控提示或异常类型。
+        die(safe_error_message(exc))
+    title = f"extract ({args.source}, date={args.date or 'all'}, limit={args.limit}, dry_run={args.dry_run})"
+    if d.get("failed"):
+        _print_report(
+            d,
+            getattr(args, "json", False),
+            title,
+            stream=sys.stderr,
+        )
+        die("extract 完成但存在 adapter 错误")
     _print_report(
         d,
         getattr(args, "json", False),
-        f"extract ({args.source}, date={args.date or 'all'}, limit={args.limit}, dry_run={args.dry_run})",
+        title,
     )
 
 
@@ -470,7 +510,7 @@ def print_help() -> None:
                     [--summary 总结] [--stdin] [--force]
 
   get       读取卡片详情
-            agenote get <卡片文件名或ID>
+            agenote get <卡片文件名或ID> [--used]  读取并记录使用
 
   list      列出卡片
             agenote list [--category 类别] [--type 类型] [--owner 执行者] [--recent N] [--all]
@@ -575,7 +615,7 @@ def print_help() -> None:
 
   reconcile 跨 agent memory 只读 reconcile（抽取事实到 .reconcile/，不写回源）
             agenote reconcile [--source all] [--dry-run]
-            agenote reconcile --source hermes --dry-run
+            agenote reconcile --source opencode --dry-run
 
   dream    从 reconcile 事实启发式提炼候选新卡片（只读，不调 LLM，零候选即成功）
             agenote dream [--window-days {DEFAULT_DREAM_WINDOW_DAYS}] [--offset N] [--limit N]
@@ -613,6 +653,24 @@ def print_help() -> None:
 
 
 def main() -> None:
+    try:
+        _main()
+    except SystemExit as exc:
+        if exc.code is None or isinstance(exc.code, int):
+            raise
+        print("错误: 操作失败（SystemExit）", file=sys.stderr)
+        raise SystemExit(1) from None
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None
+    except GeneratorExit:
+        raise
+    except BaseException as exc:
+        # 公共入口也不让自定义 BaseException 的正文/traceback 逃逸。
+        print(f"错误: {safe_error_message(exc)}", file=sys.stderr)
+        raise SystemExit(1) from None
+
+
+def _main() -> None:
     # 手动拦截 -h/--help（在 argparse 之前，避免 prog 名暴露问题 + 兼容 --domain 前置）
     if "-h" in sys.argv[1:] or "--help" in sys.argv[1:]:
         print_help()
@@ -671,6 +729,11 @@ def main() -> None:
     # ── get ───────────────────────────────────────────────────────────────
     get_parser = subparsers.add_parser("get", help="读取卡片详情")
     get_parser.add_argument("target", help="卡片文件名或ID")
+    get_parser.add_argument(
+        "--used",
+        action="store_true",
+        help="读取后递增 USAGE_COUNT 并更新 LAST_USED",
+    )
 
     # ── list ──────────────────────────────────────────────────────────────
     list_parser = subparsers.add_parser("list", help="列出卡片")
@@ -954,7 +1017,7 @@ def main() -> None:
     reconcile_parser.add_argument(
         "--source",
         default="all",
-        help="hermes|opencode|zcode|omp|crush|codex|claude|all（默认 all）",
+        help="opencode|zcode|omp|crush|codex|claude|all（默认 all）",
     )
     reconcile_parser.add_argument("--dry-run", action="store_true", help="只预览不落盘")
     reconcile_parser.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
@@ -1008,7 +1071,7 @@ def main() -> None:
     extract_parser.add_argument(
         "--source",
         default="all",
-        help="opencode|zcode|omp|crush|codex|claude|hermes|all（默认 all）",
+        help="opencode|zcode|omp|crush|codex|claude|all（默认 all）",
     )
     extract_parser.add_argument(
         "--date",
@@ -1093,6 +1156,8 @@ def main() -> None:
         "lint", "format", "commit", "init",
         "distill", "reconcile", "extract",
     }
+    if args.command == "get" and getattr(args, "used", False):
+        MUTATING_COMMANDS.add("get")
 
     commands = {
         "add": cmd_add,
@@ -1135,25 +1200,44 @@ def main() -> None:
         "scan-memories": cmd_scan_memories,
     }
     if args.command in commands:
-        # 解析域：--domain 显式指定 → 仅该域；__auto__ → search 做跨域，其余默认 agenote
-        if args.domain == "human":
-            ctx = default_context()
-        elif args.domain == "agenote":
-            ctx = agenote_context()
-        elif args.command == "search":
-            ctx = agenote_context()  # 仅用于 ensure_dirs；search 内部做跨域
-            args._cross_domain = True
-        else:
-            ctx = agenote_context()
-        if ctx is not None and args.command not in ("init", "config", "completions"):
-            ensure_dirs(ctx)
+        # 初始化上下文、确保目录和读取参数都在同一公共错误边界内；否则
+        # ensure_dirs 阶段的未知异常会绕过下面的命令级捕获。
+        try:
+            # 解析域：--domain 显式指定 → 仅该域；__auto__ → search 做跨域，其余默认 agenote
+            if args.domain == "human":
+                ctx = default_context()
+            elif args.domain == "agenote":
+                ctx = agenote_context()
+            elif args.command == "search":
+                ctx = agenote_context()  # 仅用于 ensure_dirs；search 内部做跨域
+                args._cross_domain = True
+            else:
+                ctx = agenote_context()
+            if ctx is not None and args.command not in ("init", "config", "completions"):
+                ensure_dirs(ctx)
+        except SystemExit:
+            raise
+        except (OSError, UnicodeError, ValueError) as exc:
+            die(safe_error_message(exc))
+        except Exception as exc:
+            die(safe_error_message(exc))
         # 变更类命令持全局 KB 锁（学 claude-obsidian：多 agent 并发写入互斥，
         # 锁在 agent 域根，一把锁覆盖人类+agent 两域；临界区毫秒级无性能问题）
-        if args.command in MUTATING_COMMANDS:
-            with kb_lock(agenote_context().root / ".agenote.lock"):
-                commands[args.command](args, ctx)
-        else:
-            commands[args.command](args, ctx)
+        command = commands[args.command]
+        try:
+            if args.command in MUTATING_COMMANDS:
+                with kb_lock(agenote_context().root / ".agenote.lock"):
+                    command(args, ctx)
+            else:
+                command(args, ctx)
+        except SystemExit:
+            raise
+        except (OSError, UnicodeError, ValueError) as exc:
+            # CLI 是用户边界：只展示受控错误或异常类型，不泄漏内部异常正文。
+            die(safe_error_message(exc))
+        except Exception as exc:
+            # 未知异常同样不能把 traceback 暴露给公共 CLI；仅展示异常类型。
+            die(safe_error_message(exc))
     else:
         die(f"未知子命令: {args.command}。运行 'agenote help' 查看帮助。")
 

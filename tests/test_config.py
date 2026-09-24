@@ -64,6 +64,7 @@ def test_unknown_section_and_key_warned(isolated_config, capsys):
 
 def test_get_path_expands_user(isolated_config, monkeypatch):
     monkeypatch.setenv("HOME", "/home/tester")
+    monkeypatch.delenv("KB_ROOT", raising=False)
     isolated_config.write_text("[paths]\nkb_root = '~/KB'\n", encoding="utf-8")
     assert config.get_path("paths", "kb_root") == __import__("pathlib").Path(
         "/home/tester/KB"
@@ -103,18 +104,24 @@ def test_render_template_roundtrip(isolated_config, tmp_path):
             assert node[key] == expected, f"{section}.{key}: {node[key]!r} != {expected!r}"
 
 
-def test_bad_toml_exits(isolated_config, capsys):
+def test_bad_toml_exits_without_exception_body(isolated_config, capsys):
     isolated_config.write_text("[curation\nbroken", encoding="utf-8")
     with pytest.raises(SystemExit):
         config.get("curation", "stale_days")
-    assert "解析失败" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "解析失败" in err
+    assert "Expected ']'" not in err
 
 
-def test_wrong_type_exits_with_key_name(isolated_config, capsys):
-    isolated_config.write_text('[curation]\nstale_days = "not-a-number"\n', encoding="utf-8")
+def test_wrong_type_exits_without_value_body(isolated_config, capsys):
+    isolated_config.write_text(
+        '[curation]\nstale_days = "RUNTIME_REAL_7f1b"\n', encoding="utf-8"
+    )
     with pytest.raises(SystemExit):
         config.get("curation", "stale_days")
-    assert "[curation].stale_days" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "[curation].stale_days" in err
+    assert "RUNTIME_REAL_7f1b" not in err
 
 
 def test_float_key_accepts_int_value(isolated_config):
@@ -138,9 +145,11 @@ def test_crush_search_roots_is_consumed(isolated_config):
 
 def test_agent_env_whitespace_falls_back(monkeypatch):
     """AGENOTE_AGENT 只空白时回落默认（避免 SOURCE_AGENT 写成空白串）。"""
+    from agenote import core
+
     monkeypatch.setattr(config, "_file_config", None)
     monkeypatch.setattr(config, "CONFIG_PATH", __import__("pathlib").Path("/nonexistent"))
     monkeypatch.setenv("AGENOTE_AGENT", "   ")
-    from agenote.core import default_agent
+    monkeypatch.setattr(core, "DEFAULT_AGENT", "fallback-agent")
 
-    assert default_agent() == "omp"
+    assert core.default_agent() == "fallback-agent"

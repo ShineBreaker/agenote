@@ -195,34 +195,31 @@ def _cross_domain_search(
             )
 
     # reconcile 事实（其他 agent 的 memory，weight 低于 KB 卡片）
-    try:
-        from agenote.reconcile import load_reconcile_facts
+    from agenote.reconcile import load_reconcile_facts
 
-        for i, fact in enumerate(load_reconcile_facts()):
-            hay = fact.get("content", "")
-            haystack = hay if case_sensitive else hay.casefold()
-            if not any(t in haystack for t in normalized_terms):
-                continue
-            title = fact.get("title", "")
-            key = f"fact:{i}"
-            docs_tokens[key] = tokenize(hay, case_sensitive)
-            title_hay = title if case_sensitive else title.casefold()
-            results.append(
-                {
-                    "_key": key,
-                    "domain": "reconcile",
-                    "source": fact.get("source", ""),
-                    "weight": fact.get("weight", RECONCILE_DEFAULT_WEIGHT),
-                    "title": title,
-                    "file": "",
-                    "id": fact.get("id", ""),
-                    "_snippet": hay[:SNIPPET_MAX_CHARS]
-                    + ("..." if len(hay) > SNIPPET_MAX_CHARS else ""),
-                    "_title_hits": sum(1 for t in normalized_terms if t in title_hay),
-                }
-            )
-    except Exception:
-        pass  # reconcile 索引不可用 → 静默跳过
+    for i, fact in enumerate(load_reconcile_facts()):
+        hay = fact.get("content", "")
+        haystack = hay if case_sensitive else hay.casefold()
+        if not any(t in haystack for t in normalized_terms):
+            continue
+        title = fact.get("title", "")
+        key = f"fact:{i}"
+        docs_tokens[key] = tokenize(hay, case_sensitive)
+        title_hay = title if case_sensitive else title.casefold()
+        results.append(
+            {
+                "_key": key,
+                "domain": "reconcile",
+                "source": fact.get("source", ""),
+                "weight": fact.get("weight", RECONCILE_DEFAULT_WEIGHT),
+                "title": title,
+                "file": "",
+                "id": fact.get("id", ""),
+                "_snippet": hay[:SNIPPET_MAX_CHARS]
+                + ("..." if len(hay) > SNIPPET_MAX_CHARS else ""),
+                "_title_hits": sum(1 for t in normalized_terms if t in title_hay),
+            }
+        )
 
     bm25 = BM25(docs_tokens, k1=BM25_K1, b=BM25_B)
     for r in results:

@@ -119,8 +119,8 @@ def _scan_dir_source(spec: MemorySourceSpec) -> tuple[list[dict], list[str]]:
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError as e:
-            errors.append(str(e))
+        except OSError as exc:
+            errors.append(f"记忆文件读取失败（{type(exc).__name__}）")
             continue
         fm, body = _parse_frontmatter(text)
         # projects/<slug>/memory/x.md 取 slug 作 project；扁平布局（pi/codex）留空
@@ -157,8 +157,8 @@ def _scan_section_files(spec: MemorySourceSpec) -> tuple[list[dict], list[str]]:
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError as e:
-            errors.append(str(e))
+        except OSError as exc:
+            errors.append(f"记忆文件读取失败（{type(exc).__name__}）")
             continue
         for chunk in text.split("§"):
             if not chunk.strip():

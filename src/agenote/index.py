@@ -23,6 +23,7 @@ from agenote.core import (
     KBContext,
     SEED_AGENTS,
     SEED_TYPES,
+    PublicError,
     STALE_DAYS,
     TYPE_PROMOTE_MIN,
     WEIGHT_STALE_PENALTY,
@@ -36,6 +37,10 @@ from agenote.orgserde import (
     parse_org_prop,
     read_org_title,
 )
+
+
+class InvalidIndexError(PublicError):
+    """已有 JSON 索引损坏或结构非法。"""
 
 
 def _card_dict(filepath: Path, ctx: "KBContext | None" = None) -> dict | None:
@@ -106,19 +111,69 @@ def _card_dict(filepath: Path, ctx: "KBContext | None" = None) -> dict | None:
     }
 
 
+def _valid_index_card(card: object) -> bool:
+    """判断索引条目是否满足各读路径共同依赖的最小结构。"""
+    if not isinstance(card, dict):
+        return False
+    if not isinstance(card.get("id"), str):
+        return False
+    string_fields = ("category", "type", "owner", "status", "title", "file")
+    if not all(isinstance(card.get(key), str) for key in string_fields):
+        return False
+    optional_string_fields = ("tech", "source_agent", "last_used", "last_verified", "created")
+    if not all(
+        key not in card or isinstance(card[key], str)
+        for key in optional_string_fields
+    ):
+        return False
+    if "entry_type" in card and card["entry_type"] is not None:
+        if not isinstance(card["entry_type"], str):
+            return False
+    if not isinstance(card.get("tags", []), list):
+        return False
+    if "weight" in card and (
+        not isinstance(card["weight"], (int, float))
+        or isinstance(card["weight"], bool)
+    ):
+        return False
+    if "usage_count" in card and (
+        not isinstance(card["usage_count"], int)
+        or isinstance(card["usage_count"], bool)
+    ):
+        return False
+    return True
+
+
 def _load_index(ctx: "KBContext | None" = None) -> dict:
-    """加载 JSON 索引，失败返回空骨架。"""
+    """加载 JSON 索引；已有文件损坏或结构非法时 fail-closed，缺失文件返回空骨架。"""
     ctx = ctx or default_context()
-    if ctx.index.exists():
-        try:
-            return json.loads(ctx.index.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"version": 1, "updated": "", "total": 0, "cards": []}
+    if not ctx.index.exists():
+        return {"version": 1, "updated": "", "total": 0, "cards": []}
+    try:
+        index = json.loads(ctx.index.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeError) as exc:
+        raise InvalidIndexError(f"索引损坏: {ctx.index}") from exc
+    if not isinstance(index, dict) or not isinstance(index.get("cards"), list):
+        raise InvalidIndexError(f"索引结构非法: {ctx.index}")
+    if not all(_valid_index_card(card) for card in index["cards"]):
+        raise InvalidIndexError(f"索引结构非法: {ctx.index}")
+    if (
+        not isinstance(index.get("version"), int)
+        or isinstance(index.get("version"), bool)
+        or not isinstance(index.get("total"), int)
+        or isinstance(index.get("total"), bool)
+        or index["total"] < 0
+        or not isinstance(index.get("updated"), str)
+        or index["total"] != len(index["cards"])
+    ):
+        raise InvalidIndexError(f"索引结构非法: {ctx.index}")
+    return index
 
 
 def type_counts(ctx: "KBContext | None" = None) -> Counter:
     """非归档卡片的 type 计数（门禁/聚拢共用同一口径）。"""
+    # 已有索引的公共读路径也必须 fail-closed：不能把损坏索引伪装成空数据。
+    # 仅索引文件不存在时返回空骨架，兼容首次使用。
     index = _load_index(ctx)
     return Counter(
         c["type"]
@@ -139,6 +194,7 @@ def known_agents(ctx: "KBContext | None" = None) -> set[str]:
 
     含归档卡片（历史写入者仍是已知 agent）；与 formal_types 同构、无持久状态。
     """
+    # 已有索引的公共读路径同样 fail-closed。
     index = _load_index(ctx)
     return SEED_AGENTS | {
         a for a in (c.get("source_agent", "") for c in index["cards"]) if a
@@ -176,7 +232,7 @@ def _upsert_card(index: dict, filepath: Path, ctx: "KBContext | None" = None) ->
     if not d:
         return
     for i, c in enumerate(index["cards"]):
-        if c["id"] == d["id"]:
+        if c.get("id") == d["id"]:
             index["cards"][i] = d
             break
     else:

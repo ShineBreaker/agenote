@@ -4,6 +4,29 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Fixed
+
+- **`inbox-archive` 失败后留下 `ensure_dirs` 骨架文件**（`inbox_archive.py`）：事务快照原本在 `ensure_dirs` 之后读取，索引 / inbox 原本不存在时会被补建成空文件，回滚只能恢复到「空骨架」而非「不存在」。快照前移到 `ensure_dirs` 之前，并把 inbox 纳入回滚集（无论是否 `--prune`）。
+- **reconcile 索引写入缺校验、读取放行非法数值**（`reconcile.py`）：`trust_score` / `weight` 增加有限性校验（NaN / Infinity 不再落盘或回读），`id` 必须以 `source` 前缀派生；顶层 `version` / `updated` / `by_source` 类型错误一律 fail-closed；`_save_reconcile_index()` 落盘前复用同一 `_valid_reconcile_fact()` 校验。
+- **`reconcile --source all` 留下半更新索引**（`reconcile.py`）：非 dry-run 现在先计算所有已注册 source，全部成功后才一次性落盘并清理退役 source；任一 adapter 失败时索引保持不变。全量模式只保留本轮各注册源的新结果，退役 source 计入 `pruned`；单 source reconcile 仍只替换自己，dry-run 不落盘；单源或全量遇到 adapter 返回错误时同样 fail-closed，不覆盖 last-known-good 索引。
+- **退役 source 的公共 CLI 把错误报告成成功**（`extract/base.py` / `reconcile.py` / `cli.py`）：`extract` / `reconcile --source hermes` 现在以专用 `UnknownSourceError` 退出 1、错误写 stderr 且不泄漏 traceback；adapter 内部 `ValueError` 不再被 session 级宽泛捕获吞掉。
+- **`parse_org_prop` 忽略正文伪属性**（`orgserde.py` / `core.py`）：卡片元数据只读取一级标题后的顶层 `PROPERTIES` 抽屉；resolver 按真实 `:ID:` 精确匹配后回退唯一文件名片段，重复或模糊匹配返回未找到；直接路径、相对路径、符号链接和坏 UTF-8 候选均拒绝，空白/`.`/`..` selector 与 `experiences` 根符号链接也不能绕入其他域。
+- **短 ID 模糊匹配可能误写派生卡片**（`core.py` / `cards.py`）：`20260924-111827` 会同时命中原卡和 `20260924-111827-2/3-*` 派生卡，旧 resolver 直接取目录遍历的第一个候选，导致 `update` / `touch` 写错卡。现在先按 Org `:ID:` 精确命中，再回退文件名片段；`get` 复用同一规则，并保留知识库外绝对路径拒绝。
+- **卡片属性写入会命中正文示例**（`orgserde.py` / `core.py` / `cards.py` / `curator.py`）：`get --used`、`touch`、`update`、`archive` / `restore` 与 `merge` 现在通过顶层抽屉专用的 `set_org_prop` / `delete_org_prop` 读写，递增 `USAGE_COUNT` 不再改写正文里的 `:LAST_USED:` / `:USAGE_COUNT:` 示例。`get --used` 持 KB 锁，8 路并发不会静默丢计数。
+- **shell 补全只做生成器自洽校验**（`completions.py` / `completions/*`）：删除不存在的 `curate` 候选；Bash 的 `memory --type` / `viz --theme` 改回空格分隔候选，补齐 `scan-memories --source`、Zsh 同项与全局 `--domain`；测试现在比较真实 CLI dispatch，并执行 Bash/Fish 补全与静态脚本生成结果。
+- **extract / reconcile 错误路径仍留下半成品**（`extract/base.py` / `reconcile.py` / `index.py` / `core.py` / `orgserde.py`）：extract 先完成全部 source 渲染，adapter 失败不发布；发布阶段若第二个文件写入失败，会撤销本轮已写文件。reconcile（包括 dry-run 读取 LKG）严格验证已有索引，损坏索引不覆盖；`get --used` 在写卡片前验证索引形状与真实顶层 `PROPERTIES` 抽屉，失败时不输出正文、不改卡片、CLI 无 traceback。
+- **批量 `merge` 后半程写失败留下部分归档**（`cards.py`）：先在内存完成全部卡片变换和索引准备；写阶段失败则恢复所有已写卡片，避免 secondary 已归档而 primary 尚未更新的半完成状态。
+- **损坏的 reconcile 索引被读路径静默跳过**（`reconcile.py`）：不仅写路径，公共 `load_reconcile_facts()` 也要求每条事实符合 `ReconciledFact` 的完整序列化结构（`id`、`source`、`native_id`、`title`、`category`、`content`、数值信任权重、`tags` 与时间字段）；任一元素非法即 fail-closed，`dream` / `distill` 等消费者不再把半份事实当完整数据。
+- **损坏的卡片索引被公共读路径伪装成空库**（`index.py` / `cards.py` / `curator.py` / `health.py` / `doctor.py` / `distill.py` / `viz/cli.py`）：已有 `index.json` 统一校验顶层计数与卡片条目结构，损坏时 `list` / `stats` / `health` / `doctor` / `distill` / `viz` 以 rc 1、可读 stderr、无 traceback 失败；只有索引文件不存在时才返回空骨架。
+- **批量 `merge` 成功时 secondary 索引状态漂移**（`cards.py`）：合并时同时 upsert 所有 secondary 与 primary，成功输出延迟到索引提交后；提交失败会恢复卡片、索引原始字节和未误报的 stdout。
+- **批量 `archive` 与 `update --category` 破坏数据完整性**（`core.py` / `cards.py` / `curator.py` / `inbox_archive.py`）：归档先解析并准备整批内容，任何 ID 无效或任一写入失败时不留下部分归档，并恢复索引原始字节；add、update 与 inbox archive 复用同一 category 边界校验，路径分隔符和 `..` 一律拒绝。
+
+### Removed
+
+- **退役 Hermes 旧 SQLite 记忆源的 extract/reconcile 管线**（旧 `extract/hermes.py`、`hermes_db` 与 `hermes_weight_cap` 配置项）：六个对话源继续由 adapter registry 管理；Hermes 的内置 `MEMORY.md` / `USER.md` 仍由只读 `scan-memories --source hermes` 单独扫描。历史 CHANGELOG/ADR 语境保留。
+
 ## [0.1.11] - 2026-09-22
 
 ### Changed

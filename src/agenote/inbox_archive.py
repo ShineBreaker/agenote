@@ -22,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from agenote.safeio import atomic_write
+from agenote.safeio import atomic_write, restore_text_files
 
 if TYPE_CHECKING:
     from agenote.core import KBContext
@@ -175,6 +175,7 @@ def cmd_inbox_archive(args: argparse.Namespace, ctx: "KBContext | None" = None) 
         timestamp_id,
         now,
         die,
+        validate_category,
         default_context as _default_context,
     )
     from agenote.index import (
@@ -189,8 +190,12 @@ def cmd_inbox_archive(args: argparse.Namespace, ctx: "KBContext | None" = None) 
     category = args.category
     if not category:
         die("必须指定 --category")
-    if "/" in category or "\\" in category or ".." in category:
-        die(f"类别名不能包含路径分隔符或 '..': {category}")
+    validate_category(category)
+
+    # 事务快照必须在 ensure_dirs 之前：ensure_dirs 会补建 index/inbox 骨架，
+    # 否则「原本不存在」会被伪装成「原本存在空文件」，回滚无法恢复原状态。
+    original_index = ctx.index.read_bytes() if ctx.index.exists() else None
+    original_inbox = ctx.inbox.read_bytes() if ctx.inbox.exists() else None
 
     ensure_dirs(ctx)
 
@@ -198,8 +203,8 @@ def cmd_inbox_archive(args: argparse.Namespace, ctx: "KBContext | None" = None) 
     raw = sys.stdin.read() if (getattr(args, "stdin", False) or True) else ""
     try:
         entries = json.loads(raw) if raw.strip() else []
-    except json.JSONDecodeError as e:
-        die(f"stdin 不是合法 JSON: {e}")
+    except json.JSONDecodeError as exc:
+        die(f"stdin 不是合法 JSON: {type(exc).__name__}")
     if not isinstance(entries, list):
         die("stdin JSON 必须是数组")
     if not entries:
@@ -207,8 +212,11 @@ def cmd_inbox_archive(args: argparse.Namespace, ctx: "KBContext | None" = None) 
         return
 
     reason = getattr(args, "reason", None)
-    pruned_headings: list[str] = []
+    index = _load_index(ctx)
+    prepared: list[tuple[Path, str, str]] = []
+    reserved: set[Path] = set()
 
+    # 先解析并准备整批；写阶段不再解析输入或输出成功路径。
     for entry in entries:
         if not isinstance(entry, dict):
             print(f"跳过非对象条目: {entry!r}", file=sys.stderr)
@@ -219,30 +227,48 @@ def cmd_inbox_archive(args: argparse.Namespace, ctx: "KBContext | None" = None) 
         slug = slugify_heading(heading)
         filename = f"{ts_id}-{slug}.org"
         target = ctx.experiences / category / filename
-        target.parent.mkdir(parents=True, exist_ok=True)
-        # 防止意外覆盖:文件已存在时加 .N 后缀
         counter = 1
-        while target.exists():
+        while target.exists() or target in reserved:
             target = ctx.experiences / category / f"{ts_id}-{slug}.{counter}.org"
             counter += 1
-        ts_human = now()
-        card_text = _build_archived_card(heading, body, ts_id, ts_human, category, reason)
-        atomic_write(target, card_text)
-        # 增量更新索引(为单卡片 upsert,与 cmd_add 一致)
-        index = _load_index(ctx)
-        _upsert_card(index, target, ctx)
-        _save_index(index, ctx)
+        reserved.add(target)
+        card_text = _build_archived_card(
+            heading, body, ts_id, now(), category, reason
+        )
+        prepared.append((target, card_text, heading))
+
+    try:
+        for target, card_text, _heading in prepared:
+            atomic_write(target, card_text)
+        if getattr(args, "no_reindex", False):
+            for target, _card_text, _heading in prepared:
+                _upsert_card(index, target, ctx)
+            _save_index(index, ctx)
+        else:
+            _save_index(_rebuild_index(ctx), ctx)
+
+        pruned = 0
+        if getattr(args, "prune", False):
+            pruned = _prune_inbox(
+                ctx.inbox, [heading for _target, _text, heading in prepared]
+            )
+    except BaseException as exc:
+        originals: dict[Path, bytes | None] = {
+            target: None for target, _text, _heading in prepared
+        }
+        originals[ctx.index] = original_index
+        originals[ctx.inbox] = original_inbox
+        failures = restore_text_files(originals)
+        if failures:
+            raise RuntimeError(
+                f"inbox-archive 回滚失败（{', '.join(failures)}）"
+            ) from exc
+        raise
+
+    for target, _card_text, _heading in prepared:
         print(str(target))
-        if heading.strip():
-            pruned_headings.append(heading)
-
-    # 全量 reindex(默认):消除 Emacs 端 reindex 补刀。_rebuild_index 是幂等扫盘。
     if not getattr(args, "no_reindex", False):
-        idx = _rebuild_index(ctx)
-        _save_index(idx, ctx)
-        print(f"reindex: {idx['total']} cards")
-
-    # 可选从 inbox 删除已归档条目
-    if getattr(args, "prune", False) and pruned_headings:
-        pruned = _prune_inbox(ctx.inbox, pruned_headings)
+        final_index = json.loads(ctx.index.read_text(encoding="utf-8"))
+        print(f"reindex: {final_index['total']} cards")
+    if getattr(args, "prune", False):
         print(f"pruned from inbox: {pruned}")

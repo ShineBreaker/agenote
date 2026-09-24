@@ -6,7 +6,7 @@
 从 core.py 拆出（ADR-0003）：Org 属性解析（读）与 facts→Org 文档渲染（写）
 归于一处。零 agenote 依赖（纯文本函数）；orgfmt 保持独立为交互式格式美化器。
 
-- parse_org_prop / _parse_float_prop / _parse_int_prop / read_org_title：PROPERTIES 读取
+- parse_org_prop / set_org_prop / delete_org_prop：顶层属性抽屉读写
 - render_facts_org：ReconciledFact 列表 → Org 文档（原 run_extract 内联渲染）
 """
 
@@ -16,9 +16,21 @@ import re
 from datetime import datetime
 
 from agenote import config
+from agenote.core import PublicError
 
 # Org 渲染正文截断（config [extract].trunc_org_render 覆盖）
 ORG_RENDER_TRUNC = int(config.get("extract", "trunc_org_render"))
+
+
+class OrgPropertyDrawerError(PublicError):
+    """卡片缺少可写的顶层 PROPERTIES 抽屉。"""
+
+
+# Org headline 后、属性抽屉前允许出现 planning 行；它们仍是 headline 元数据，
+# 不能误判为正文示例，也不能遮住紧随其后的顶层 PROPERTIES 抽屉。
+_PLANNING_LINE = re.compile(
+    r"^(?:SCHEDULED|DEADLINE|CLOSED|LAST_REPEAT):[ \t]+.*$", re.IGNORECASE
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -26,10 +38,95 @@ ORG_RENDER_TRUNC = int(config.get("extract", "trunc_org_render"))
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _top_property_drawer(
+    lines: list[str],
+) -> tuple[int, int, str] | None:
+    """返回顶层属性抽屉的起止行和缩进；正文示例不算元数据。"""
+    heading = next((i for i, line in enumerate(lines) if re.match(r"^\* ", line)), None)
+    if heading is None:
+        return None
+    for start in range(heading + 1, len(lines)):
+        line = lines[start].rstrip("\r\n")
+        if not line.strip():
+            continue
+        if _PLANNING_LINE.fullmatch(line):
+            continue
+        drawer = re.match(r"^([ \t]*):PROPERTIES:[ \t]*$", line)
+        if not drawer or drawer.group(1):
+            # 顶层 headline 的属性抽屉必须在第 0 列；缩进的 drawer 属于正文/
+            # 子标题，不能被当作卡片元数据。
+            return None
+        indent = drawer.group(1)
+        for end in range(start + 1, len(lines)):
+            if re.fullmatch(
+                rf"{re.escape(indent)}:END:[ \t]*", lines[end].rstrip("\r\n")
+            ):
+                return start, end, indent
+        return None
+    return None
+
+
+def has_top_property_drawer(content: str) -> bool:
+    """判断内容是否含有可写的顶层 PROPERTIES 抽屉。"""
+    return _top_property_drawer(content.splitlines()) is not None
+
+
 def parse_org_prop(content: str, key: str) -> str:
-    """从 Org 文件内容中提取 PROPERTIES 块中的指定属性值。"""
-    m = re.search(rf":{key}:\s*(.+)", content)
-    return m.group(1).strip() if m else ""
+    """从顶层卡片的 PROPERTIES 抽屉中提取属性值，忽略正文示例。"""
+    lines = content.splitlines()
+    drawer = _top_property_drawer(lines)
+    if drawer is None:
+        return ""
+    start, end, indent = drawer
+    for prop_line in lines[start + 1 : end]:
+        prop = re.match(
+            rf"^[ \t]*:{re.escape(key)}:[ \t]*(.*?)[ \t]*$",
+            prop_line,
+            re.IGNORECASE,
+        )
+        if prop and prop.group(1):
+            return prop.group(1)
+    return ""
+
+
+def set_org_prop(content: str, key: str, value: str) -> str:
+    """更新顶层属性抽屉中的字段；字段缺失时在 :END: 前插入。"""
+    lines = content.splitlines(keepends=True)
+    drawer = _top_property_drawer(lines)
+    if drawer is None:
+        raise OrgPropertyDrawerError("卡片缺少顶层 PROPERTIES 抽屉")
+    start, end, indent = drawer
+    pattern = re.compile(
+        rf"^({re.escape(indent)}:{re.escape(key)}:)([ \t]*)(.*?)(\r?\n)?$",
+        re.IGNORECASE,
+    )
+    for index in range(start + 1, end):
+        match = pattern.match(lines[index])
+        if match:
+            spacing = match.group(2) or " "
+            newline = match.group(4) or ""
+            lines[index] = f"{match.group(1)}{spacing}{value}{newline}"
+            return "".join(lines)
+    lines.insert(end, f"{indent}:{key}: {value}\n")
+    return "".join(lines)
+
+
+def delete_org_prop(content: str, key: str) -> str:
+    """只删除顶层属性抽屉中的字段，正文示例保持原样。"""
+    lines = content.splitlines(keepends=True)
+    drawer = _top_property_drawer(lines)
+    if drawer is None:
+        raise OrgPropertyDrawerError("卡片缺少顶层 PROPERTIES 抽屉")
+    start, end, indent = drawer
+    pattern = re.compile(rf"^{re.escape(indent)}:{re.escape(key)}:[ \t]*", re.IGNORECASE)
+    kept = lines[: start + 1]
+    kept.extend(
+        line
+        for line in lines[start + 1 : end]
+        if not pattern.match(line)
+    )
+    kept.extend(lines[end:])
+    return "".join(kept)
 
 
 def _parse_float_prop(content: str, key: str, default: float) -> float:

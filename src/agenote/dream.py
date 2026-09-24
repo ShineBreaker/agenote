@@ -92,11 +92,11 @@ def _get_jieba():
 
         _JIEBA_CACHE = jieba
         return jieba
-    except ImportError as e:
+    except ImportError:
         _JIEBA_CACHE = None  # 标记不可用，后续直接短路
         warnings.warn(
             "jieba 不可用，dream 回退到 2-gram 兜底分词器（中文分词质量降级）。"
-            "jieba 是 agenote 的硬依赖，请重新安装 agenote 以恢复。原因: %r" % e,
+            "jieba 是 agenote 的硬依赖，请重新安装 agenote 以恢复。",
             RuntimeWarning,
             stacklevel=2,
         )
@@ -258,7 +258,7 @@ def _parse_timestamp(ts: str):
     容忍 3 种格式（各 source 不统一，见 reconcile 探查）：
     - epoch ms（全数字，长度 13）：opencode/zcode/crush
     - ISO 8601（含 Z 或时区偏移）：pi/claude/codex
-    - 空串：hermes（无时间戳，调用方负责"无 ts 默认保留"语义）
+    - 空串：来源未提供时间戳（调用方按“无 ts 默认保留”处理）
 
     坏数据容错：解析成功但年份 < _MIN_VALID_YEAR 视为无效（如 epoch ms 被误当
     秒解析出的 1970 日期），返回 None——这类 fact 不参与时间过滤，按"无 ts"
@@ -438,7 +438,7 @@ def _gather_candidates(
     """从 reconcile 事实启发式提取候选。
 
     评分策略（IDF + 形态学，TF 作 tie-breaker）：
-    1. 按 window_days 过滤事实（无 timestamp 的默认保留，如 hermes）
+    1. 按 window_days 过滤事实（无 timestamp 的默认保留）
     2. 对幸存事实正文 token 化，统计词频（**保留 per-fact TF**，旧实现去重成 set 丢了 TF）
     3. 用 _term_quality_score 打分：IDF × √df × 形态学权重
        （代码标识符加分，CJK 二字词降权）。**TF 不进主评分**——实测让 TF 进 BM25
@@ -467,7 +467,7 @@ def _gather_candidates(
     for fact in facts:
         ts = _parse_timestamp(fact.get("timestamp", ""))
         if ts is None:
-            # 无 timestamp（hermes 等）：默认保留，不因缺数据被误杀
+            # 无 timestamp：默认保留，不因缺数据被误杀
             usable.append(fact)
             continue
         if cutoff is not None and ts < cutoff:
@@ -559,7 +559,7 @@ def run_dream(
 
     Args:
         window_days: 事实时间窗口（天）。0=不过滤看全量；默认 90d（幸存 ~90% facts）。
-            无 timestamp 的事实（如 hermes）不受窗口影响，默认保留。
+            无 timestamp 的事实不受窗口影响，默认保留。
         offset: 跳过前 N 个候选（用于多轮抽取跳过噪声词）。**注意 offset 语义不稳定**：
             候选排序随 reconcile 索引更新变化，同一 offset 在不同时间可能指向不同候选。
             report.snapshot_hash 标识本次候选集指纹，两次调用指纹不同即说明排序已漂移。

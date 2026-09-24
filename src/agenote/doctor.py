@@ -78,11 +78,18 @@ def _check_config() -> dict:
             "status": "ok",
             "detail": f"未创建（全部用默认值）: {config.CONFIG_PATH}",
         }
-    except config.tomllib.TOMLDecodeError as e:
+    except config.tomllib.TOMLDecodeError:
         return {
             "name": "config.toml",
             "status": "missing",
-            "detail": f"解析失败: {e}",
+            "detail": f"解析失败: {config.CONFIG_PATH}",
+            "affects": "所有命令（配置层加载即退出）",
+        }
+    except (OSError, UnicodeError):
+        return {
+            "name": "config.toml",
+            "status": "missing",
+            "detail": f"读取失败: {config.CONFIG_PATH}",
             "affects": "所有命令（配置层加载即退出）",
         }
     unknown = config._unknown_keys(data)

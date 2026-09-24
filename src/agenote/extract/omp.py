@@ -30,6 +30,7 @@ from agenote.extract.base import (
     pair_turns,
     register,
 )
+from agenote.extract.base import AdapterMessage
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
 
 
@@ -169,7 +170,7 @@ def extract_omp() -> tuple[list, list[str]]:
     facts = []
     errors: list[str] = []
     if not OMP_SESSIONS_DIR.exists():
-        return [], [f"omp sessions dir 不存在: {OMP_SESSIONS_DIR}"]
+        return [], [AdapterMessage(f"omp sessions dir 不存在: {OMP_SESSIONS_DIR}")]
     for jsonl_path in sorted(OMP_SESSIONS_DIR.glob("**/*.jsonl")):
         if jsonl_path.name == "__advisor.jsonl":
             continue
@@ -182,8 +183,8 @@ def extract_omp() -> tuple[list, list[str]]:
                     categorize=lambda session, user_text, assistant_text: "general",
                 )
             )
-        except OSError as e:
-            errors.append(str(e))
+        except OSError as exc:
+            errors.append(AdapterMessage(f"session 文件读取失败（{type(exc).__name__}）"))
     return facts, errors
 
 
@@ -197,15 +198,18 @@ def trace_session(session_id: str) -> dict:
                if m.name != "__advisor.jsonl"]
     if not matches:
         return {
-            "error": f"omp session 文件不存在: {session_id}",
+            "error": AdapterMessage(f"omp session 文件不存在: {session_id}"),
             "session_id": session_id,
         }
     jsonl_path = matches[0]
 
     try:
         session_meta, messages = _load_events(jsonl_path)
-    except OSError as e:
-        return {"error": str(e), "session_id": session_id}
+    except OSError as exc:
+        return {
+            "error": AdapterMessage(f"session 文件读取失败（{type(exc).__name__}）"),
+            "session_id": session_id,
+        }
 
     if not messages:
         return {"source": "omp", "session_id": session_id, "session": session_meta, "messages": []}

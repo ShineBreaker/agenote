@@ -79,7 +79,7 @@ agenote config show    # 打印当前生效配置及每个键的来源（env / f
 | `[curation]` | stale/archive 天数阈值、去重相似度阈值 |
 | `[health]` | 孤立率/过时率/类型偏斜的 warn/bad 分级阈值 |
 | `[dream]` / `[distill]` | 启发式阈值（词频、窗口天数、聚类下限等） |
-| `[extract]` / `[extract.sources]` | 抽取截断链、每源条数上限、7 个 agent 源数据库路径 |
+| `[extract]` / `[extract.sources]` | 抽取截断链、每源条数上限、6 个 agent 对话源数据库路径 |
 | `[search]` / `[add]` / `[commit]` / `[viz]` | 检索参数、新卡片默认字段、commit 精准 add 清单、可视化参数 |
 
 完整键清单与默认值见 `agenote config init` 生成的模板注释，或
@@ -122,7 +122,7 @@ agenote-cli ─┘     ├── cards.py    卡片 CRUD
                    ├── reconcile.py 跨 agent 只读索引
                    ├── dream.py    启发式候选发现
                    ├── distill.py  工作流蒸馏
-                   ├── extract/    对话抽取（7 个 agent extractor）
+                   ├── extract/    对话抽取（6 个 agent extractor）
                    └── viz/        HTML 可视化生成
 ```
 
@@ -163,7 +163,7 @@ agenote completions bash > /etc/bash_completion.d/agenote  # 或 source
 # completions/agenote.fish  completions/_agenote  completions/agenote.bash
 ```
 
-覆盖 33 个子命令（含 `config init/show` 二级）、`--domain` / `--type` /
+覆盖 CLI 的全部子命令（含 `config init/show` 二级）、`--domain` / `--type` /
 `--source` 等常用枚举。`completions/` 下的静态脚本与 `agenote completions`
 输出逐字节一致，CI 校验。
 

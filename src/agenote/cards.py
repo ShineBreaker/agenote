@@ -38,13 +38,17 @@ from agenote.core import (
     _build_template,
     ensure_dirs,
     touch_card,
+    safe_error_message,
+    validate_category,
     _resolve_card,
     default_context,
     agenote_context,
 )
 from agenote.orgserde import (
+    has_top_property_drawer,
     parse_org_prop,
     read_org_title,
+    set_org_prop,
 )
 from agenote.index import (
     _card_dict,
@@ -54,7 +58,7 @@ from agenote.index import (
     known_agents,
     type_counts,
 )
-from agenote.safeio import atomic_write
+from agenote.safeio import atomic_write, restore_text_files
 
 
 def _gate_type(type_: str, ctx, force: bool):
@@ -63,6 +67,7 @@ def _gate_type(type_: str, ctx, force: bool):
     返回已加载的 index 供调用方后续 upsert 复用。--force 强制写入观察期
     或全新 type，但该 type 在达到晋升阈值前始终不走免检。
     """
+    # 读改写路径必须先严格验证 LKG，不能把损坏索引静默降成空索引。
     index = _load_index(ctx)
     counts = type_counts(ctx)
     n = counts.get(type_, 0)
@@ -115,8 +120,7 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
     if not title:
         die("必须指定 --title")
 
-    if "/" in category or "\\" in category or ".." in category:
-        die(f"类别名不能包含路径分隔符或 '..': {category}")
+    validate_category(category)
 
     if entry_type and entry_type not in VALID_ENTRY_TYPES | {""}:
         die(f"--entry 仅支持: {', '.join(sorted(VALID_ENTRY_TYPES))}")
@@ -211,11 +215,22 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
         lines.append("")
         lines.extend(_build_template(entry_type, body))
 
-    atomic_write(filepath, "\n".join(lines) + "\n")
+    original_index = ctx.index.read_bytes() if ctx.index.exists() else None
+    try:
+        atomic_write(filepath, "\n".join(lines) + "\n")
 
-    # 增量更新 JSON 索引（index 已在 type 门禁处加载）
-    _upsert_card(index, filepath, ctx)
-    _save_index(index, ctx)
+        # 增量更新 JSON 索引（index 已在 type 门禁处加载）
+        _upsert_card(index, filepath, ctx)
+        _save_index(index, ctx)
+    except BaseException as exc:
+        failures = restore_text_files(
+            {filepath: None, ctx.index: original_index}
+        )
+        if failures:
+            raise RuntimeError(
+                f"add 回滚失败（{', '.join(failures)}）"
+            ) from exc
+        raise
 
     print(filepath)
 
@@ -230,31 +245,24 @@ def cmd_get(args: argparse.Namespace, ctx=None) -> None:
     if not target:
         die("用法: kb get <卡片文件名或ID>")
 
-    # --used：读取后显式留痕（递增 USAGE_COUNT）；默认纯读取不计数
-    used = getattr(args, "used", False)
     p = Path(target)
-    # 安全检查：绝对路径必须在 KB_ROOT 内
     if p.is_absolute():
         try:
             p.resolve().relative_to(ctx.root.resolve())
         except ValueError:
             die(f"路径超出知识库范围: {target}")
-    if p.is_file():
-        print(p.read_text(encoding="utf-8"), end="")
-        if used:
-            touch_card(p, "LAST_USED", ctx)
-        return
 
-    # 在 experiences/ 中模糊匹配
-    candidates = list(ctx.experiences.rglob(f"*{target}*"))
-    candidates = [c for c in candidates if not c.is_symlink() and c.is_file()]
-    if candidates:
-        print(candidates[0].read_text(encoding="utf-8"), end="")
-        if used:
-            touch_card(candidates[0], "LAST_USED", ctx)
-        return
-
-    die(f"未找到卡片: {target}")
+    # --used：读取后显式留痕（递增 USAGE_COUNT）；默认纯读取不计数
+    used = getattr(args, "used", False)
+    card = _resolve_card(target, ctx)
+    if not card:
+        die(f"未找到卡片: {target}")
+    if used:
+        try:
+            touch_card(card, "LAST_USED", ctx)
+        except (OSError, UnicodeError, ValueError) as exc:
+            die(f"记录使用痕迹失败: {safe_error_message(exc)}")
+    print(card.read_text(encoding="utf-8"), end="")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -399,18 +407,26 @@ def cmd_tags(args: argparse.Namespace, ctx=None) -> None:
     json_items: list[dict] = []
 
     for tag in args.tags:
-        if shutil.which("rg"):
-            result = subprocess.run(
-                ["rg", "--color=never", "-l", f":{tag}:", str(ctx.experiences)],
-                capture_output=True,
-                text=True,
-            )
-        else:
-            result = subprocess.run(
-                ["grep", "-rl", f":{tag}:", str(ctx.experiences)],
-                capture_output=True,
-                text=True,
-            )
+        try:
+            if shutil.which("rg"):
+                result = subprocess.run(
+                    ["rg", "--color=never", "-l", f":{tag}:", str(ctx.experiences)],
+                    capture_output=True,
+                    text=True,
+                )
+            else:
+                result = subprocess.run(
+                    ["grep", "-rl", f":{tag}:", str(ctx.experiences)],
+                    capture_output=True,
+                    text=True,
+                )
+        except (KeyboardInterrupt, GeneratorExit, SystemExit):
+            raise
+        except BaseException as exc:
+            die(f"标签检索失败（{type(exc).__name__}）")
+        if result.returncode not in (0, 1):
+            die("标签检索失败（命令错误）")
+
         files = (
             [Path(line) for line in result.stdout.splitlines() if line]
             if result.returncode == 0 and result.stdout.strip()
@@ -569,8 +585,20 @@ def cmd_connect(args: argparse.Namespace, ctx=None) -> None:
     if not file_b:
         die(f"未找到卡片: {id_b}")
 
-    _append_link(file_a, file_b, desc)
-    _append_link(file_b, file_a, desc)
+    originals: dict[Path, bytes | None] = {
+        file_a: file_a.read_bytes(),
+        file_b: file_b.read_bytes(),
+    }
+    try:
+        _append_link(file_a, file_b, desc)
+        _append_link(file_b, file_a, desc)
+    except BaseException as exc:
+        failures = restore_text_files(originals)
+        if failures:
+            raise RuntimeError(
+                f"connect 回滚失败（{', '.join(failures)}）"
+            ) from exc
+        raise
     print(f"已建立双向链接: {file_a.name} ↔ {file_b.name}")
 
 
@@ -644,36 +672,35 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
     index = _load_index(ctx)
     content = card.read_text(encoding="utf-8")
     old_type = parse_org_prop(content, "TYPE") or DEFAULT_TYPE
+    original = card.read_bytes()
+    original_index = ctx.index.read_bytes() if ctx.index.exists() else None
+    updated = card
     reclassify = False
 
     # ── 更新属性（用 .+ 匹配到行尾，避免含空格的属性值被截断）────────────
+    from agenote.orgserde import set_org_prop
+
     if args.status:
         if args.status not in VALID_STATUSES:
             die(f"无效状态: {args.status}（可选: {', '.join(sorted(VALID_STATUSES))}）")
-        content = re.sub(r":STATUS:\s*.+", f":STATUS:   {args.status}", content)
+        content = set_org_prop(content, "STATUS", args.status)
         # --status stable 自动更新 LAST_VERIFIED
         if args.status == "stable":
-            if ":LAST_VERIFIED:" in content:
-                content = re.sub(
-                    r":LAST_VERIFIED:\s*\[.+?\]", f":LAST_VERIFIED: [{now()}]", content
-                )
-            else:
-                content = content.replace(
-                    ":END:", f":LAST_VERIFIED: [{now()}]\n:END:", 1
-                )
+            content = set_org_prop(content, "LAST_VERIFIED", f"[{now()}]")
     if args.category:
-        content = re.sub(r":CATEGORY:\s*.+", f":CATEGORY: {args.category}", content)
+        validate_category(args.category)
+        content = set_org_prop(content, "CATEGORY", args.category)
         reclassify = True
     if args.tech:
-        content = re.sub(r":TECH:\s*.+", f":TECH:     {args.tech}", content)
+        content = set_org_prop(content, "TECH", args.tech)
         reclassify = True
     if args.type_ and args.type_ != old_type:
         # 与 add 相同的 type 门禁：防止通过 update 绕过晋升规则
         index = _gate_type(args.type_, ctx, getattr(args, "force", False))
-        content = re.sub(r":TYPE:\s*.+", f":TYPE:     {args.type_}", content)
+        content = set_org_prop(content, "TYPE", args.type_)
         reclassify = True
     if args.owner:
-        content = re.sub(r":OWNER:\s*.+", f":OWNER:    {args.owner}", content)
+        content = set_org_prop(content, "OWNER", args.owner)
         reclassify = True
 
     if reclassify:
@@ -697,19 +724,33 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
         if extra.strip():
             content = content.rstrip("\n") + f"\n\n{extra.strip()}\n"
 
-    atomic_write(card, content)
-    # 重分类收尾：type 变更时文件名同步为 {id}-{type}-{category}.org，并刷新索引
-    updated = card
-    if args.type_ and args.type_ != old_type:
-        card_id = parse_org_prop(content, "ID") or card.stem.split("-")[0]
-        category = parse_org_prop(content, "CATEGORY") or DEFAULT_CATEGORY
-        new_path = card.parent / f"{card_id}-{args.type_}-{category}.org"
-        if new_path != card and not new_path.exists():
-            card.rename(new_path)
-            updated = new_path
-    if reclassify:
-        _upsert_card(index, updated, ctx)
-        _save_index(index, ctx)
+    original_index = ctx.index.read_bytes() if ctx.index.exists() else None
+    try:
+        atomic_write(card, content)
+        # 重分类收尾：type 变更时文件名同步为 {id}-{type}-{category}.org，并刷新索引
+        if args.type_ and args.type_ != old_type:
+            card_id = parse_org_prop(content, "ID") or card.stem.split("-")[0]
+            category = parse_org_prop(content, "CATEGORY") or DEFAULT_CATEGORY
+            new_path = card.parent / f"{card_id}-{args.type_}-{category}.org"
+            if new_path != card and not new_path.exists():
+                card.rename(new_path)
+                updated = new_path
+        if reclassify:
+            _upsert_card(index, updated, ctx)
+            _save_index(index, ctx)
+    except BaseException as exc:
+        originals: dict[Path, bytes | None] = {
+            card: original,
+            ctx.index: original_index,
+        }
+        if updated != card:
+            originals[updated] = None
+        failures = restore_text_files(originals)
+        if failures:
+            raise RuntimeError(
+                f"update 回滚失败（{', '.join(failures)}）"
+            ) from exc
+        raise
     print(f"已更新: {updated}")
 
 
@@ -726,12 +767,25 @@ def cmd_touch(args: argparse.Namespace, ctx=None) -> None:
     if not card:
         die(f"未找到卡片: {target}")
 
+    originals: dict[Path, bytes | None] = {card: card.read_bytes()}
+    original_index = ctx.index.read_bytes() if ctx.index.exists() else None
+    try:
+        if args.used_only:
+            touch_card(card, "LAST_USED", ctx)
+        else:
+            touch_card(card, "LAST_USED", ctx)
+            touch_card(card, "LAST_VERIFIED", ctx)
+    except BaseException as exc:
+        originals[ctx.index] = original_index
+        failures = restore_text_files(originals)
+        if failures:
+            raise RuntimeError(
+                f"touch 回滚失败（{', '.join(failures)}）"
+            ) from exc
+        raise
     if args.used_only:
-        touch_card(card, "LAST_USED", ctx)
         print(f"已更新 LAST_USED: {card.name}")
     else:
-        touch_card(card, "LAST_USED", ctx)
-        touch_card(card, "LAST_VERIFIED", ctx)
         print(f"已更新 LAST_USED + LAST_VERIFIED: {card.name}")
 
 
@@ -750,8 +804,13 @@ def cmd_merge(args: argparse.Namespace, ctx=None) -> None:
     if not primary:
         die(f"未找到主卡片: {primary_id}")
 
-    primary_content = primary.read_text(encoding="utf-8")
+    original_bytes = primary.read_bytes()
+    primary_content = original_bytes.decode("utf-8")
+    if not has_top_property_drawer(primary_content):
+        die("主卡片缺少顶层 PROPERTIES 抽屉")
+    original_contents: dict[Path, bytes] = {primary: original_bytes}
     merged_from_ids = []
+    planned_secondary: list[tuple[Path, str, str]] = []
 
     for sec_id in secondary_ids:
         sec = _resolve_card(sec_id, ctx)
@@ -762,7 +821,9 @@ def cmd_merge(args: argparse.Namespace, ctx=None) -> None:
             print(f"警告: 跳过自身合并 {sec_id}", file=sys.stderr)
             continue
 
-        sec_content = sec.read_text(encoding="utf-8")
+        sec_bytes = sec.read_bytes()
+        sec_content = sec_bytes.decode("utf-8")
+        original_contents[sec] = sec_bytes
         sec_title = read_org_title(sec_content)
         sec_card_id = parse_org_prop(sec_content, "ID") or sec.stem.split("-")[0]
         merged_from_ids.append(sec_card_id)
@@ -791,35 +852,42 @@ def cmd_merge(args: argparse.Namespace, ctx=None) -> None:
         body = "\n".join(body_lines).strip()
         primary_content = primary_content.rstrip("\n") + f"\n{merge_section}{body}\n"
 
-        # 设置 secondary 为 archived
-        sec_new = sec_content
-        if ":STATUS:" in sec_new:
-            sec_new = re.sub(r":STATUS:\s*.+", ":STATUS:   archived", sec_new)
-        else:
-            sec_new = sec_new.replace(":END:", ":STATUS:   archived\n:END:", 1)
-        if ":MERGED_INTO:" not in sec_new:
-            sec_new = sec_new.replace(":END:", f":MERGED_INTO:  {primary_id}\n:END:", 1)
-        atomic_write(sec, sec_new)
-        print(f"  已归档: {sec.name}")
+        sec_new = set_org_prop(sec_content, "STATUS", "archived")
+        if not parse_org_prop(sec_new, "MERGED_INTO"):
+            sec_new = set_org_prop(sec_new, "MERGED_INTO", primary_id)
+        planned_secondary.append((sec, sec_card_id, sec_new))
 
     if not merged_from_ids:
         die("没有可合并的卡片")
 
-    # 更新 primary 的 MERGED_FROM
+    # 所有读改写和索引准备先完成；写阶段按 secondary → primary 顺序。
     merged_str = ",".join(merged_from_ids)
-    if ":MERGED_FROM:" in primary_content:
-        primary_content = re.sub(
-            r":MERGED_FROM:\s*.+", f":MERGED_FROM: {merged_str}", primary_content
-        )
-    else:
-        primary_content = primary_content.replace(
-            ":END:", f":MERGED_FROM: {merged_str}\n:END:", 1
-        )
-
-    atomic_write(primary, primary_content)
-
-    # 更新索引
+    primary_content = set_org_prop(primary_content, "MERGED_FROM", merged_str)
     index = _load_index(ctx)
-    _upsert_card(index, primary, ctx)
-    _save_index(index, ctx)
+    original_index = ctx.index.read_bytes() if ctx.index.exists() else None
+
+    try:
+        for sec, _sec_card_id, sec_new in planned_secondary:
+            atomic_write(sec, sec_new)
+
+        atomic_write(primary, primary_content)
+
+        # 所有文件写入成功后再一次性发布索引；任何失败均回滚已写卡片。
+        for sec, _sec_card_id, _sec_new in planned_secondary:
+            _upsert_card(index, sec, ctx)
+        _upsert_card(index, primary, ctx)
+        _save_index(index, ctx)
+    except BaseException as exc:
+        # atomic_write 只保证单文件；跨文件 merge 需自行恢复所有已写卡片与索引。
+        originals: dict[Path, bytes | None] = dict(original_contents)
+        originals[ctx.index] = original_index
+        failures = restore_text_files(originals)
+        if failures:
+            raise RuntimeError(
+                f"merge 回滚失败（{', '.join(failures)}）"
+            ) from exc
+        raise
+
+    for _sec, _sec_card_id, _sec_new in planned_secondary:
+        print(f"  已归档: {_sec.name}")
     print(f"已合并 {len(merged_from_ids)} 张卡片到: {primary.name}")

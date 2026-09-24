@@ -12,6 +12,7 @@ import argparse
 import json
 import re
 from datetime import datetime
+from pathlib import Path
 
 from agenote.core import (
     DEDUP_CATEGORY_BONUS,
@@ -25,15 +26,17 @@ from agenote.core import (
     default_context,
 )
 from agenote.orgserde import (
+    delete_org_prop,
     parse_org_prop,
     read_org_title,
+    set_org_prop,
 )
 from agenote.index import (
     _load_index,
     _save_index,
     _upsert_card,
 )
-from agenote.safeio import atomic_write
+from agenote.safeio import atomic_write, restore_text_files
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -55,30 +58,44 @@ def cmd_archive(args: argparse.Namespace, ctx=None) -> None:
     # 归档指定卡片（agent 审查候选清单后批量执行）
     if not args.id:
         die("请指定卡片 ID 或使用 --stale 查看归档候选")
-    archived = []
+    # 先完成整批解析与内容准备；任何 ID 无效时都不写盘。
+    index = _load_index(ctx)
+    prepared: list[tuple[Path, bytes, str]] = []
     for card_id in args.id:
         card = _resolve_card(card_id, ctx)
         if not card:
             die(f"未找到卡片: {card_id}")
 
-        content = card.read_text(encoding="utf-8")
-        if ":STATUS:" in content:
-            content = re.sub(r":STATUS:\s*.+", ":STATUS:   archived", content)
-        else:
-            content = content.replace(":END:", ":STATUS:   archived\n:END:", 1)
-        if ":ARCHIVED_AT:" not in content:
-            content = content.replace(":END:", f":ARCHIVED_AT: [{now()}]\n:END:", 1)
-        if getattr(args, "reason", None):
-            if ":ARCHIVE_REASON:" not in content:
-                content = content.replace(
-                    ":END:", f":ARCHIVE_REASON: {args.reason}\n:END:", 1
-                )
+        original_bytes = card.read_bytes()
+        original = original_bytes.decode("utf-8")
+        content = set_org_prop(original, "STATUS", "archived")
+        if not parse_org_prop(content, "ARCHIVED_AT"):
+            content = set_org_prop(content, "ARCHIVED_AT", f"[{now()}]")
+        if getattr(args, "reason", None) and not parse_org_prop(
+            content, "ARCHIVE_REASON"
+        ):
+            content = set_org_prop(content, "ARCHIVE_REASON", args.reason)
+        prepared.append((card, original_bytes, content))
 
-        atomic_write(card, content)
-        index = _load_index(ctx)
-        _upsert_card(index, card, ctx)
+    original_index = ctx.index.read_bytes() if ctx.index.exists() else None
+    try:
+        for card, _original, content in prepared:
+            atomic_write(card, content)
+        for card, _original, _content in prepared:
+            _upsert_card(index, card, ctx)
         _save_index(index, ctx)
-        archived.append(card.name)
+    except BaseException as exc:
+        originals: dict[Path, bytes | None] = {
+            card: original for card, original, _content in prepared
+        }
+        originals[ctx.index] = original_index
+        failures = restore_text_files(originals)
+        if failures:
+            raise RuntimeError(
+                f"archive 回滚失败（{', '.join(failures)}）"
+            ) from exc
+        raise
+    archived = [card.name for card, _original, _content in prepared]
     print(f"已归档 {len(archived)} 张: {', '.join(archived)}")
 
 
@@ -150,23 +167,29 @@ def cmd_restore(args: argparse.Namespace, ctx=None) -> None:
     new_status = args.status or "stable"
     if new_status not in VALID_STATUSES:
         die(f"无效状态: {new_status}（可选: {', '.join(sorted(VALID_STATUSES))}）")
-
-    content = card.read_text(encoding="utf-8")
-    if ":STATUS:" in content:
-        content = re.sub(r":STATUS:\s*.+", f":STATUS:   {new_status}", content)
-    content = re.sub(r":ARCHIVED_AT:\s*.+\n?", "", content)
-    content = re.sub(r":ARCHIVE_REASON:\s*.+\n?", "", content)
-    if ":LAST_VERIFIED:" in content:
-        content = re.sub(
-            r":LAST_VERIFIED:\s*\[.+?\]", f":LAST_VERIFIED: [{now()}]", content
-        )
-    else:
-        content = content.replace(":END:", f":LAST_VERIFIED: [{now()}]\n:END:", 1)
-
-    atomic_write(card, content)
     index = _load_index(ctx)
-    _upsert_card(index, card, ctx)
-    _save_index(index, ctx)
+
+    original_bytes = card.read_bytes()
+    original = original_bytes.decode("utf-8")
+    content = set_org_prop(original, "STATUS", new_status)
+    content = delete_org_prop(content, "ARCHIVED_AT")
+    content = delete_org_prop(content, "ARCHIVE_REASON")
+    content = set_org_prop(content, "LAST_VERIFIED", f"[{now()}]")
+    original_index = ctx.index.read_bytes() if ctx.index.exists() else None
+
+    try:
+        atomic_write(card, content)
+        _upsert_card(index, card, ctx)
+        _save_index(index, ctx)
+    except BaseException as exc:
+        failures = restore_text_files(
+            {card: original_bytes, ctx.index: original_index}
+        )
+        if failures:
+            raise RuntimeError(
+                f"restore 回滚失败（{', '.join(failures)}）"
+            ) from exc
+        raise
     print(f"已恢复为 {new_status}: {card.name}")
 
 
