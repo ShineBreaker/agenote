@@ -183,6 +183,32 @@ SCHEMA: dict[str, dict[str, Key]] = {
             comment="hermes 根（分节记忆在 memories/*.md）",
         ),
     },
+    "memories": {
+        "import_dedup_threshold": Key(
+            0.7, env="AGENOTE_MEM_IMPORT_DEDUP_THRESHOLD", comment="import 去重相似度阈值（0-1，越高越严）"
+        ),
+        "secret_scan_enabled": Key(
+            True, env="AGENOTE_MEM_SECRET_SCAN", comment="import/export 是否扫描密钥/口令并拒写"
+        ),
+        "machine_key": Key(
+            "", env="AGENOTE_MACHINE_KEY", comment="本机记忆键（空 = 自动取 hostname）"
+        ),
+        "export_stale_days": Key(
+            30, env="AGENOTE_MEM_EXPORT_STALE_DAYS", comment="export/--list 时效标记阈值（超此天未验证标 unverified）"
+        ),
+    },
+    "memories.targets": {
+        # export 落点（空 = 不启用该目标；N3 落盘时消费，键名与之对齐）
+        "claude_file": Key(
+            "", env="AGENOTE_MEM_TARGET_CLAUDE", comment="export → Claude MEMORY 落点文件（空 = 不启用）"
+        ),
+        "codex_file": Key(
+            "", env="AGENOTE_MEM_TARGET_CODEX", comment="export → Codex MEMORY 落点文件（空 = 不启用）"
+        ),
+        "hermes_file": Key(
+            "", env="AGENOTE_MEM_TARGET_HERMES", comment="export → Hermes MEMORY 落点文件（空 = 不启用）"
+        ),
+    },
     "reconcile": {
         "min_fact_len": Key(15, comment="事实最短长度（更短视为噪声，dream 同用）"),
         "noise_scan_chars": Key(250, comment="噪声标记扫描窗口（USER 提问区字符数）"),

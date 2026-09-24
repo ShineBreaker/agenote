@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import os
 import re
+import socket
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -267,6 +268,16 @@ def cmd_memory(args: argparse.Namespace, ctx=None) -> None:
         _memory_stale(ctx)
         return
 
+    # --revalidate：只读列出待重验条目（machine 变更批量 + 手填过期 + 孤儿）
+    if getattr(args, "revalidate", False):
+        _memory_revalidate(ctx)
+        return
+
+    # --validate：刷新单条 VALIDATED_AT（MUTATING）
+    if getattr(args, "validate", None):
+        _memory_validate(args.validate, ctx)
+        return
+
     # --add：添加记忆（优先于 --project 检索）
     if getattr(args, "add", False):
         _memory_add(args, ctx)
@@ -295,6 +306,15 @@ def _memory_list(args: argparse.Namespace, ctx=None) -> None:
 
     want_type = getattr(args, "type", None)
     want_scope = getattr(args, "scope", None)
+    fresh_on = getattr(args, "freshness", False)
+    # S7 收尾：--freshness 开启才算时效，阈值走 [memories].export_stale_days；默认输出不变
+    export_stale_days = STALE_DAYS
+    if fresh_on:
+        from agenote import config as _config
+        try:
+            export_stale_days = int(str(_config.get("memories", "export_stale_days")))
+        except (ValueError, TypeError, KeyError):
+            pass
     rows = []
     for e in entries:
         if want_type and e["type"] != want_type:
@@ -302,13 +322,23 @@ def _memory_list(args: argparse.Namespace, ctx=None) -> None:
         scope = (e["props"].get("SCOPE") or "").strip().lower()
         if want_scope and scope != str(want_scope).lower():
             continue
+        if fresh_on:
+            vd = parse_memory_date(
+                e["props"].get("VALIDATED_AT")
+                or e["props"].get("UPDATED")
+                or e["props"].get("CREATED")
+                or ""
+            )
+            days = (datetime.now().date() - vd).days if vd else None
+            e["freshness"] = unverified_tag(days, export_stale_days)
         rows.append({**e, "scope": scope})
 
     if getattr(args, "json", False):
         print(_json.dumps([
             {"id": e["id"], "title": e["title"], "type": e["type"],
              "kind": e["kind"], "section": e["section"], "scope": e["scope"],
-             "hook": e["hook"], "validated_at": e["validated_at"]}
+             "hook": e["hook"], "validated_at": e["validated_at"],
+             **({"freshness": e.get("freshness", "")} if fresh_on else {})}
             for e in rows
         ], ensure_ascii=False))
         return
@@ -325,6 +355,8 @@ def _memory_list(args: argparse.Namespace, ctx=None) -> None:
             details.append(f"validated={e['validated_at']}")
         if details:
             meta += f" ({', '.join(details)})"
+        if fresh_on and e.get("freshness"):
+            meta += f" {e['freshness']}"
         print(meta)
         if e["hook"]:
             print(f"    # {e['hook']}")
@@ -441,6 +473,9 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
     entry_lines.append(f"   :UPDATED:  [{today()}]")
     entry_lines.append(f"   :TYPE:     {mem_type}")
     entry_lines.append(f"   :SCOPE:    {'machine' if mem_type == 'E' else 'user'}")
+    if mem_type == "E":
+        # N5：E 条目记录所属机器键（切机检测用）；EXPIRES_AFTER 默认不写（空）
+        entry_lines.append(f"   :MACHINE:  {resolve_machine_key()}")
     if mem_type == "F" and getattr(args, "ref", None):
         entry_lines.append(f"   :REF:      {args.ref}")
     entry_lines.append("   :END:")
@@ -621,6 +656,105 @@ def _memory_archive(entry_id: str, ctx=None) -> None:
 
     atomic_write(ctx.memory_org, "\n".join(lines))
     print(f"已归档 {entry_id} → deprecated")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# N5 事件驱动重验：machine 键变更批量 + 手填过期 + 孤儿（只读列出 + 单条刷新）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def resolve_machine_key() -> str:
+    """本机记忆键：[memories].machine_key 非空则用之，否则 hostname。
+
+    import/export/revalidate 共用同一口径：任一入口拿到的键与条目 :MACHINE:
+    不一致即视为切机，该条目待重验。
+    """
+    from agenote import config as _config
+
+    try:
+        configured = str(_config.get("memories", "machine_key") or "").strip()
+    except KeyError:
+        configured = ""
+    return configured or socket.gethostname()
+
+
+def _memory_revalidate(ctx=None) -> None:
+    """只读列出待重验条目（不写盘，不动 --stale 输出）。
+
+    三源：machine-changed（SCOPE:machine 的 E 条目 :MACHINE: 与当前键不一致
+    → 切机时自然全量命中）、expired（手填 :EXPIRES_AFTER: 已过）、
+    orphan（project 索引的 PATH/FILE 已失效）。
+    """
+    ctx = ctx or default_context()
+    if not ctx.memory_org.exists():
+        print("(记忆文件不存在)")
+        return
+
+    key = resolve_machine_key()
+    entries = _iter_memory_entries(_read_memory_org_text(ctx))
+    hits: list[tuple[str, str, str]] = []
+    for e in entries:
+        if e["section"].lower() == "deprecated":
+            continue
+        props = e["props"]
+        scope = (props.get("SCOPE") or "").strip().lower()
+        machine = (props.get("MACHINE") or "").strip()
+        if e["type"] == "E" and scope == "machine" and machine and machine != key:
+            hits.append((e["id"], e["title"], "machine-changed"))
+            continue
+        exp = parse_memory_date((props.get("EXPIRES_AFTER") or "").strip("[] "))
+        if exp is not None and (datetime.now().date() - exp).days >= 0:
+            hits.append((e["id"], e["title"], "expired"))
+            continue
+        if e["kind"] == "index":
+            target = (props.get("PATH") or props.get("FILE") or "").strip()
+            if target and not Path(target).expanduser().exists():
+                hits.append((e["id"], e["title"], "orphan"))
+
+    if not hits:
+        print("无待重验记忆")
+        return
+    for entry_id, title, reason in hits:
+        print(f"  ** {entry_id} {title} ({reason})")
+    print(f"\n共 {len(hits)} 条待重验（memory --validate <id> 刷新）")
+
+
+def _memory_validate(entry_id: str, ctx=None) -> None:
+    """刷新单条 VALIDATED_AT=[today]（MUTATING）；失败提示 supersede/归档。"""
+    ctx = ctx or default_context()
+    if not ctx.memory_org.exists():
+        die("记忆文件不存在")
+
+    text = _read_memory_org_text(ctx)
+    lines = text.split("\n")
+
+    start = next(
+        (i for i, line in enumerate(lines) if match_memory_entry(line, entry_id)),
+        None,
+    )
+    if start is None:
+        die(f"未找到条目: {entry_id}（若已失效可考虑 supersede 或归档替代）")
+
+    end = start + 1
+    while end < len(lines) and not is_memory_boundary(lines[end]):
+        end += 1
+    for j in range(start + 1, end):
+        new_line = set_memory_prop_line(lines[j], "VALIDATED_AT", today())
+        if new_line is not None:
+            lines[j] = new_line
+            break
+        if lines[j].strip() == ":END:":
+            lines.insert(j, f"   :VALIDATED_AT:  [{today()}]")
+            break
+    else:
+        lines[start + 1 : start + 1] = [
+            "   :PROPERTIES:",
+            f"   :VALIDATED_AT:  [{today()}]",
+            "   :END:",
+        ]
+
+    atomic_write(ctx.memory_org, "\n".join(lines))
+    print(f"已验证 {entry_id} → {today()}")
 
 
 def _memory_stale(ctx=None) -> None:

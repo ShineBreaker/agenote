@@ -66,7 +66,7 @@ _agenote_completions() {
         memory)
             case "$prev" in
                 --type) COMPREPLY=( $(compgen -W "user feedback project environment reference" -- "$cur") );;
-                *) COMPREPLY=( $(compgen -W "--type --project --add --get --title --stdin --stale --touch --archive --archive-to-file --project-touch -h --help" -- "$cur") );;
+                *) COMPREPLY=( $(compgen -W "--type --project --add --get --title --stdin --stale --revalidate --validate --touch --archive --archive-to-file --project-touch --list --scope --json --freshness -h --help" -- "$cur") );;
             esac
             ;;
         *) COMPREPLY=() ;;
