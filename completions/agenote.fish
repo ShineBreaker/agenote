@@ -20,6 +20,6 @@ complete -c agenote -n '__fish_seen_subcommand_from reconcile' -l dry-run -d '�
 complete -c agenote -n '__fish_seen_subcommand_from extract' -l source -x -a 'claude codex crush omp opencode zcode all' -d '来源'
 complete -c agenote -n '__fish_seen_subcommand_from extract' -l dry-run -d '只预览不落盘'
 complete -c agenote -n '__fish_seen_subcommand_from scan-memories' -l source -x -a 'claude codex hermes pi reasonix zcode all' -d '来源'
-complete -c agenote -n '__fish_seen_subcommand_from memory' -l type -x -a 'feedback project reference' -d '记忆类型'
+complete -c agenote -n '__fish_seen_subcommand_from memory' -l type -x -a 'user feedback project environment reference' -d '记忆类型'
 complete -c agenote -n '__fish_seen_subcommand_from lint; and not __fish_seen_subcommand_from --fix --check' -F
 complete -c agenote -n '__fish_seen_subcommand_from format' -F

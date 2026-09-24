@@ -155,17 +155,17 @@ run agenote --domain human ""
         check=True,
     )
     lines = result.stdout.splitlines()
-    assert lines[:3] == ["feedback", "project", "reference"]
-    assert lines[3:6] == ["light", "dark", "auto"]
-    assert "hermes" in lines[6:13] and "all" in lines[6:13]
-    assert lines[13:15] == ["human", "agenote"]
+    assert lines[:5] == ["user", "feedback", "project", "environment", "reference"]
+    assert lines[5:8] == ["light", "dark", "auto"]
+    assert "hermes" in lines[8:15] and "all" in lines[8:15]
+    assert lines[15:17] == ["human", "agenote"]
     # curate 清空 COMPREPLY 后 printf 无参数执行一次格式 → 恰一个空行
-    assert lines[15:16] == [""]
+    assert lines[17:18] == [""]
     # 全局选项之后仍补全部子命令 + 全局选项；数量不硬编码，随真相源走
     top = sorted(COMMANDS) + GLOBAL_OPTS
-    after_version = lines[16:16 + len(top)]
-    after_domain_value = lines[16 + len(top):16 + 2 * len(top)]
-    assert lines[16 + 2 * len(top):] in ([], [""])
+    after_version = lines[18:18 + len(top)]
+    after_domain_value = lines[18 + len(top):18 + 2 * len(top)]
+    assert lines[18 + 2 * len(top):] in ([], [""])
     for seg in (after_version, after_domain_value):
         assert len(seg) == len(top)
         assert set(seg) == set(COMMANDS) | set(GLOBAL_OPTS)
