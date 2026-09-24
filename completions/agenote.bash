@@ -67,7 +67,7 @@ _agenote_completions() {
             case "$prev" in
                 --type) COMPREPLY=( $(compgen -W "user feedback project environment reference" -- "$cur") );;
                 --source) COMPREPLY=( $(compgen -W "claude codex hermes pi reasonix zcode all" -- "$cur") );;
-                *) COMPREPLY=( $(compgen -W "--type --project --add --get --title --stdin --stale --touch --archive --archive-to-file --project-touch --import --conflicts --source --dry-run -h --help" -- "$cur") );;
+                *) COMPREPLY=( $(compgen -W "--type --project --add --get --title --stdin --stale --touch --archive --archive-to-file --project-touch --list --scope --json --freshness --import --conflicts --source --dry-run --export --supersede --revalidate --validate -h --help" -- "$cur") );;
             esac
             ;;
         *) COMPREPLY=() ;;

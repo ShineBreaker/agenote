@@ -551,6 +551,8 @@ def print_help() -> None:
             agenote memory --add --type <类型> --title "标题" --stdin  添加记忆
             agenote memory --list [--type U|F|P|E|R] [--scope S] [--json]  只读列出条目
             agenote memory --stale                   列出陈旧记忆
+            agenote memory --revalidate             只读列出待重验条目
+            agenote memory --validate <ID>          刷新单条 VALIDATED_AT
             agenote memory --touch <ID>              更新时间戳
             agenote memory --archive <ID>            归档记忆到 deprecated
             agenote memory --archive-to-file <ID>    归档 feedback 到 MEMORY-ARCHIVE.org
@@ -560,7 +562,6 @@ def print_help() -> None:
              agenote memory --conflicts              只读列出冲突队列
             agenote memory --get                     查看全文
             agenote memory --import [--source X|all] [--dry-run]  N2 摄取导入
-            agenote memory --conflicts [--json]      只读列出冲突队列
 
   reindex   重建知识库索引（WEIGHT 随之按 usage/新鲜度公式重算）
             agenote reindex
@@ -855,6 +856,10 @@ def _main() -> None:
         "--stdin", action="store_true", help="从标准输入读取内容"
     )
     memory_parser.add_argument("--stale", action="store_true", help="列出陈旧记忆")
+    memory_parser.add_argument(
+        "--revalidate", action="store_true", help="只读列出待重验条目（切机批量/过期/孤儿）"
+    )
+    memory_parser.add_argument("--validate", metavar="ID", help="刷新单条 VALIDATED_AT")
     memory_parser.add_argument("--touch", metavar="ID", help="更新记忆时间戳")
     memory_parser.add_argument("--archive", metavar="ID", help="归档记忆到 deprecated")
     memory_parser.add_argument(
