@@ -5,6 +5,7 @@
 """kb_memory — 知识库记忆系统：MEMORY.org 管理、项目记忆、模式管理"""
 
 import argparse
+import hashlib
 import os
 import re
 import sys
@@ -113,6 +114,90 @@ def format_memory_entry_line(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# N1 事实层数据模型：类型化条目 + origin 链（读到无 TYPE 按前缀/节推导，不重写文件）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# --type 短字母与长名互映射（CLI 侧统一归一化为短字母）
+TYPE_ALIASES = {
+    "u": "U", "user": "U",
+    "f": "F", "feedback": "F",
+    "p": "P", "project": "P",
+    "e": "E", "environment": "E",
+    "r": "R", "reference": "R",
+}
+SECTION_TO_TYPE = {
+    "user": "U", "feedback": "F", "project": "P",
+    "environment": "E", "reference": "R",
+}
+
+
+def origin_id(agent: str, relpath: str, title: str) -> str:
+    """N1 幂等键：sha256(AGENT:相对路径:标题)[:16]。"""
+    return hashlib.sha256(f"{agent}:{relpath}:{title}".encode("utf-8")).hexdigest()[:16]
+
+
+def _iter_memory_entries(text: str) -> list[dict]:
+    """解析 MEMORY.org 全部 `**` 条目。
+
+    每个条目 dict：section/id(K001 或项目名)/title/type(U|F|P|E|R|None)/
+    kind(entry|index)/props/hook/validated_at。
+    TYPE 推导优先级：显式 :TYPE: > 前缀字母+序号 > 所在节映射；
+    project 节无前缀行是项目索引（kind=index），其余为约定条目。
+    """
+    entries: list[dict] = []
+    lines = text.split("\n")
+    section = ""
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m_sec = re.match(r"^\*\s+(.+)", line)
+        if m_sec:
+            section = m_sec.group(1).strip()
+            i += 1
+            continue
+        m_entry = re.match(r"^\*\*\s+(.+)", line)
+        if not m_entry:
+            i += 1
+            continue
+        heading = m_entry.group(1).strip()
+        m_typed = re.match(r"^([UFPER])(\d+)\s*(.*)$", heading)
+        # 条目正文：到下一个 ** 或 * 为止；收集 props 与钩子行（`# ...`）
+        props: dict[str, str] = {}
+        hook = ""
+        j = i + 1
+        while j < len(lines) and not re.match(r"^\*\*?\s+", lines[j]):
+            pm = re.match(r"\s*:(\w+):\s*(.+)", lines[j])
+            if pm:
+                props[pm.group(1)] = pm.group(2).strip()
+            elif not hook:
+                hm = re.match(r"\s*#\s?(.*)", lines[j])
+                if hm and hm.group(1).strip():
+                    hook = hm.group(1).strip()[:120]
+            j += 1
+        if m_typed:
+            entry_id = m_typed.group(1) + m_typed.group(2)
+            title = m_typed.group(3).strip()
+            kind = "entry"
+            derived = m_typed.group(1)
+        else:
+            entry_id = heading  # 项目索引行：id 即项目名
+            title = heading
+            kind = "index" if section.lower() == "project" else "entry"
+            derived = None
+        entry_type = (props.get("TYPE") or "").strip().upper() or None
+        if entry_type not in ("U", "F", "P", "E", "R"):
+            entry_type = derived or SECTION_TO_TYPE.get(section.lower())
+        entries.append({
+            "section": section, "id": entry_id, "title": title,
+            "type": entry_type, "kind": kind, "props": props,
+            "hook": hook,
+            "validated_at": props.get("VALIDATED_AT", "").strip("[] "),
+        })
+        i = j
+    return entries
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 子命令: memory — 管理记忆系统
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -122,6 +207,16 @@ def cmd_memory(args: argparse.Namespace, ctx=None) -> None:
     ctx = ctx or default_context()
     ensure_dirs(ctx)
 
+    # N1：--type 短字母/长名统一归一化为短字母
+    mem_type = getattr(args, "type", None)
+    if mem_type and str(mem_type).lower() in TYPE_ALIASES:
+        args.type = TYPE_ALIASES[str(mem_type).lower()]
+
+    # --list：只读列出条目（不持 KB 锁，见 cli.py）
+    if getattr(args, "list", False):
+        _memory_list(args, ctx)
+        return
+
     # --get：输出 MEMORY.org 全文或指定节
     if getattr(args, "get", False):
         if not ctx.memory_org.exists():
@@ -130,10 +225,15 @@ def cmd_memory(args: argparse.Namespace, ctx=None) -> None:
         text = _read_memory_org_text(ctx)
         mem_type = getattr(args, "type", None)
         if mem_type:
+            # 只输出指定节的内容（mem_type 已归一化为短字母，转回节名匹配）
+            want_sec = next(
+                (s for s, t in SECTION_TO_TYPE.items() if t == mem_type),
+                str(mem_type).lower(),
+            )
             # 只输出指定节的内容
             sections = _parse_memory_sections(text)
             for sec_name, entries in sections.items():
-                if mem_type in sec_name.lower():
+                if want_sec in sec_name.lower():
                     for _start, _end, sec_content in entries:
                         print(sec_content, end="")
                     return
@@ -181,6 +281,55 @@ def cmd_memory(args: argparse.Namespace, ctx=None) -> None:
     _memory_overview(args, ctx)
 
 
+def _memory_list(args: argparse.Namespace, ctx=None) -> None:
+    """N1 只读：列出条目，支持 --type/--scope/--json 过滤。"""
+    import json as _json
+
+    ctx = ctx or default_context()
+    if not ctx.memory_org.exists():
+        print("(记忆文件不存在)")
+        return
+
+    text = ctx.memory_org.read_text(encoding="utf-8")
+    entries = _iter_memory_entries(text)
+
+    want_type = getattr(args, "type", None)
+    want_scope = getattr(args, "scope", None)
+    rows = []
+    for e in entries:
+        if want_type and e["type"] != want_type:
+            continue
+        scope = (e["props"].get("SCOPE") or "").strip().lower()
+        if want_scope and scope != str(want_scope).lower():
+            continue
+        rows.append({**e, "scope": scope})
+
+    if getattr(args, "json", False):
+        print(_json.dumps([
+            {"id": e["id"], "title": e["title"], "type": e["type"],
+             "kind": e["kind"], "section": e["section"], "scope": e["scope"],
+             "hook": e["hook"], "validated_at": e["validated_at"]}
+            for e in rows
+        ], ensure_ascii=False))
+        return
+
+    if not rows:
+        print("(无匹配条目)")
+        return
+    for e in rows:
+        meta = f"[{e['type'] or '?'}] {e['id']} {e['title']}"
+        details = []
+        if e["scope"]:
+            details.append(f"scope={e['scope']}")
+        if e["validated_at"]:
+            details.append(f"validated={e['validated_at']}")
+        if details:
+            meta += f" ({', '.join(details)})"
+        print(meta)
+        if e["hook"]:
+            print(f"    # {e['hook']}")
+
+
 def _memory_overview(args: argparse.Namespace, ctx=None) -> None:
     """列出所有记忆概览或按类型过滤。"""
     ctx = ctx or default_context()
@@ -193,12 +342,8 @@ def _memory_overview(args: argparse.Namespace, ctx=None) -> None:
 
     mem_type = getattr(args, "type", None)
     if mem_type:
-        # 映射类型到节名
-        type_to_section = {
-            "feedback": "feedback",
-            "project": "project",
-            "reference": "reference",
-        }
+        # 映射类型到节名（mem_type 已归一化为短字母）
+        type_to_section = {t: s for s, t in SECTION_TO_TYPE.items()}
         section_name = type_to_section.get(mem_type)
         if not section_name:
             die(f"未知记忆类型: {mem_type}")
@@ -234,6 +379,7 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
     """添加记忆条目。"""
     ctx = ctx or default_context()
     mem_type = getattr(args, "type", None) or "feedback"
+    mem_type = TYPE_ALIASES.get(str(mem_type).lower(), mem_type)
     title = getattr(args, "title", "") or ""
     use_stdin = getattr(args, "stdin", False)
     project_name = getattr(args, "project", None)
@@ -241,7 +387,6 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
     body = ""
     if use_stdin and not sys.stdin.isatty():
         body = sys.stdin.read()
-
     if not title:
         # 从 stdin 内容第一行生成 title
         if body:
@@ -250,7 +395,7 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
         else:
             die("添加记忆需要 --title")
 
-    if mem_type == "project":
+    if mem_type == "P":
         _memory_add_project(title, body, project_name, ctx)
         return
 
@@ -261,10 +406,7 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
     lines = text.split("\n")
     sections = _parse_memory_sections(text)
 
-    type_to_section = {
-        "feedback": "feedback",
-        "reference": "reference",
-    }
+    type_to_section = {t: s for s, t in SECTION_TO_TYPE.items() if t != "P"}
     section_name = type_to_section.get(mem_type)
     if not section_name:
         die(f"未知记忆类型: {mem_type}")
@@ -276,7 +418,7 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
             target_section = entries[0]
             break
 
-    prefix = "F" if mem_type == "feedback" else "R"
+    prefix = mem_type
 
     if target_section:
         _start, _end, sec_content = target_section
@@ -297,7 +439,9 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
     entry_lines.append("   :PROPERTIES:")
     entry_lines.append(f"   :CREATED:  [{today()}]")
     entry_lines.append(f"   :UPDATED:  [{today()}]")
-    if mem_type == "feedback" and getattr(args, "ref", None):
+    entry_lines.append(f"   :TYPE:     {mem_type}")
+    entry_lines.append(f"   :SCOPE:    {'machine' if mem_type == 'E' else 'user'}")
+    if mem_type == "F" and getattr(args, "ref", None):
         entry_lines.append(f"   :REF:      {args.ref}")
     entry_lines.append("   :END:")
     entry_lines.append(f"# {build_memory_hook(title, body)}")

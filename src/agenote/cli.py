@@ -549,6 +549,7 @@ def print_help() -> None:
             agenote memory --type feedback|project|reference  按类型过滤
             agenote memory --project <名称|路径|.>   检索项目记忆（含 PATH/UPDATED 健康提示）
             agenote memory --add --type <类型> --title "标题" --stdin  添加记忆
+            agenote memory --list [--type U|F|P|E|R] [--scope S] [--json]  只读列出条目
             agenote memory --stale                   列出陈旧记忆
             agenote memory --touch <ID>              更新时间戳
             agenote memory --archive <ID>            归档记忆到 deprecated
@@ -827,7 +828,19 @@ def _main() -> None:
     # ── memory ──────────────────────────────────────────────────────────
     memory_parser = subparsers.add_parser("memory", help="管理记忆系统")
     memory_parser.add_argument(
-        "--type", choices=["feedback", "project", "reference"], help="记忆类型过滤"
+        "--type",
+        choices=["feedback", "project", "reference", "user", "environment",
+                 "U", "F", "P", "E", "R"],
+        help="记忆类型过滤（长名或 U|F|P|E|R 短字母）",
+    )
+    memory_parser.add_argument(
+        "--list", action="store_true", help="只读列出条目（支持 --type/--scope/--json）"
+    )
+    memory_parser.add_argument(
+        "--scope", choices=["user", "project", "machine"], help="按 SCOPE 过滤（配合 --list）"
+    )
+    memory_parser.add_argument(
+        "--json", action="store_true", help="JSON 输出（配合 --list）"
     )
     memory_parser.add_argument("--project", metavar="IDENTIFIER", help="项目名或路径")
     memory_parser.add_argument("--add", action="store_true", help="添加记忆")
@@ -1269,7 +1282,11 @@ def _main() -> None:
         # 锁在 agent 域根，一把锁覆盖人类+agent 两域；临界区毫秒级无性能问题）
         command = commands[args.command]
         try:
-            if args.command in MUTATING_COMMANDS:
+            # memory --list 是只读命令，不持 KB 锁（其余 memory 子动作仍走锁）
+            read_only = args.command == "memory" and bool(
+                getattr(args, "list", False)
+            )
+            if args.command in MUTATING_COMMANDS and not read_only:
                 with kb_lock(agenote_context().root / ".agenote.lock"):
                     command(args, ctx)
             else:

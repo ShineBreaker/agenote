@@ -139,9 +139,9 @@ WEIGHT_USAGE_BONUS = float(config.get("weights", "usage_bonus"))  # 每次 touch
 WEIGHT_USAGE_CAP = int(config.get("weights", "usage_cap"))  # 使用次数提升上限（×bonus）
 WEIGHT_STALE_PENALTY = float(config.get("weights", "stale_penalty"))  # 超 STALE_DAYS 未用的惩罚系数
 
-# 记忆一级节：deprecated 是生命周期终态（语义特例，排末尾），前三节即可添加的
+# 记忆一级节：deprecated 是生命周期终态（语义特例，排末尾），其余五节为 N1 五类型
 # 记忆类型（memory --type 补全与校验从 MEMORY_TYPES 派生，不在此重复罗列）。
-MEMORY_TYPES = ["feedback", "project", "reference"]
+MEMORY_TYPES = ["user", "feedback", "project", "environment", "reference"]
 MEMORY_SECTIONS = [*MEMORY_TYPES, "deprecated"]
 
 # 每个模板是一个行列表，用于 cmd_add 生成新卡片
