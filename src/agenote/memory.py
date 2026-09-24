@@ -382,6 +382,7 @@ def _memory_list(args: argparse.Namespace, ctx=None) -> None:
              "kind": e["kind"], "section": e["section"], "scope": e["scope"],
              "hook": e["hook"], "validated_at": e["validated_at"],
              "orphan": e["orphan"],
+             "deprecated": e.get("section", "").lower() == "deprecated",
              **({"freshness": e.get("freshness", "")} if fresh_on else {})}
             for e in rows
         ], ensure_ascii=False))
@@ -399,6 +400,8 @@ def _memory_list(args: argparse.Namespace, ctx=None) -> None:
             details.append(f"validated={e['validated_at']}")
         if e["orphan"]:
             details.append("orphan")
+        if e.get("section", "").lower() == "deprecated":
+            details.append("deprecated")
         if details:
             meta += f" ({', '.join(details)})"
         if fresh_on and e.get("freshness"):
