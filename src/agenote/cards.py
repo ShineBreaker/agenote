@@ -23,6 +23,7 @@ from agenote.core import (
     VALID_ENTRY_TYPES,
     VALID_STATUSES,
     STALE_DAYS,
+    ARCHIVE_THRESHOLD_DAYS,
     TYPE_PROMOTE_MIN,
     CARD_TEMPLATES,
     ENTRY_BODY_DEFAULTS,
@@ -764,14 +765,15 @@ def cmd_touch(args: argparse.Namespace, ctx=None) -> None:
     if not card:
         die(f"未找到卡片: {target}")
 
+    session = getattr(args, "session", None)
     originals: dict[Path, bytes | None] = {card: card.read_bytes()}
     original_index = ctx.index.read_bytes() if ctx.index.exists() else None
     try:
         if args.used_only:
-            touch_card(card, "LAST_USED", ctx)
+            touch_card(card, "LAST_USED", ctx, session=session)
         else:
-            touch_card(card, "LAST_USED", ctx)
-            touch_card(card, "LAST_VERIFIED", ctx)
+            touch_card(card, "LAST_USED", ctx, session=session)
+            touch_card(card, "LAST_VERIFIED", ctx, session=session)
     except BaseException as exc:
         originals[ctx.index] = original_index
         failures = restore_text_files(originals)
@@ -784,6 +786,89 @@ def cmd_touch(args: argparse.Namespace, ctx=None) -> None:
         print(f"已更新 LAST_USED: {card.name}")
     else:
         print(f"已更新 LAST_USED + LAST_VERIFIED: {card.name}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 子命令: sweep — done/stable → stale 降级候选（S2）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _sweep_candidates(index: dict) -> tuple[list[dict], list[dict]]:
+    """双键判龄：done 按 last_used（缺省 created），stable 按 last_verified。
+
+    list --unused-days 只收 done（其参数语义即 last_used）；stable 的
+    降级入口在这里，避免一个命令两套判龄。
+    """
+    done_cands, stable_cands = [], []
+    for c in index["cards"]:
+        status = c.get("status") or "done"
+        if status == "done":
+            age = _days_since(c.get("last_used") or c.get("created"))
+            if age > STALE_DAYS:
+                done_cands.append({**c, "days": age})
+        elif status == "stable":
+            age = _days_since(c.get("last_verified"))
+            if age > ARCHIVE_THRESHOLD_DAYS:
+                stable_cands.append({**c, "days": age})
+    return done_cands, stable_cands
+
+
+def cmd_sweep(args: argparse.Namespace, ctx=None) -> None:
+    """列出或执行 done/stable → stale 降级（默认 dry-run，只读出清单）。"""
+    ctx = ctx or default_context()
+    index = _load_index(ctx)
+    done_cands, stable_cands = _sweep_candidates(index)
+
+    if not getattr(args, "apply", False):
+        if getattr(args, "json", False):
+            print(json.dumps({"done": done_cands, "stable": stable_cands},
+                             ensure_ascii=False, indent=2))
+            return
+        for c in done_cands:
+            print(f"  [done] {c['id']}  {c.get('title', '')[:60]}  (>{c['days']}天未用)")
+        for c in stable_cands:
+            print(f"  [stable] {c['id']}  {c.get('title', '')[:60]}  (>{c['days']}天未验证)")
+        print(f"\n共 {len(done_cands) + len(stable_cands)} 张降级候选"
+              f"（done {len(done_cands)} / stable {len(stable_cands)}）"
+              f"—— dry-run，未改动；加 --apply 执行")
+        return
+
+    targets = done_cands + stable_cands
+    if not targets:
+        print("无降级候选，无需执行。")
+        return
+    # 先完成整批解析与内容准备；任何卡片缺失时都不写盘。
+    prepared: list[tuple[Path, bytes, str]] = []
+    for cand in targets:
+        card = _resolve_card(cand["id"], ctx)
+        if not card:
+            die(f"未找到卡片: {cand['id']}")
+        original_bytes = card.read_bytes()
+        content = original_bytes.decode("utf-8")
+        content = set_org_prop(content, "STATUS", "stale")
+        content = set_org_prop(content, "LAST_VERIFIED", f"[{now()}]")
+        prepared.append((card, original_bytes, content))
+
+    original_index = ctx.index.read_bytes() if ctx.index.exists() else None
+    try:
+        for card, _original, content in prepared:
+            atomic_write(card, content)
+        for card, _original, _content in prepared:
+            _upsert_card(index, card, ctx)
+        _save_index(index, ctx)
+    except BaseException as exc:
+        originals: dict[Path, bytes | None] = {
+            card: original for card, original, _content in prepared
+        }
+        originals[ctx.index] = original_index
+        failures = restore_text_files(originals)
+        if failures:
+            raise RuntimeError(
+                f"sweep 回滚失败（{', '.join(failures)}）"
+            ) from exc
+        raise
+    print(f"已降级 {len(prepared)} 张为 stale: "
+          f"{', '.join(card.name for card, _, _ in prepared)}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

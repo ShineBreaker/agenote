@@ -461,7 +461,8 @@ VALID_STATUSES = {"done", "stable", "stale", "archived"}
 
 
 def touch_card(
-    filepath: Path, field: str = "LAST_USED", ctx: "KBContext | None" = None
+    filepath: Path, field: str = "LAST_USED", ctx: "KBContext | None" = None,
+    session: str | None = None,
 ) -> None:
     """更新卡片 PROPERTIES 中的指定时间戳字段，同步更新 index.json。
 
@@ -469,6 +470,8 @@ def touch_card(
         filepath: 卡片文件路径
         field: 要更新的字段名（LAST_USED 或 LAST_VERIFIED）
         ctx: 知识库上下文（None 时用 default_context）
+        session: 会话幂等键（S3）。同卡同 session 首次 USAGE_COUNT+1，
+            重复调用只刷时间戳；None 时保持旧语义（每次调用 +1）。
     """
     ctx = ctx or default_context()
     if not filepath.exists():
@@ -479,14 +482,18 @@ def touch_card(
 
     # 先验证将要读改写的持久状态，避免卡片已写而索引失败。
     index = _load_index(ctx)
+    # S3 会话幂等：只有「确证本 session 已计过」才跳过递增；记录缺失或
+    # 损坏一律视为未计（宁可多计一次，不少计）。
+    counted = _touch_session_counted(ctx, filepath.name, session) if session else False
     ts = f"[{now()}]"
     content = set_org_prop(content, field, ts)
-    # 递增 USAGE_COUNT（留痕核心：每次 touch 表示该卡片被实际使用）
-    try:
-        count = int(parse_org_prop(content, "USAGE_COUNT") or 0) + 1
-    except ValueError:
-        count = 1
-    content = set_org_prop(content, "USAGE_COUNT", str(count))
+    if not counted:
+        # 递增 USAGE_COUNT（留痕核心：每次 touch 表示该卡片被实际使用）
+        try:
+            count = int(parse_org_prop(content, "USAGE_COUNT") or 0) + 1
+        except ValueError:
+            count = 1
+        content = set_org_prop(content, "USAGE_COUNT", str(count))
     original = filepath.read_bytes()
     original_index = ctx.index.read_bytes() if ctx.index.exists() else None
     try:
@@ -504,6 +511,41 @@ def touch_card(
                 f"touch 回滚失败（{', '.join(failures)}）"
             ) from exc
         raise
+    if session and not counted:
+        _touch_session_record(ctx, filepath.name, session)
+
+
+def _touch_session_path(ctx: "KBContext") -> Path:
+    """会话计数记录文件（agent 域小文件，与卡片同域）。"""
+    return ctx.root / ".touch-sessions.json"
+
+
+def _touch_session_counted(ctx: "KBContext", card_name: str, session: str) -> bool:
+    """本 session 是否已为该卡计过数；任何读取失败都返回 False（不少计）。"""
+    try:
+        rec = json.loads(_touch_session_path(ctx).read_text(encoding="utf-8"))
+        seen = rec.get(card_name) or []
+        return session in seen if isinstance(seen, list) else False
+    except (OSError, ValueError):
+        return False
+
+
+def _touch_session_record(ctx: "KBContext", card_name: str, session: str) -> None:
+    """记录本 session 已计数；失败静默（下次调用重计，至多多计一次）。"""
+    # ponytail: 每卡只留最近 32 个 session，防唯一 session 高频写入撑大文件
+    try:
+        path = _touch_session_path(ctx)
+        try:
+            rec = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(rec, dict):
+                rec = {}
+        except (OSError, ValueError):
+            rec = {}
+        seen = [s for s in (rec.get(card_name) or []) if s != session]
+        rec[card_name] = [session, *seen][:32]
+        atomic_write(path, json.dumps(rec, ensure_ascii=False, indent=1))
+    except OSError:
+        pass
 
 
 def _resolve_card(id_or_path: str, ctx: "KBContext | None" = None) -> Path | None:

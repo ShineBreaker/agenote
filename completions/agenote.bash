@@ -11,7 +11,7 @@ _agenote_completions() {
         words=("${COMP_WORDS[@]}")
         cword=$COMP_CWORD
     }
-    local subcmds="add archive commit completions config connect deduplicate distill doctor dream extract fields format gaps get health inbox inbox-archive init lint list memory merge reconcile reindex restore review scan-memories search stats tags touch trace update viz"
+    local subcmds="add archive commit completions config connect deduplicate distill doctor dream extract fields format gaps get health inbox inbox-archive init lint list memory merge reconcile reindex restore review scan-memories search stats sweep tags touch trace update viz"
     local globals="--domain --version -h --help"
     local all="$subcmds $globals"
     # 顶层：cword=1，或 words[1] 是非值型全局选项（--version/-h/--help，

@@ -36,6 +36,7 @@ COMMANDS: dict[str, str] = {
     "commit": "提交知识库变更",
     "config": "配置管理",
     "touch": "更新卡片时间戳",
+    "sweep": "done/stable → stale 降级",
     "merge": "合并卡片",
     "archive": "归档卡片",
     "restore": "恢复归档卡片",
