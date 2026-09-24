@@ -60,6 +60,7 @@ from agenote.cards import (
     cmd_connect,
     cmd_update,
     cmd_touch,
+    cmd_sweep,
     cmd_merge,
 )
 from agenote.search import cmd_search
@@ -591,6 +592,11 @@ def print_help() -> None:
   touch    更新卡片时间戳
             agenote touch <卡片ID>              更新 LAST_USED + LAST_VERIFIED
             agenote touch <卡片ID> --used-only  只更新 LAST_USED
+            agenote touch <卡片ID> --session <ID>  同会话重复 touch 只计一次 USAGE
+
+  sweep    done/stable → stale 降级（默认 dry-run 只读出清单）
+            agenote sweep                 列出降级候选（done 按未用天数，stable 按未验证天数）
+            agenote sweep --apply         执行降级（STATUS=stale + 刷 LAST_VERIFIED）
 
   merge    合并卡片
             agenote merge <主卡片ID> <次卡片ID>... [--desc 原因]
@@ -951,6 +957,16 @@ def _main() -> None:
     touch_parser.add_argument(
         "--used-only", action="store_true", help="只更新 LAST_USED"
     )
+    touch_parser.add_argument(
+        "--session", metavar="ID", help="会话幂等键：同卡同 session 首次 USAGE_COUNT+1，重复只刷时间戳"
+    )
+
+    # ── sweep ──────────────────────────────────────────────────────────────
+    sweep_parser = subparsers.add_parser("sweep", help="列出或执行 done/stable → stale 降级")
+    sweep_parser.add_argument(
+        "--apply", action="store_true", help="执行降级（默认 dry-run 只出清单）"
+    )
+    sweep_parser.add_argument("--json", action="store_true", help="JSON 输出")
 
     # ── merge ──────────────────────────────────────────────────────────────
     merge_parser = subparsers.add_parser("merge", help="合并卡片")
@@ -1153,7 +1169,7 @@ def _main() -> None:
     # 变更类子命令：dispatch 时持 KB 锁执行（读-改-写型命令的并发互斥）。
     # review/lint 默认只读，但带 --fix 时写文件，统一加锁换取简单。
     MUTATING_COMMANDS = {
-        "add", "update", "touch", "merge", "archive", "restore", "connect",
+        "add", "update", "touch", "sweep", "merge", "archive", "restore", "connect",
         "inbox", "inbox-archive", "memory", "reindex",
         "lint", "format", "commit", "init",
         "distill", "reconcile", "extract",
@@ -1183,6 +1199,7 @@ def _main() -> None:
         "completions": cmd_completions,
         # 新命令
         "touch": cmd_touch,
+        "sweep": cmd_sweep,
         "merge": cmd_merge,
         "archive": cmd_archive,
         "restore": cmd_restore,
