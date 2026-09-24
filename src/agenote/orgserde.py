@@ -220,3 +220,105 @@ def render_facts_org(
         lines.append(f.content[:ORG_RENDER_TRUNC])
         lines.append("")
     return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# S6：MEMORY.org 条目层（memory.py 行级正则统一走这里，消除正则散布）
+#
+# 条目形状：`** <ID> [标题]` + 缩进 PROPERTIES + `# 钩子` + 正文。
+# 宽容解析：未知属性读时忽略，旧条目无钩子不报错（展示降级用标题）。
+# ═══════════════════════════════════════════════════════════════════════════════
+
+#: 二级条目标题：`** <ID> [标题]`（ID 无空格，标题可选）
+MEMORY_ENTRY_RE = re.compile(r"^\*\* (\S+)(?:\s+(.*?))?\s*$")
+#: 条目边界：任意 `*`/`**` 标题行（归档移动时切块用）
+MEMORY_BOUNDARY_RE = re.compile(r"^\*\*?\s+")
+#: 条目属性行：`   :KEY:  value`
+MEMORY_PROP_RE = re.compile(r"^\s*:([A-Za-z0-9_]+):\s*(.*?)\s*$")
+#: 钩子行：`# 一句话钩子`（description 召回语义）
+MEMORY_HOOK_RE = re.compile(r"^#\s?(\S.*)?\s*$")
+#: 钩子长度上限字符数
+HOOK_MAX_CHARS = 120
+
+
+def match_memory_entry(line: str, entry_id: str | None = None) -> re.Match | None:
+    """匹配 MEMORY.org 二级条目标题；entry_id 给定时比对 ID（保留旧 `\b` 语义）。"""
+    m = MEMORY_ENTRY_RE.match(line)
+    if not m:
+        return None
+    if entry_id is not None and not re.match(rf"{re.escape(entry_id)}\b", m.group(1)):
+        return None
+    return m
+
+
+def is_memory_boundary(line: str) -> bool:
+    """是否为条目切块边界（任意 `*`/`**` 标题行）。"""
+    return MEMORY_BOUNDARY_RE.match(line) is not None
+
+
+def memory_prop(entry_lines: list[str], key: str) -> str:
+    """条目块内取属性值（大小写不敏感，遇 :END: 停止）；缺失返回 ""。"""
+    for line in entry_lines:
+        if line.strip() == ":END:":
+            break
+        m = MEMORY_PROP_RE.match(line)
+        if m and m.group(1).upper() == key.upper():
+            return m.group(2)
+    return ""
+
+
+def set_memory_prop_line(line: str, key: str, value: str) -> str | None:
+    """属性行就地改值（保留原缩进/间距，值整体换成 [value]）；非该 key 行返回 None。"""
+    m = re.match(rf"^(\s*:{re.escape(key)}:\s*)\[.*?\](\s*)$", line, re.IGNORECASE)
+    if not m:
+        return None
+    return f"{m.group(1)}[{value}]{m.group(2)}"
+
+
+def read_memory_hook(entry_lines: list[str]) -> str:
+    """读条目钩子：:END: 之后首个非空行是 `# ...` 则取之（截断上限），否则 ""。"""
+    past_end = False
+    for line in entry_lines:
+        stripped = line.strip()
+        if not past_end:
+            if stripped == ":END:":
+                past_end = True
+            continue
+        if not stripped:
+            continue
+        m = MEMORY_HOOK_RE.match(stripped)
+        return (m.group(1) or "").strip()[:HOOK_MAX_CHARS] if m else ""
+    return ""
+
+
+def entry_hook_or_title(entry_lines: list[str], title: str) -> str:
+    """索引/投影用展示行：有钩子用钩子，旧条目降级用标题。"""
+    return read_memory_hook(entry_lines) or title
+
+
+def build_memory_hook(title: str, body: str) -> str:
+    """新条目钩子：正文首个非空行（去 `#` 前缀），无正文用标题；截断上限。"""
+    candidate = ""
+    for line in (body or "").splitlines():
+        if line.strip():
+            candidate = line.strip().lstrip("#").strip()
+            break
+    return (candidate or title).strip()[:HOOK_MAX_CHARS]
+
+
+def parse_memory_date(value: str):
+    """`[2026-09-24]` / `2026-09-24 ...` → date；缺失/非法返回 None。"""
+    if not value or not value.split():
+        return None
+    token = re.sub(r"[\[\]]", "", value).split()[0]
+    try:
+        return datetime.strptime(token, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def unverified_tag(days: int | None, stale_days: int) -> str:
+    """S7 时效标记：超 stale_days 未验证返回 `(unverified Nd)`，否则 ""。"""
+    if days is None:
+        return "(unverified ?d)"
+    return f"(unverified {days}d)" if days > stale_days else ""

@@ -328,6 +328,7 @@ def cmd_list(args: argparse.Namespace, ctx=None) -> None:
                 "last_used",
                 "usage_count",
                 "source_agent",
+                "last_verified",
                 "file",
             )
         }

@@ -21,7 +21,19 @@ from agenote.core import (
     _init_memory_template_for_ctx,
     default_context,
 )
-from agenote.safeio import atomic_write
+from agenote.safeio import atomic_write, safe_read_text
+from agenote.orgserde import (
+    MEMORY_PROP_RE,
+    build_memory_hook,
+    entry_hook_or_title,
+    is_memory_boundary,
+    match_memory_entry,
+    memory_prop,
+    parse_memory_date,
+    read_memory_hook,
+    set_memory_prop_line,
+    unverified_tag,
+)
 
 
 def _parse_memory_sections(content: str) -> dict[str, list[tuple[int, int, str]]]:
@@ -50,12 +62,15 @@ def _parse_memory_sections(content: str) -> dict[str, list[tuple[int, int, str]]
 
 
 def _next_memory_id(section_content: str, prefix: str) -> str:
-    """扫描已有 F/R 序号，返回下一个（如 F015）。"""
-    existing = re.findall(rf"^\*\* {prefix}(\d+)", section_content, re.MULTILINE)
-    if not existing:
+    """扫描已有 F/R 序号，返回下一个（如 F015）。走 orgserde 条目层。"""
+    nums = []
+    for line in section_content.splitlines():
+        m = match_memory_entry(line)
+        if m and re.fullmatch(rf"{re.escape(prefix)}\d+", m.group(1)):
+            nums.append(int(m.group(1)[len(prefix):]))
+    if not nums:
         return f"{prefix}001"
-    max_id = max(int(n) for n in existing)
-    return f"{prefix}{max_id + 1:03d}"
+    return f"{prefix}{max(nums) + 1:03d}"
 
 
 def _find_section_end(lines: list[str], section_start: int) -> int:
@@ -64,6 +79,37 @@ def _find_section_end(lines: list[str], section_start: int) -> int:
         if re.match(r"^\*\s+", lines[i]):
             return i
     return len(lines)
+
+
+def _read_memory_org_text(ctx) -> str:
+    """MEMORY.org 统一读入口（S8：走 safe_read，拒 symlink/非普通文件）。"""
+    return safe_read_text(ctx.memory_org)
+
+
+def memory_entry_freshness(entry_lines: list[str], stale_days: int = STALE_DAYS) -> str:
+    """S7：条目时效标记。UPDATED 缺省 CREATED；超 stale_days 返回 `(unverified Nd)`。"""
+    updated = parse_memory_date(memory_prop(entry_lines, "UPDATED")) or parse_memory_date(
+        memory_prop(entry_lines, "CREATED")
+    )
+    days = (datetime.now().date() - updated).days if updated else None
+    return unverified_tag(days, stale_days)
+
+
+def format_memory_entry_line(
+    entry_id: str,
+    title: str,
+    entry_lines: list[str] | None = None,
+    *,
+    freshness: bool = False,
+    stale_days: int = STALE_DAYS,
+) -> str:
+    """S7 预留：memory --list 单行渲染。默认与旧概览一致；freshness 开启追加时效标记。"""
+    line = f"** {entry_id} {title}".rstrip()
+    if freshness and entry_lines is not None:
+        tag = memory_entry_freshness(entry_lines, stale_days)
+        if tag:
+            line += f" {tag}"
+    return line
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -81,7 +127,7 @@ def cmd_memory(args: argparse.Namespace, ctx=None) -> None:
         if not ctx.memory_org.exists():
             print("(记忆文件不存在)")
             return
-        text = ctx.memory_org.read_text(encoding="utf-8")
+        text = _read_memory_org_text(ctx)
         mem_type = getattr(args, "type", None)
         if mem_type:
             # 只输出指定节的内容
@@ -142,7 +188,7 @@ def _memory_overview(args: argparse.Namespace, ctx=None) -> None:
         print("(记忆文件不存在)")
         return
 
-    text = ctx.memory_org.read_text(encoding="utf-8")
+    text = _read_memory_org_text(ctx)
     sections = _parse_memory_sections(text)
 
     mem_type = getattr(args, "type", None)
@@ -159,11 +205,18 @@ def _memory_overview(args: argparse.Namespace, ctx=None) -> None:
         for sec_name, entries in sections.items():
             if section_name in sec_name.lower():
                 for _start, _end, content in entries:
-                    # 列出 ** 二级标题
-                    for line in content.split("\n"):
+                    # 列出 ** 二级标题（--freshness 追加时效标记，默认输出不变）
+                    entry_lines_list = content.split("\n")
+                    for idx, line in enumerate(entry_lines_list):
                         m = re.match(r"^\*\*\s+(.+)", line)
                         if m:
-                            print(m.group(1))
+                            if getattr(args, "freshness", False):
+                                tag = memory_entry_freshness(
+                                    entry_lines_list[idx + 1 : idx + 11]
+                                )
+                                print(m.group(1) + (f" {tag}" if tag else ""))
+                            else:
+                                print(m.group(1))
                 return
         print(f"(未找到 {mem_type} 条目)")
         return
@@ -204,7 +257,7 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
     if not ctx.memory_org.exists():
         _init_memory_template_for_ctx(ctx)
 
-    text = ctx.memory_org.read_text(encoding="utf-8")
+    text = _read_memory_org_text(ctx)
     lines = text.split("\n")
     sections = _parse_memory_sections(text)
 
@@ -247,6 +300,7 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
     if mem_type == "feedback" and getattr(args, "ref", None):
         entry_lines.append(f"   :REF:      {args.ref}")
     entry_lines.append("   :END:")
+    entry_lines.append(f"# {build_memory_hook(title, body)}")
     if body.strip():
         entry_lines.append(f"   {body.strip()}")
 
@@ -301,7 +355,7 @@ def _memory_sync_project_index(name: str, proj_file: Path, ctx=None) -> None:
     if not ctx.memory_org.exists():
         _init_memory_template_for_ctx(ctx)
 
-    text = ctx.memory_org.read_text(encoding="utf-8")
+    text = _read_memory_org_text(ctx)
 
     # 检查是否已存在索引
     if f"** {name}" in text:
@@ -344,22 +398,19 @@ def _memory_touch(entry_id: str, ctx=None) -> None:
     if not ctx.memory_org.exists():
         die("记忆文件不存在")
 
-    text = ctx.memory_org.read_text(encoding="utf-8")
+    text = _read_memory_org_text(ctx)
     lines = text.split("\n")
 
     # 找到条目位置
     found = False
     for i, line in enumerate(lines):
-        if re.match(rf"^\*\* {re.escape(entry_id)}\b", line):
+        if match_memory_entry(line, entry_id):
             found = True
-            # 向下查找 :UPDATED: 属性行
+            # 向下查找 :UPDATED: 属性行（orgserde 层改值，保留原缩进/间距）
             for j in range(i + 1, min(i + 10, len(lines))):
-                if ":UPDATED:" in lines[j]:
-                    lines[j] = re.sub(
-                        r":UPDATED:\s*\[\d{4}-\d{2}-\d{2}\]",
-                        f":UPDATED:  [{today()}]",
-                        lines[j],
-                    )
+                new_line = set_memory_prop_line(lines[j], "UPDATED", today())
+                if new_line is not None:
+                    lines[j] = new_line
                     break
                 if ":END:" in lines[j]:
                     break
@@ -378,13 +429,13 @@ def _memory_archive(entry_id: str, ctx=None) -> None:
     if not ctx.memory_org.exists():
         die("记忆文件不存在")
 
-    text = ctx.memory_org.read_text(encoding="utf-8")
+    text = _read_memory_org_text(ctx)
     lines = text.split("\n")
 
     # 找到条目起始行
     entry_start = None
     for i, line in enumerate(lines):
-        if re.match(rf"^\*\* {re.escape(entry_id)}\b", line):
+        if match_memory_entry(line, entry_id):
             entry_start = i
             break
 
@@ -394,7 +445,7 @@ def _memory_archive(entry_id: str, ctx=None) -> None:
     # 找到条目结束行（下一个 ** 或 * 之前）
     entry_end = entry_start + 1
     while entry_end < len(lines):
-        if re.match(r"^\*\*?\s+", lines[entry_end]):
+        if is_memory_boundary(lines[entry_end]):
             break
         entry_end += 1
 
@@ -435,7 +486,7 @@ def _memory_stale(ctx=None) -> None:
         print("(记忆文件不存在)")
         return
 
-    text = ctx.memory_org.read_text(encoding="utf-8")
+    text = _read_memory_org_text(ctx)
     lines = text.split("\n")
     stale_count = 0
     section = ""  # 当前一级节（deprecated 节下的条目不算陈旧——它们已被归档）
@@ -444,24 +495,16 @@ def _memory_stale(ctx=None) -> None:
         if re.match(r"^\* ", line):
             section = line[2:].strip()
             continue
-        if not re.match(r"^\*\* ", line):
+        if not match_memory_entry(line):
             continue
         if section == "deprecated":
             continue
-        # 向下查找 UPDATED
-        for j in range(i + 1, min(i + 10, len(lines))):
-            m = re.match(r"\s*:UPDATED:\s*\[(\d{4}-\d{2}-\d{2})\]", lines[j])
-            if m:
-                try:
-                    updated = datetime.strptime(m.group(1), "%Y-%m-%d")
-                    if (datetime.now() - updated).days > STALE_DAYS:
-                        print(f"  {line.strip()} (更新于 {m.group(1)})")
-                        stale_count += 1
-                except ValueError:
-                    pass
-                break
-            if ":END:" in lines[j]:
-                break
+        updated = parse_memory_date(memory_prop(lines[i + 1 : i + 10], "UPDATED"))
+        if updated is None:
+            continue
+        if (datetime.now().date() - updated).days > STALE_DAYS:
+            print(f"  {line.strip()} (更新于 {updated})")
+            stale_count += 1
 
     if stale_count == 0:
         print("无陈旧记忆")
@@ -476,7 +519,7 @@ def _memory_project(identifier: str, ctx=None) -> None:
         print("(记忆文件不存在)")
         return
 
-    text = ctx.memory_org.read_text(encoding="utf-8")
+    text = _read_memory_org_text(ctx)
     sections = _parse_memory_sections(text)
 
     # 收集所有项目条目
@@ -496,7 +539,7 @@ def _memory_project(identifier: str, ctx=None) -> None:
                         cur_entry = m_entry.group(1)
                         cur_props = {}
                     else:
-                        pm = re.match(r"\s*:(\w+):\s*(.+)", el)
+                        pm = MEMORY_PROP_RE.match(el)
                         if pm and cur_entry:
                             cur_props[pm.group(1)] = pm.group(2).strip()
                 if cur_entry:
@@ -586,13 +629,13 @@ def _memory_archive_to_file(entry_id: str, ctx=None) -> None:
     if not ctx.memory_org.exists():
         die("记忆文件不存在")
 
-    text = ctx.memory_org.read_text(encoding="utf-8")
+    text = _read_memory_org_text(ctx)
     lines = text.split("\n")
 
     # 找到条目
     entry_start = None
     for i, line in enumerate(lines):
-        if re.match(rf"^\*\* {re.escape(entry_id)}\b", line):
+        if match_memory_entry(line, entry_id):
             entry_start = i
             break
 
@@ -602,7 +645,7 @@ def _memory_archive_to_file(entry_id: str, ctx=None) -> None:
     # 找到条目结束行
     entry_end = entry_start + 1
     while entry_end < len(lines):
-        if re.match(r"^\*\*?\s+", lines[entry_end]):
+        if is_memory_boundary(lines[entry_end]):
             break
         entry_end += 1
 
@@ -649,23 +692,19 @@ def _memory_project_touch(project_name: str, ctx=None) -> None:
     if not ctx.memory_org.exists():
         die("记忆文件不存在")
 
-    text = ctx.memory_org.read_text(encoding="utf-8")
+    text = _read_memory_org_text(ctx)
     lines = text.split("\n")
 
     # 找到项目条目
     found = False
     for i, line in enumerate(lines):
-        m = re.match(rf"^\*\* {re.escape(project_name)}\b", line)
-        if m:
+        if match_memory_entry(line, project_name):
             found = True
             # 向下查找并更新/添加 LAST_ACTIVE
             for j in range(i + 1, min(i + 10, len(lines))):
-                if ":LAST_ACTIVE:" in lines[j]:
-                    lines[j] = re.sub(
-                        r":LAST_ACTIVE:\s*\[.+?\]",
-                        f":LAST_ACTIVE: [{today()}]",
-                        lines[j],
-                    )
+                new_line = set_memory_prop_line(lines[j], "LAST_ACTIVE", today())
+                if new_line is not None:
+                    lines[j] = new_line
                     break
                 if ":END:" in lines[j]:
                     # 插入 LAST_ACTIVE
