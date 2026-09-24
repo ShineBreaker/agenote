@@ -26,7 +26,7 @@ from pathlib import Path
 
 from agenote import config
 from agenote.extract import resolve_xdg_path
-from agenote.extract.base import AdapterMessage, Turn, pair_turns, register
+from agenote.extract.base import AdapterSkip, Turn, pair_turns, register
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
 
 CODEX_HOME = resolve_xdg_path("CODEX_HOME", "$XDG_CONFIG_HOME/codex")
@@ -155,7 +155,9 @@ def extract_codex() -> tuple[list, list[str]]:
     facts = []
     errors: list[str] = []
     if not CODEX_HOME.exists():
-        return [], [AdapterMessage(f"CODEX_HOME 不存在: {CODEX_HOME}")]
+        # CODEX_HOME 不存在 = codex 未安装（预期状态）；skip 不阻塞整批，
+        # 消息不带完整本地路径（对外脱敏口径一致）。
+        return [], [AdapterSkip("CODEX_HOME 不存在")]
     history_idx = _load_history_index()
     if SESSIONS_ROOT.exists():
         for jsonl_path in sorted(SESSIONS_ROOT.rglob("rollout-*.jsonl")):

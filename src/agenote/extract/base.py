@@ -32,7 +32,7 @@ from typing import Any
 from agenote import config
 from agenote.core import CONVERSATIONS_ROOT, PublicError, safe_error_message
 from agenote.extract.models import ReconciledFact
-from agenote.safeio import restore_text_files
+from agenote.safeio import atomic_write, path_in_kb, restore_text_files
 
 # 索引层截断链与默认 trust（config [extract] / [weights] 覆盖）。
 # trunc_user/trunc_assistant 是 dream trace「回查不截断」设计的前提，勿轻易改小。
@@ -55,7 +55,13 @@ class AdapterMessage(str):
     """adapter 明确标记为可公开展示的消息。"""
 
 
-_SAFE_ADAPTER_ERRORS = frozenset()
+class AdapterSkip(AdapterMessage):
+    """adapter 标记「源未安装 / 数据不存在」的预期 skip 状态。
+
+    与真实错误（解析失败、DB 损坏）的本质区别：skip 是部分安装机器上的
+    正常状态，编排层（run_extract / reconcile）不把它计入失败，
+    不阻塞整批发布；报告中以 ``[skip]`` 前缀呈现。
+    """
 
 
 def safe_adapter_error(error: object, *, source: str | None = None) -> str:
@@ -66,8 +72,13 @@ def safe_adapter_error(error: object, *, source: str | None = None) -> str:
         text = str(error)
     elif isinstance(error, AdapterMessage):
         text = str(error)
+    elif isinstance(error, str):
+        # adapter 自产的 str 是它主动给出的错误描述，原样透传；
+        # 编造「Exception」类型字样只会误导诊断。
+        text = error
     else:
-        text = "adapter 内部错误（Exception）"
+        # 未知对象类型维持稳定摘要，防泄漏也不虚构类型。
+        text = "adapter 内部错误"
     if source and not text.startswith(f"{source}:"):
         return f"{source}: {text}"
     return text
@@ -218,7 +229,9 @@ def run_sqlite_extractor(
     try:
         conn = open_sqlite_ro(db_path)
     except FileNotFoundError:
-        return [], [AdapterMessage("数据库不存在")]
+        # DB 不存在 = 源未安装（预期状态），降级为 skip 而非 error，
+        # 避免部分安装机器上默认 all 编排被单个缺失源打穿。
+        return [], [AdapterSkip("数据库不存在")]
     try:
         sessions = conn.execute(
             "SELECT id, title, directory, time_created, time_updated "
@@ -322,6 +335,20 @@ def filter_noise_facts(
     return kept, dropped
 
 
+def _publish_write(path: Path, text: str) -> None:
+    """发布单文件的写盘原语：KB 内走 atomic_write，KB 外保留直接写。
+
+    KB 内一切落盘必须走 safeio（tmp→rename 原子替换，不留半文件）；
+    KB 外仅限用户显式 --output-dir / conversations_root 指向的目录
+    （safeio 声明的豁免场景）。不在此处拿 kb_lock：extract/reconcile 都是
+    MUTATING_COMMANDS，CLI 层已持全局 KB 锁，锁内对同一锁文件再 flock 会自互锁。
+    """
+    if path_in_kb(path):
+        atomic_write(path, text)
+    else:
+        path.write_text(text, encoding="utf-8")
+
+
 def run_extract(
     source: str = "all",
     date: str = "",
@@ -385,9 +412,13 @@ def run_extract(
         try:
             facts, errs = extractors[src]()
             total += len(facts)
-            if errs:
+            # skip（源未安装）不计入 failed；真实错误仍 fail-closed 整批不发布。
+            skips = [error for error in errs if isinstance(error, AdapterSkip)]
+            hard = [error for error in errs if not isinstance(error, AdapterSkip)]
+            if hard:
                 failed = True
-            errors.extend(safe_adapter_error(error, source=src) for error in errs)
+            errors.extend(f"[skip] {safe_adapter_error(error, source=src)}" for error in skips)
+            errors.extend(safe_adapter_error(error, source=src) for error in hard)
             facts, dropped = filter_noise_facts(facts)
             if dropped:
                 noise_total += len(dropped)
@@ -427,7 +458,7 @@ def run_extract(
         }
         try:
             for path, text in rendered:
-                path.write_text(text, encoding="utf-8")
+                _publish_write(path, text)
         except BaseException as exc:
             failures = restore_text_files(previous, allow_outside=True)
             if failures:

@@ -35,7 +35,12 @@ from agenote.core import (
     is_noise_fact,
     safe_error_message,
 )
-from agenote.extract.base import AdapterMessage, UnknownSourceError, safe_adapter_error
+from agenote.extract.base import (
+    AdapterMessage,
+    AdapterSkip,
+    UnknownSourceError,
+    safe_adapter_error,
+)
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT, ReconciledFact
 from agenote import config
 from agenote.safeio import atomic_write
@@ -193,8 +198,10 @@ def _kb_titles() -> set[str]:
             txt = f.read_text(encoding="utf-8")
         except OSError:
             continue
-        # org 标题行：* DONE <title>
-        m = re.search(r"^\* (?:DONE|TODO) (.+)$", txt, re.MULTILINE)
+        # org 标题行：* DONE <title>；首行 UTF-8 BOM 会让 ^\* 失配（对齐
+        # orgserde._heading_probe 口径：仅匹配时剥离首字符 BOM，不改写原文）。
+        probe = txt[1:] if txt.startswith("\ufeff") else txt
+        m = re.search(r"^\* (?:DONE|TODO) (.+)$", probe, re.MULTILINE)
         if m:
             titles.add(m.group(1).strip().casefold())
     return titles
@@ -219,19 +226,29 @@ def _reconcile_source(
         ]
 
     report = ReconcileReport(source=source)
+    # skip（源未安装/数据不存在）是部分安装机器上的预期状态：进报告但
+    # 不计入 errors，不阻塞整批落盘；只有真实错误才计入。
+    skip_details = [
+        f"[skip] {safe_adapter_error(error, source=source)}"
+        for error in extract_errors
+        if isinstance(error, AdapterSkip)
+    ]
+    hard_errors = [
+        error for error in extract_errors if not isinstance(error, AdapterSkip)
+    ]
+    report.error_details.extend(skip_details)
     report.error_details.extend(
-        safe_adapter_error(error, source=source) for error in extract_errors
+        safe_adapter_error(error, source=source) for error in hard_errors
     )
-    report.errors = len(report.error_details)
+    report.errors = len(hard_errors)
     report.pruned = sum(1 for f in old_facts if f.get("source") == source)
 
-    # 0-fact 警告：extractor 跑通但抽不到任何事实（数据未生成 / schema 漂移）
+    # 0-fact 提示：extractor 跑通但抽不到任何事实（数据未生成 / 已清空 / schema 漂移）。
+    # 空结果与「源真清空」无法区分，两者都应允许落盘清掉该源旧事实，故不再计为失败。
     if not facts and not extract_errors:
         report.error_details.append(
-            f"[warn] {source} 抽取到 0 facts（数据未生成或 schema 漂移）"
+            f"[info] {source} 抽取到 0 facts（数据未生成或源已清空）"
         )
-        # 空结果没有证据证明源已清空；按失败处理，保留旧索引。
-        report.errors = 1
 
     # Dedup：跨 DB 重复（如 crush 全局 + 项目级，或 bind-mount 同源）
     # 按 id 去重，保留先出现的（数据库读取顺序由 extractor 决定）

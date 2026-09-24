@@ -82,8 +82,8 @@ def _main() -> None:
             reports.append((os.path.basename(filepath), changes))
 
     action = "检查" if args.check else "格式化"
-    if failed_files:
-        raise SystemExit(1)
+    # 先打印已完成文件的报告与汇总再退出：失败时用户仍需要知道
+    # 哪些文件已被实际写盘、改了什么（SystemExit 不会吞掉这些信息）。
     for basename, changes in reports:
         print(f"\n{basename} ({len(changes)} 项):")
         for ch in changes:
@@ -92,6 +92,8 @@ def _main() -> None:
         f"\n{action}完成: {files_with_issues}/{len(args.files)} 个文件"
         f"有变更, 共 {total_issues} 处"
     )
+    if failed_files:
+        raise SystemExit(1)
 
     if args.check and total_issues:
         sys.exit(min(total_issues, 127))

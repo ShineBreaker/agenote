@@ -15,6 +15,8 @@ import subprocess
 from pathlib import Path
 
 from agenote.completions import (
+    GLOBAL_OPTS,
+    COMMANDS,
     generate,
     _entry_values,
     _extract_sources,
@@ -115,7 +117,11 @@ def test_commands_match_cli_handlers():
 
 
 def test_bash_completion_runtime_enum_values(tmp_path):
-    """Bash 候选必须按空格拆分，scan-memories 与全局域也有真实补全。"""
+    """Bash 候选必须按空格拆分，scan-memories 与全局域也有真实补全。
+
+    末尾两个场景是全局选项回归锚点：`--version <TAB>` 与
+    `--domain human <TAB>` 仍须补子命令 + 全局选项（旧脚本语义）。
+    """
     bash = shutil.which("bash")
     assert bash, "测试环境需要 bash"
     script = tmp_path / "agenote.bash"
@@ -139,6 +145,8 @@ run agenote viz --theme ""
 run agenote scan-memories --source ""
 run agenote --domain ""
 run agenote curate ""
+run agenote --version ""
+run agenote --domain human ""
 '''
     result = subprocess.run(
         [bash, "-c", probe, "_", str(script)],
@@ -151,7 +159,16 @@ run agenote curate ""
     assert lines[3:6] == ["light", "dark", "auto"]
     assert "hermes" in lines[6:13] and "all" in lines[6:13]
     assert lines[13:15] == ["human", "agenote"]
-    assert lines[15:] in ([], [""])
+    # curate 清空 COMPREPLY 后 printf 无参数执行一次格式 → 恰一个空行
+    assert lines[15:16] == [""]
+    # 全局选项之后仍补全部子命令 + 全局选项；数量不硬编码，随真相源走
+    top = sorted(COMMANDS) + GLOBAL_OPTS
+    after_version = lines[16:16 + len(top)]
+    after_domain_value = lines[16 + len(top):16 + 2 * len(top)]
+    assert lines[16 + 2 * len(top):] in ([], [""])
+    for seg in (after_version, after_domain_value):
+        assert len(seg) == len(top)
+        assert set(seg) == set(COMMANDS) | set(GLOBAL_OPTS)
 
 
 def test_zsh_completion_uses_separated_values():

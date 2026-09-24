@@ -154,16 +154,14 @@ def test_extract_crush_content_categorize_and_tags(tmp_path):
 
 
 def test_extract_crush_global_tag(tmp_path):
-    db = tmp_path / "crush.db"
-    _make_crush_db(db, [("g1", "t", [("user", "hi"), ("assistant", "hello")])])
-    with patch.object(crush_mod, "find_crush_dbs", lambda: [db]), \
-         patch.object(crush_mod, "CRUSH_GLOBAL_DB", db):
-        # global 判定基于路径含 .config/crush；直接构造该路径形态
-        cfg_db = tmp_path / ".config" / "crush" / ".crush" / "crush.db"
-        cfg_db.parent.mkdir(parents=True)
-        _make_crush_db(cfg_db, [("g1", "t", [("user", "hi"), ("assistant", "hello")])])
-        with patch.object(crush_mod, "find_crush_dbs", lambda: [cfg_db]):
-            facts, errors = crush_mod.extract_crush()
+    # 全局库判定 = 与 CRUSH_GLOBAL_DB 路径相等（覆盖到自定义位置也成立）；
+    # 默认形态（~/.config/crush 下）只是相等判定的一种特例
+    cfg_db = tmp_path / ".config" / "crush" / ".crush" / "crush.db"
+    cfg_db.parent.mkdir(parents=True)
+    _make_crush_db(cfg_db, [("g1", "t", [("user", "hi"), ("assistant", "hello")])])
+    with patch.object(crush_mod, "find_crush_dbs", lambda: [cfg_db]), \
+         patch.object(crush_mod, "CRUSH_GLOBAL_DB", cfg_db):
+        facts, errors = crush_mod.extract_crush()
     assert errors == [] and facts[0].tags == ["crush-global"]
 
 
@@ -471,20 +469,48 @@ def test_reconcile_write_rejects_invalid_fact(tmp_path, monkeypatch):
     assert not index.exists()
 
 
-def test_trace_plain_string_adapter_error_is_sanitized(monkeypatch, capsys):
-    """adapter 返回普通字符串错误时，公共 trace 只能显示稳定摘要。"""
+def test_trace_error_message_sanitization_policy(monkeypatch, capsys):
+    """trace 错误通道的脱敏策略：未标记异常只显示类型；AdapterMessage 透传。"""
     import argparse
 
     import agenote.cli as cli
 
     monkeypatch.setattr(
-        cli, "trace_fact", lambda fid: {"error": "SECRET_PLAIN", "fact_id": fid}
+        cli,
+        "trace_fact",
+        lambda fid: {"error": RuntimeError("SECRET_REAL"), "fact_id": fid},
     )
     with pytest.raises(SystemExit) as exc:
         cli.cmd_trace(argparse.Namespace(id="fake:x", json=False))
     assert exc.value.code == 1
     captured = capsys.readouterr()
-    assert "SECRET_PLAIN" not in captured.err
+    assert "SECRET_REAL" not in captured.err
+    assert "RuntimeError" in captured.err
+    assert captured.out == ""
+
+
+def test_trace_plain_string_adapter_error_keeps_original_text(monkeypatch, capsys):
+    """adapter 自产 str 错误含原文透传（不再虚构「Exception」类型字样）。"""
+    import argparse
+
+    import agenote.cli as cli
+    from agenote.extract.base import safe_adapter_error
+
+    # helper 层：str 输入含原文、不含 Exception 虚构
+    msg = safe_adapter_error("crush: partial failure", source="crush")
+    assert "crush: partial failure" in msg
+    assert "Exception" not in msg
+
+    # 公共 trace 通道：str 透传原文（AdapterMessage 语义一致）
+    monkeypatch.setattr(
+        cli, "trace_fact", lambda fid: {"error": "公开诊断文本", "fact_id": fid}
+    )
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_trace(argparse.Namespace(id="fake:x", json=False))
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "公开诊断文本" in captured.err
+    assert "Exception" not in captured.err
     assert captured.out == ""
 
 
@@ -687,7 +713,8 @@ def test_reconcile_source_does_not_write_when_extractor_reports_errors(tmp_path)
     assert reconcile_index.read_bytes() == before
 
 
-def test_reconcile_empty_extractor_result_preserves_index(tmp_path):
+def test_reconcile_empty_extractor_result_prunes_source(tmp_path):
+    """0 facts + 0 errors 不再视为失败：源真清空后允许落盘清掉该源旧事实。"""
     import agenote.reconcile as r
 
     reconcile_dir = tmp_path / ".reconcile"
@@ -700,7 +727,6 @@ def test_reconcile_empty_extractor_result_preserves_index(tmp_path):
         "facts": [_stored_fact("fake:old", "fake")],
     }
     reconcile_index.write_text(json.dumps(initial), encoding="utf-8")
-    before = reconcile_index.read_bytes()
 
     with patch.object(r, "RECONCILE_DIR", reconcile_dir), \
          patch.object(r, "RECONCILE_INDEX", reconcile_index), \
@@ -709,9 +735,12 @@ def test_reconcile_empty_extractor_result_preserves_index(tmp_path):
          patch("agenote.core.KB_ROOT", tmp_path):
         report = r.reconcile_source("fake")
 
-    assert report.errors == 1
+    assert report.errors == 0
+    assert report.pruned == 1
     assert "0 facts" in report.error_details[0]
-    assert reconcile_index.read_bytes() == before
+    saved = json.loads(reconcile_index.read_text(encoding="utf-8"))
+    assert saved["facts"] == []
+    assert saved["by_source"] == {}
 
 
 def test_reconcile_source_uses_registry():

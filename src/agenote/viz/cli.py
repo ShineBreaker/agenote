@@ -49,8 +49,12 @@ SERVE_PROBE_INTERVAL = float(config.get("viz", "serve_probe_interval"))
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _open_in_browser(path: str) -> None:
-    """用 xdg-open 打开本地文件或 URL；启动失败不伪装成成功。"""
+def _open_in_browser(path: str, *, fatal: bool = True) -> None:
+    """用 xdg-open 打开本地文件或 URL；启动失败不伪装成成功。
+
+    fatal=True（默认）失败即 die；serve 场景传 fatal=False——
+    无头/SSH 环境 xdg-open 缺失很常见，服务器必须继续运行。
+    """
     try:
         subprocess.Popen(
             ["xdg-open", path],
@@ -60,6 +64,9 @@ def _open_in_browser(path: str) -> None:
     except (KeyboardInterrupt, GeneratorExit, SystemExit):
         raise
     except BaseException as exc:
+        if not fatal:
+            print(f"⚠ xdg-open 失败（{type(exc).__name__}），请手动访问。", file=sys.stderr)
+            return
         die(f"xdg-open 失败（{type(exc).__name__}）")
     print("🌐 已请求浏览器打开。")
 
@@ -114,7 +121,16 @@ def _serve(
         if not ready:
             print(f"⚠ 端口 {port} 在 {SERVE_PROBE_TIMEOUT}s 内未就绪，仍尝试打开。")
         if should_open:
-            _open_in_browser(url)
+            # serve 模式下浏览器打开失败不致命：URL 始终打印，服务器继续运行。
+            try:
+                _open_in_browser(url, fatal=False)
+            except (KeyboardInterrupt, GeneratorExit, SystemExit):
+                raise
+            except BaseException as exc:
+                print(
+                    f"⚠ 浏览器打开失败（{type(exc).__name__}），服务器继续运行。",
+                    file=sys.stderr,
+                )
         if success:
             print(success)
         print(f"🌐 浏览器已请求: {url}")

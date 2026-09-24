@@ -23,6 +23,24 @@ from pathlib import Path
 
 LOCK_TIMEOUT_SECONDS = 10.0
 
+
+def _lock_timeout_from_config() -> float:
+    """读配置 [safeio].lock_timeout_seconds 作为锁超时；非法值兜底回默认。
+
+    SCHEMA 的 _validate_types 只校验文件值（env 值以原始字符串透传，无类型
+    防线），故在取值层统一转换：非数值 / <=0 一律回落 LOCK_TIMEOUT_SECONDS，
+    保证 kb_lock 永远拿到正数超时。
+    """
+    # lazy：已验证 config 顶层无 agenote 依赖（不成环），循本模块 KB_ROOT 同款
+    # 延迟引用惯例，保持 safeio 的 import 面最小。
+    from agenote import config
+
+    try:
+        val = float(config.get("safeio", "lock_timeout_seconds"))
+    except (TypeError, ValueError):
+        return LOCK_TIMEOUT_SECONDS
+    return val if val > 0 else LOCK_TIMEOUT_SECONDS
+
 # tmp 文件名只由受控部分构成（pid + 进程内计数），不拼接目标文件名
 _TMP_COUNTER = itertools.count()
 
@@ -66,7 +84,8 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
     _atomic_replace_bytes(resolved, data)
 
 
-def _path_in_kb(path: Path) -> bool:
+def path_in_kb(path: Path) -> bool:
+    """判定路径是否在 KB_ROOT 内（KB 内走 atomic_write / KB 外豁免的公共判据）。"""
     from agenote.core import KB_ROOT  # lazy：core 顶层 import safeio，反向引用需延迟
 
     return Path(path).resolve().is_relative_to(KB_ROOT.resolve())
@@ -74,7 +93,7 @@ def _path_in_kb(path: Path) -> bool:
 
 def _restore_bytes(path: Path, data: bytes, *, allow_outside: bool) -> None:
     """恢复文件；默认受 KB containment，显式授权时才允许原路径。"""
-    if _path_in_kb(path):
+    if path_in_kb(path):
         atomic_write_bytes(path, data)
     elif allow_outside:
         _atomic_replace_bytes(path, data)
@@ -91,7 +110,7 @@ def restore_text_files(
     failures: list[str] = []
     for path, original in originals.items():
         try:
-            if not allow_outside and not _path_in_kb(path):
+            if not allow_outside and not path_in_kb(path):
                 raise ValueError("恢复路径超出 KB_ROOT")
             if original is None:
                 path.unlink(missing_ok=True)
@@ -99,7 +118,7 @@ def restore_text_files(
                 if not path.exists() or path.read_bytes() != original:
                     _restore_bytes(path, original, allow_outside=allow_outside)
             elif not path.exists() or path.read_text(encoding="utf-8") != original:
-                if _path_in_kb(path):
+                if path_in_kb(path):
                     atomic_write(path, original)
                 elif allow_outside:
                     _atomic_replace_bytes(path, original.encode("utf-8"))
@@ -112,9 +131,20 @@ def restore_text_files(
     return failures
 
 
+class KBLockTimeoutError(TimeoutError):
+    """kb_lock 等待超时；消息为代码自生成的可操作提示，错误边界可安全透出。"""
+
+
 @contextlib.contextmanager
-def kb_lock(lock_path: Path, timeout: float = LOCK_TIMEOUT_SECONDS) -> Iterator[None]:
-    """进程级互斥锁：fcntl.flock 独占，等待超时抛 TimeoutError 而非死等。"""
+def kb_lock(lock_path: Path, timeout: float | None = None) -> Iterator[None]:
+    """进程级互斥锁：fcntl.flock 独占，等待超时抛 KBLockTimeoutError 而非死等。
+
+    timeout 未显式传时运行时读配置 [safeio].lock_timeout_seconds——不可用
+    默认参数绑定 LOCK_TIMEOUT_SECONDS（定义时求值会把值焊死在函数对象上，
+    env/配置覆盖随之失效）。
+    """
+    if timeout is None:
+        timeout = _lock_timeout_from_config()
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
     deadline = time.monotonic() + timeout
@@ -125,7 +155,7 @@ def kb_lock(lock_path: Path, timeout: float = LOCK_TIMEOUT_SECONDS) -> Iterator[
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:
-                    raise TimeoutError(
+                    raise KBLockTimeoutError(
                         f"agenote KB 锁等待超时（{timeout}s）：{lock_path}，"
                         "另一个 agenote 进程可能正持有锁。"
                     )

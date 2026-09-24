@@ -13,9 +13,10 @@ _agenote_completions() {
     }
     local subcmds="add archive commit completions config connect deduplicate distill doctor dream extract fields format gaps get health inbox inbox-archive init lint list memory merge reconcile reindex restore review scan-memories search stats tags touch trace update viz"
     local globals="--domain --version -h --help"
-    # 顶层：补子命令 + 全局选项
-    if [[ $cword -eq 1 ]]; then
-        local all="$subcmds $globals"
+    local all="$subcmds $globals"
+    # 顶层：cword=1，或 words[1] 是非值型全局选项（--version/-h/--help，
+    # 它们之后仍应继续补子命令）→ 补子命令 + 全局选项
+    if [[ $cword -eq 1 ]] || [[ "${words[1]}" == --* && "${words[1]}" != "--domain" ]]; then
         COMPREPLY=( $(compgen -W "$all" -- "$cur") )
         return
     fi
@@ -24,6 +25,7 @@ _agenote_completions() {
         --domain)
             case "$prev" in
                 --domain) COMPREPLY=( $(compgen -W "human agenote" -- "$cur") );;
+                *) COMPREPLY=( $(compgen -W "$all" -- "$cur") );;
             esac
             ;;
         config)
@@ -33,9 +35,7 @@ _agenote_completions() {
             COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )
             ;;
         get)
-            case "$prev" in
-                *) COMPREPLY=( $(compgen -W "--used -h --help" -- "$cur") );;
-            esac
+            COMPREPLY=( $(compgen -W "--used -h --help" -- "$cur") )
             ;;
         add)
             case "$prev" in

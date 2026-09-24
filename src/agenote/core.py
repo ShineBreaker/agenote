@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from agenote import config
-from agenote.safeio import atomic_write, restore_text_files
+from agenote.safeio import atomic_write, restore_text_files, KBLockTimeoutError
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 配置常量 — 默认值与覆盖入口见 agenote/config.py SCHEMA 与 ~/.config/agenote/config.toml
@@ -325,6 +325,10 @@ def safe_error_message(exc: BaseException) -> str:
     """只向公共边界暴露受控错误或异常类型，不转发内部异常正文。"""
     if isinstance(exc, PublicError):
         return str(exc)
+    if isinstance(exc, KBLockTimeoutError):
+        # 锁超时消息由代码自生成（等待时长 + 持锁提示），是可操作的用户提示
+        # 而非内部信息，完整透出；其余未知异常维持脱敏。
+        return str(exc)
     return f"操作失败（{type(exc).__name__}）"
 
 
@@ -335,9 +339,12 @@ def die(msg: str) -> NoReturn:
 
 
 def validate_category(category: str) -> None:
-    """拒绝会逃逸 experiences/<category>/ 的类别名。"""
+    """拒绝会逃逸 experiences/<category>/ 或注入换行的类别名。"""
     if "/" in category or "\\" in category or ".." in category:
         die(f"类别名不能包含路径分隔符或 '..': {category}")
+    # category 会进入重命名后的文件名（update --type），换行会产出非法文件名。
+    if "\n" in category or "\r" in category:
+        die(f"类别名不能包含换行符: {category}")
 
 
 def now() -> str:

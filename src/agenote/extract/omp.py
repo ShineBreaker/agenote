@@ -26,6 +26,7 @@ from agenote.extract.base import (
     SOURCES,
     TRUNC_TOOL_INPUT,
     TRUNC_TOOL_RESULT,
+    AdapterSkip,
     Turn,
     pair_turns,
     register,
@@ -170,7 +171,9 @@ def extract_omp() -> tuple[list, list[str]]:
     facts = []
     errors: list[str] = []
     if not OMP_SESSIONS_DIR.exists():
-        return [], [AdapterMessage(f"omp sessions dir 不存在: {OMP_SESSIONS_DIR}")]
+        # sessions 目录不存在 = omp 未安装（预期状态）；skip 不阻塞整批，
+        # 消息不带完整本地路径（对外脱敏口径一致）。
+        return [], [AdapterSkip("omp sessions dir 不存在")]
     for jsonl_path in sorted(OMP_SESSIONS_DIR.glob("**/*.jsonl")):
         if jsonl_path.name == "__advisor.jsonl":
             continue

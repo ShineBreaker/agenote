@@ -70,13 +70,14 @@ def test_lint_human_readable_unchanged(tmp_path, capsys):
     assert "bad.org" in out
 
 
-def test_format_missing_file_fails_without_success_output(tmp_path, capsys):
-    """format 单文件失败必须非零退出，且不打印成功汇总或变更报告。"""
+def test_format_missing_file_fails_nonzero_without_change_report(tmp_path, capsys):
+    """format 单文件失败必须非零退出；缺失文件无可报告变更，但汇总如实输出。"""
     from agenote.orgfmt import cmd_format
 
     with pytest.raises(SystemExit) as exc:
         cmd_format(argparse.Namespace(files=[str(tmp_path / "missing.org")], check=False))
     assert exc.value.code == 1
     captured = capsys.readouterr()
-    assert captured.out == ""
+    assert "missing.org" not in captured.out  # 无变更报告
+    assert "0/1" in captured.out  # 汇总如实显示 0 个成功
     assert "missing.org" in captured.err

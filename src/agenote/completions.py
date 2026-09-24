@@ -104,10 +104,6 @@ def _values(values) -> str:
     return " ".join(values)
 
 
-def _csv(values) -> str:
-    return ",".join(values)
-
-
 def _memory_types() -> str:
     from agenote.core import MEMORY_TYPES
 
@@ -150,7 +146,9 @@ def _gen_fish() -> str:
         "complete -c agenote -n '__fish_seen_subcommand_from viz' -l port -d '监听端口'",
         "complete -c agenote -n '__fish_seen_subcommand_from viz' -l output -d '输出文件'",
         f"complete -c agenote -n '__fish_seen_subcommand_from reconcile' -l source -x -a '{_extract_sources()}' -d '来源'",
+        "complete -c agenote -n '__fish_seen_subcommand_from reconcile' -l dry-run -d '只预览不落盘'",
         f"complete -c agenote -n '__fish_seen_subcommand_from extract' -l source -x -a '{_extract_sources()}' -d '来源'",
+        "complete -c agenote -n '__fish_seen_subcommand_from extract' -l dry-run -d '只预览不落盘'",
         f"complete -c agenote -n '__fish_seen_subcommand_from scan-memories' -l source -x -a '{_memscan_sources()}' -d '来源'",
         f"complete -c agenote -n '__fish_seen_subcommand_from memory' -l type -x -a '{_memory_types()}' -d '记忆类型'",
         # 文件补全（lint/format 的 files 位置参数）
@@ -187,9 +185,10 @@ def _gen_bash() -> str:
             }}
             local subcmds="{subs}"
             local globals="--domain --version -h --help"
-            # 顶层：补子命令 + 全局选项
-            if [[ $cword -eq 1 ]]; then
-                local all="$subcmds $globals"
+            local all="$subcmds $globals"
+            # 顶层：cword=1，或 words[1] 是非值型全局选项（--version/-h/--help，
+            # 它们之后仍应继续补子命令）→ 补子命令 + 全局选项
+            if [[ $cword -eq 1 ]] || [[ "${{words[1]}}" == --* && "${{words[1]}}" != "--domain" ]]; then
                 COMPREPLY=( $(compgen -W "$all" -- "$cur") )
                 return
             fi
@@ -198,6 +197,7 @@ def _gen_bash() -> str:
                 --domain)
                     case "$prev" in
                         --domain) COMPREPLY=( $(compgen -W "{domain_vals}" -- "$cur") );;
+                        *) COMPREPLY=( $(compgen -W "$all" -- "$cur") );;
                     esac
                     ;;
                 config)
@@ -207,9 +207,7 @@ def _gen_bash() -> str:
                     COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )
                     ;;
                 get)
-                    case "$prev" in
-                        *) COMPREPLY=( $(compgen -W "--used -h --help" -- "$cur") );;
-                    esac
+                    COMPREPLY=( $(compgen -W "--used -h --help" -- "$cur") )
                     ;;
                 add)
                     case "$prev" in
@@ -271,8 +269,6 @@ def _gen_zsh() -> str:
         # Usage: copy to $fpath, e.g. ~/.zsh/completions/_agenote && compinit
 
         _agenote() {{
-            local -a completions
-            local -a response
             (( $+functions[_arguments] )) || autoload -U _arguments
             (( $+functions[_describe] )) || autoload -U _describe
 
@@ -298,7 +294,7 @@ def _gen_zsh() -> str:
                             _describe -t values 'shell' '("bash:bash completion" "zsh:zsh completion" "fish:fish completion")'
                             ;;
                         get)
-                            _arguments '--used[读取后记录使用]'
+                            _arguments '--used[读取后记录使用]' '-h[显示帮助]' '--help[显示帮助]'
                             ;;
                         add)
                             _arguments \\

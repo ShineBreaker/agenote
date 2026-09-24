@@ -66,6 +66,13 @@ SCHEMA: dict[str, dict[str, Key]] = {
             "omp", env="AGENOTE_AGENT", comment="卡片 SOURCE_AGENT 默认写入者标签"
         ),
     },
+    "safeio": {
+        "lock_timeout_seconds": Key(
+            10.0,
+            env="AGENOTE_LOCK_TIMEOUT_SECONDS",
+            comment="KB 进程锁等待超时（秒）；超时抛 KBLockTimeoutError 而非死等",
+        ),
+    },
     "weights": {
         "human_default": Key(1.5, comment="人类域卡片默认检索权重"),
         "agent_default": Key(1.0, comment="agent 域卡片默认检索权重"),

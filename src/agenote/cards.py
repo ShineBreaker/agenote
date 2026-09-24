@@ -673,13 +673,10 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
     content = card.read_text(encoding="utf-8")
     old_type = parse_org_prop(content, "TYPE") or DEFAULT_TYPE
     original = card.read_bytes()
-    original_index = ctx.index.read_bytes() if ctx.index.exists() else None
     updated = card
     reclassify = False
 
     # ── 更新属性（用 .+ 匹配到行尾，避免含空格的属性值被截断）────────────
-    from agenote.orgserde import set_org_prop
-
     if args.status:
         if args.status not in VALID_STATUSES:
             die(f"无效状态: {args.status}（可选: {', '.join(sorted(VALID_STATUSES))}）")
@@ -739,13 +736,13 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
             _upsert_card(index, updated, ctx)
             _save_index(index, ctx)
     except BaseException as exc:
-        originals: dict[Path, bytes | None] = {
-            card: original,
-            ctx.index: original_index,
-        }
-        if updated != card:
-            originals[updated] = None
-        failures = restore_text_files(originals)
+        # 回滚分两步：先恢复必须存续的 card，只有恢复写成功才删除改名后的
+        # 新文件——card 恢复失败（如磁盘满）时保留新副本，避免仅存的一份内容
+        # 也被 unlink 清掉（双副本全丢）；索引恢复独立收尾，失败一并上报。
+        failures = restore_text_files({card: original})
+        if updated != card and not failures:
+            failures += restore_text_files({updated: None})
+        failures += restore_text_files({ctx.index: original_index})
         if failures:
             raise RuntimeError(
                 f"update 回滚失败（{', '.join(failures)}）"

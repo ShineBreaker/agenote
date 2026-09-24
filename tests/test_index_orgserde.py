@@ -48,6 +48,15 @@ def test_orgserde_prop_parsing():
     assert orgserde._parse_int_prop(content, "WEIGHT", 7) == 7  # 非整数回退默认
 
 
+def test_read_org_title_strips_leading_bom():
+    """首行 BOM 不让标题降级 unknown（_heading_probe 同构语义）。"""
+    content = "\ufeff* DONE BOM 卡片\n:PROPERTIES:\n:ID: 20260925-120000\n:END:\n"
+    assert orgserde.read_org_title(content) == "BOM 卡片"
+    # 无 BOM / TODO 前缀行为不变
+    assert orgserde.read_org_title("* TODO 普通标题\n") == "普通标题"
+    assert orgserde.read_org_title("没有标题行\n") == "unknown"
+
+
 @dataclass
 class _Fact:
     id: str = "omp:s1:m1"

@@ -104,6 +104,9 @@ def parse_org_prop(content: str, key: str) -> str:
 
 def set_org_prop(content: str, key: str, value: str) -> str:
     """更新顶层属性抽屉中的字段；字段缺失时在 :END: 前插入。"""
+    if "\n" in value or "\r" in value:
+        # 换行会把伪 :END: 注入抽屉，使其提前闭合、后续字段静默脱离元数据。
+        raise ValueError("属性值不能包含换行符")
     lines = content.splitlines(keepends=True)
     drawer = _top_property_drawer(lines)
     if drawer is None:
@@ -165,9 +168,16 @@ def _parse_int_prop(content: str, key: str, default: int) -> int:
 
 
 def read_org_title(content: str) -> str:
-    """从 Org 内容中提取一级标题文本（去掉 DONE/TODO 前缀）。"""
-    m = re.search(r"^\* (?:DONE|TODO) (.+)", content, re.MULTILINE)
-    return m.group(1).strip() if m else "unknown"
+    """从 Org 内容中提取一级标题文本（去掉 DONE/TODO 前缀）。
+
+    首行 BOM 复用 _heading_probe 剥离后再匹配，BOM 卡片的标题不再降级 unknown
+    （否则 touch/merge 等每次策展都会把脏 title 写进 index.json）。
+    """
+    for index, line in enumerate(content.splitlines()):
+        m = re.match(r"^\* (?:DONE|TODO) (.+)", _heading_probe(line, index))
+        if m:
+            return m.group(1).strip()
+    return "unknown"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

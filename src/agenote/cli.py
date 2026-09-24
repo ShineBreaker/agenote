@@ -275,7 +275,9 @@ def _run_git(args: list[str], cwd: Path) -> str:
         cwd=str(cwd),
     )
     if result.returncode != 0:
-        die(f"git {' '.join(args)} 失败（GitError）")
+        # 这里是手动检查 returncode，并无异常对象；错误细节在 result.stderr
+        # （刻意收口不外泄），消息只如实描述命令本身失败。
+        die(f"git {' '.join(args)} 失败")
     return result.stdout
 
 
@@ -1217,9 +1219,8 @@ def _main() -> None:
                 ensure_dirs(ctx)
         except SystemExit:
             raise
-        except (OSError, UnicodeError, ValueError) as exc:
-            die(safe_error_message(exc))
         except Exception as exc:
+            # 与命令级边界一致：只展示受控错误或异常类型，不泄漏内部异常正文。
             die(safe_error_message(exc))
         # 变更类命令持全局 KB 锁（学 claude-obsidian：多 agent 并发写入互斥，
         # 锁在 agent 域根，一把锁覆盖人类+agent 两域；临界区毫秒级无性能问题）
@@ -1232,11 +1233,9 @@ def _main() -> None:
                 command(args, ctx)
         except SystemExit:
             raise
-        except (OSError, UnicodeError, ValueError) as exc:
-            # CLI 是用户边界：只展示受控错误或异常类型，不泄漏内部异常正文。
-            die(safe_error_message(exc))
         except Exception as exc:
-            # 未知异常同样不能把 traceback 暴露给公共 CLI；仅展示异常类型。
+            # CLI 是用户边界：无论受控错误还是未知异常，都不能把 traceback
+            # 暴露给公共终端；safe_error_message 只给出受控消息或异常类型。
             die(safe_error_message(exc))
     else:
         die(f"未知子命令: {args.command}。运行 'agenote help' 查看帮助。")

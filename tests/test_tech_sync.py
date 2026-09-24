@@ -175,6 +175,58 @@ def test_bom_prefixed_card_can_be_updated_and_keeps_bom(kb_root):
     assert parse_org_prop(card.read_text(encoding="utf-8"), "TECH") == "rust"
 
 
+def test_bom_card_title_reaches_index_after_touch(kb_root):
+    """BOM 卡片 add 前置 BOM 字节 → touch 后 index.json 的 title 必须是真实标题。"""
+    from agenote.cards import cmd_touch
+
+    ctx = _ctx(kb_root)
+    cmd_add(_add_args("BOM 卡标题"), ctx)
+    card = _only_card(ctx)
+    card_id = re.search(r":ID:\s+(\S+)", card.read_text(encoding="utf-8")).group(1)
+    card.write_bytes(b"\xef\xbb\xbf" + card.read_bytes())
+
+    cmd_touch(argparse.Namespace(target=str(card), used_only=False), ctx)
+
+    entry = _index_entry(ctx, card_id)
+    assert entry["title"] == "BOM 卡标题"
+
+
+def test_update_rename_keeps_new_copy_when_card_restore_fails(kb_root, monkeypatch):
+    """card 恢复写失败（如磁盘满）时不得删除改名后的新文件：至少一个副本存活。"""
+    import agenote.safeio as safeio
+
+    ctx = _ctx(kb_root)
+    cmd_add(_add_args("原始", type_="debug"), ctx)
+    old_card = _only_card(ctx)
+
+    def fail_index(_index, _ctx):
+        raise OSError("SIMULATED_INDEX_SAVE_FAILURE")
+
+    real_atomic_write_bytes = safeio.atomic_write_bytes
+    card_writes = {"n": 0}
+
+    def flaky_write_bytes(path, data):
+        path = Path(path)
+        if path == old_card:
+            # 第 1 次是 try 块的正常写入，第 2 次起是回滚恢复写，令其失败
+            card_writes["n"] += 1
+            if card_writes["n"] >= 2:
+                raise OSError("SIMULATED_RESTORE_FAILURE")
+        return real_atomic_write_bytes(path, data)
+
+    monkeypatch.setattr(cards, "_save_index", fail_index)
+    monkeypatch.setattr(safeio, "atomic_write_bytes", flaky_write_bytes)
+
+    with pytest.raises(RuntimeError, match="update 回滚失败"):
+        cmd_update(_update_args(str(old_card), type_="workflow"), ctx)
+
+    survivors = list(ctx.experiences.rglob("*.org"))
+    assert len(survivors) == 1, "至少一个副本必须存活"
+    assert not old_card.exists()
+    assert survivors[0].read_bytes().startswith("* DONE 原始".encode("utf-8"))
+    assert b":TYPE:     workflow" in survivors[0].read_bytes()
+
+
 def test_rollback_preserves_original_bytes(kb_root, monkeypatch):
     """回滚快照用原始字节，不把 CRLF 归一化。"""
     ctx = _ctx(kb_root)
@@ -297,6 +349,34 @@ def test_update_category_rejects_path_escape(kb_root, capsys):
 
     assert exc.value.code == 1
     assert "类别名不能包含路径分隔符" in capsys.readouterr().err
+    assert card.read_bytes() == before
+
+
+def test_update_category_rejects_newline(kb_root, capsys):
+    """category 会进入重命名后的文件名，换行必须在写入前被拒绝。"""
+    ctx = _ctx(kb_root)
+    cmd_add(_add_args("原始"), ctx)
+    card = _only_card(ctx)
+    before = card.read_bytes()
+
+    with pytest.raises(SystemExit) as exc:
+        cmd_update(_update_args(str(card), category="a\nb"), ctx)
+
+    assert exc.value.code == 1
+    assert "类别名不能包含换行符" in capsys.readouterr().err
+    assert card.read_bytes() == before
+
+
+def test_update_rejects_newline_tech(kb_root):
+    """--tech 含伪 :END: 注入值时必须被 set_org_prop 拒绝，卡片保持原字节。"""
+    ctx = _ctx(kb_root)
+    cmd_add(_add_args("原始"), ctx)
+    card = _only_card(ctx)
+    before = card.read_bytes()
+
+    with pytest.raises(ValueError, match="换行"):
+        cmd_update(_update_args(str(card), tech="a\n:END:"), ctx)
+
     assert card.read_bytes() == before
 
 

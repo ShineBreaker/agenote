@@ -29,7 +29,7 @@ from agenote.extract import extract_title, resolve_xdg_path
 from agenote.extract.base import (
     TRUNC_TOOL_INPUT,
     TRUNC_TOOL_RESULT,
-    AdapterMessage,
+    AdapterSkip,
     Turn,
     pair_turns,
     register,
@@ -171,7 +171,9 @@ def extract_claude() -> tuple[list, list[str]]:
     facts = []
     errors: list[str] = []
     if not CLAUDE_TRANSCRIPTS_DIR.exists():
-        return [], [AdapterMessage(f"transcripts dir 不存在: {CLAUDE_TRANSCRIPTS_DIR}")]
+        # transcripts 目录不存在 = claude 未安装（预期状态）；skip 不阻塞整批，
+        # 消息只报源与状态，不带完整本地路径（对外脱敏口径一致）。
+        return [], [AdapterSkip("transcripts dir 不存在")]
     for jsonl_path in sorted(CLAUDE_TRANSCRIPTS_DIR.glob("ses_*.jsonl")):
         try:
             facts.extend(

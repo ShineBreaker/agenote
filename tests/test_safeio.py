@@ -122,6 +122,89 @@ def test_kb_lock_mutual_exclusion(tmp_path):
         pass
 
 
+# ── kb_lock 超时配置化（[safeio].lock_timeout_seconds）─────────────────────────
+
+
+def _isolate_lock_config(tmp_path, monkeypatch):
+    """把 config 隔离到 tmp（无配置文件 + 清进程内缓存），env 由各用例自设。"""
+    from agenote import config
+
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.toml")
+    monkeypatch.setattr(config, "_file_config", None)
+    monkeypatch.delenv("AGENOTE_LOCK_TIMEOUT_SECONDS", raising=False)
+
+
+def test_kb_lock_default_timeout_unchanged(tmp_path, monkeypatch):
+    """不设 env/配置时取值与旧版一致：默认 10s（断言取值路径，不真等）。"""
+    import agenote.safeio as safeio
+
+    _isolate_lock_config(tmp_path, monkeypatch)
+    assert safeio._lock_timeout_from_config() == 10.0
+
+
+def test_lock_timeout_env_value_and_invalid_fallback(tmp_path, monkeypatch):
+    """env 数值生效；非数值 / <=0 兜底回默认（取值层 fail-open 到合法值）。"""
+    import agenote.safeio as safeio
+
+    _isolate_lock_config(tmp_path, monkeypatch)
+    for raw, expected in [("0.1", 0.1), ("2", 2.0), ("abc", 10.0), ("-3", 10.0), ("0", 10.0)]:
+        monkeypatch.setenv("AGENOTE_LOCK_TIMEOUT_SECONDS", raw)
+        assert safeio._lock_timeout_from_config() == expected, raw
+
+
+def test_lock_timeout_file_value_overrides_default(tmp_path, monkeypatch):
+    """config.toml 文件值覆盖默认（float 键宽容 int；env 缺席时生效）。"""
+    from agenote import config, safeio
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[safeio]\nlock_timeout_seconds = 0.25\n", encoding="utf-8")
+    monkeypatch.setattr(config, "CONFIG_PATH", cfg)
+    monkeypatch.setattr(config, "_file_config", None)
+    assert safeio._lock_timeout_from_config() == 0.25
+
+
+def test_lock_timeout_file_zero_falls_back(tmp_path, monkeypatch):
+    """文件值 0 通过类型校验（int），取值层仍兜底回默认，杜绝 0/负超时。"""
+    from agenote import config, safeio
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[safeio]\nlock_timeout_seconds = 0\n", encoding="utf-8")
+    monkeypatch.setattr(config, "CONFIG_PATH", cfg)
+    monkeypatch.setattr(config, "_file_config", None)
+    assert safeio._lock_timeout_from_config() == 10.0
+
+
+def test_kb_lock_contention_honors_config_timeout(tmp_path, monkeypatch):
+    """真实 flock 竞争下按配置超时（0.1s）快速抛 KBLockTimeoutError，而非死等 10s。"""
+    import time as time_mod
+
+    import agenote.safeio as safeio
+
+    _isolate_lock_config(tmp_path, monkeypatch)
+    monkeypatch.setenv("AGENOTE_LOCK_TIMEOUT_SECONDS", "0.1")
+    lock = tmp_path / ".agenote.lock"
+    acquired = threading.Event()
+    release = threading.Event()
+
+    def holder():
+        with kb_lock(lock):
+            acquired.set()
+            release.wait(timeout=5)
+
+    t = threading.Thread(target=holder)
+    t.start()
+    assert acquired.wait(timeout=5)
+    start = time_mod.monotonic()
+    with pytest.raises(safeio.KBLockTimeoutError):
+        with kb_lock(lock):
+            pass
+    elapsed = time_mod.monotonic() - start
+    release.set()
+    t.join(timeout=5)
+    # 旧默认 10s 必然越界；配置生效时 ~0.1s 即抛，给慢 CI 留裕量取 2s 上界
+    assert elapsed < 2.0
+
+
 # ── cmd_add ID 防碰撞 ──────────────────────────────────────────────────────────
 
 

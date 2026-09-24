@@ -5,12 +5,17 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
+import agenote.extract.base as base_mod
 from agenote.extract.base import (
     Turn,
     iter_turns_sqlite,
     pair_turns,
+    run_extract,
     run_sqlite_extractor,
 )
+from agenote.extract.models import ReconciledFact
 
 
 def _turn(role: str, text: str, *, ts: str = "2026-01-01T00:00:00", nid: str = "m1") -> Turn:
@@ -283,6 +288,79 @@ def test_run_sqlite_extractor_per_session_isolation(db_factory):
     assert len(facts) == 1
     assert "USER: 问题" in facts[0].content
     assert errors == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# run_extract 发布写盘：KB 内走 atomic_write，KB 外保留直接写（不重复拿锁）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _fact() -> ReconciledFact:
+    return ReconciledFact(
+        id="zcode:s1:m1",
+        source="zcode",
+        native_id="m1",
+        title="发布写盘回归",
+        category="general",
+        content="USER: KB 内发布怎么落盘\n\nASSISTANT: 走 atomic_write。",
+        trust_score=0.5,
+        weight=0.5,
+        tags=["proj"],
+    )
+
+
+def _isolate_kb(tmp_path, monkeypatch):
+    """把 KB_ROOT 与默认会话输出目录都指到 tmp，严禁触碰真实 KB_ROOT。"""
+    kb = tmp_path / "kb"
+    kb.mkdir()
+    monkeypatch.setattr("agenote.core.KB_ROOT", kb)
+    monkeypatch.setattr(base_mod, "CONVERSATIONS_ROOT", kb / "conversations")
+    return kb
+
+
+def test_run_extract_kb_internal_publish_is_atomic(tmp_path, monkeypatch):
+    """KB 内默认路径发布走 atomic_write：内容正确、无 .tmp 残留。"""
+    kb = _isolate_kb(tmp_path, monkeypatch)
+    real_atomic_write = base_mod.atomic_write
+    calls = []
+
+    def spy_atomic_write(path, text):
+        calls.append(path)
+        real_atomic_write(path, text)
+
+    monkeypatch.setattr(base_mod, "atomic_write", spy_atomic_write)
+    with patch("agenote.extract.base._resolve_extractors", return_value={
+        "zcode": lambda: ([_fact()], []),
+    }):
+        report = run_extract(source="zcode", date="2026-01-01")
+
+    out = kb / "conversations" / "2026-01-01" / "zcode.org"
+    assert report["failed"] is False
+    assert report["files"] == [str(out)]
+    assert "KB 内发布怎么落盘" in out.read_text(encoding="utf-8")
+    assert calls == [out]  # KB 内路径确实经原子写落盘
+    assert not list(out.parent.glob(".tmp-*"))  # 原子写不留 tmp 残留
+
+
+def test_run_extract_output_dir_outside_kb_keeps_direct_write(tmp_path, monkeypatch):
+    """--output-dir 指向 KB 外：safeio 豁免场景，直接写且不得误入 atomic_write。"""
+    _isolate_kb(tmp_path, monkeypatch)
+    calls = []
+
+    def forbid_atomic_write(path, text):
+        calls.append(path)
+
+    monkeypatch.setattr(base_mod, "atomic_write", forbid_atomic_write)
+    out = tmp_path / "outside"
+    with patch("agenote.extract.base._resolve_extractors", return_value={
+        "zcode": lambda: ([_fact()], []),
+    }):
+        report = run_extract(source="zcode", output_dir=str(out))
+
+    org = out / "zcode.org"
+    assert report["failed"] is False
+    assert "KB 内发布怎么落盘" in org.read_text(encoding="utf-8")
+    assert calls == []  # KB 外路径走 atomic_write 会被 containment 拒绝
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

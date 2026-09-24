@@ -146,8 +146,8 @@ def cmd_format(args, ctx=None) -> None:
             reports.append((basename, changes))
 
     action = "检查" if do_check else "格式化"
-    if failed_files:
-        raise SystemExit(1)
+    # 先打印已完成文件的报告与汇总再退出：失败时用户仍需要知道
+    # 哪些文件已被实际写盘、改了什么（SystemExit 不会吞掉这些信息）。
     for basename, changes in reports:
         print(f"\n{basename} ({len(changes)} 项):")
         for ch in changes:
@@ -156,6 +156,8 @@ def cmd_format(args, ctx=None) -> None:
         f"\n{action}完成: {files_changed}/{len(target_files)} 个文件有变更, "
         f"共 {total_changes} 处"
     )
+    if failed_files:
+        raise SystemExit(1)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

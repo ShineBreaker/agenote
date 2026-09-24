@@ -6,6 +6,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- **KB 锁超时可配置**（`config.py` / `safeio.py`）：新增 `safeio.lock_timeout_seconds` 配置键（默认 10s，env `AGENOTE_LOCK_TIMEOUT_SECONDS`，非数值或不大于 0 回落默认），`kb_lock` 显式传参优先于配置值。
+- 回归测试 38 个（全量 214 → 252）：BOM title 进索引、重命名回滚双失败保副本、部分安装 extract/reconcile、bash 全局选项后补子命令、orgfmt 失败报告、viz serve 容错、属性值换行拒绝、锁超时配置化、crush 路径覆盖判定等。
+
 ### Fixed
 
 - **zsh 补全的选项值列表全部失效**（`completions.py`）：`_arguments` 的 `:{a,b,c}` 写法会被 zsh 当成 shell 代码执行（实测 `command not found: aa,bb,cc`），`--source` / `--type` / `--theme` / `--domain` 的候选列表静默为空；改为 `:消息:(a b c)` 形式并重新生成 `completions/_agenote`（`test_zsh_completion_uses_separated_values` 同时锁住空格分隔形式）。
@@ -24,6 +29,15 @@
 - **损坏的卡片索引被公共读路径伪装成空库**（`index.py` / `cards.py` / `curator.py` / `health.py` / `doctor.py` / `distill.py` / `viz/cli.py`）：已有 `index.json` 统一校验顶层计数与卡片条目结构，损坏时 `list` / `stats` / `health` / `doctor` / `distill` / `viz` 以 rc 1、可读 stderr、无 traceback 失败；只有索引文件不存在时才返回空骨架。
 - **批量 `merge` 成功时 secondary 索引状态漂移**（`cards.py`）：合并时同时 upsert 所有 secondary 与 primary，成功输出延迟到索引提交后；提交失败会恢复卡片、索引原始字节和未误报的 stdout。
 - **批量 `archive` 与 `update --category` 破坏数据完整性**（`core.py` / `cards.py` / `curator.py` / `inbox_archive.py`）：归档先解析并准备整批内容，任何 ID 无效或任一写入失败时不留下部分归档，并恢复索引原始字节；add、update 与 inbox archive 复用同一 category 边界校验，路径分隔符和 `..` 一律拒绝。
+- **BOM 卡片 title 全链路解析**（`orgserde.py` / `reconcile.py`）：`read_org_title` 与 `_kb_titles` 对首行 BOM 容错，BOM 卡片 `touch` / 策展后 index 与 reconcile 去重不再落到 `unknown`，此前的 BOM 修复从属性抽屉补全到标题链路。
+- **`cmd_update` 重命名回滚可能双删卡片**（`cards.py`）：索引写失败且卡片恢复写也失败时，不再删除改名后的新副本（至少一个副本存活），失败明细聚合后仍 fail-loud 抛出。
+- **未安装源打穿 `extract --source all` / `reconcile`**（`extract/*` / `reconcile.py`）：源数据不存在降级为 `[skip]` 报告项，不再计为失败、不再阻塞整批落盘；真实错误（坏库、解析失败）仍 fail-closed 整批拒绝。源 0 facts 不再视为错误，清空源数据后可正常更新索引。
+- **bash 补全在全局选项后无法补全子命令**（`completions.py` / `completions/agenote.bash`）：`agenote --version <TAB>`、`agenote --domain human <TAB>` 恢复子命令候选；fish 补齐 `reconcile` / `extract` 的 `--dry-run`，zsh `get` 分支补齐 `-h/--help`。
+- **`orgfmt` 失败时吞掉已处理文件的报告**（`orgfmt.py` / `orgfmt_cli.py`）：失败退出码保留，但先打印已完成文件的报告与汇总再退出。
+- **`viz --serve` 浏览器打开失败杀死服务器**（`viz/cli.py`）：`xdg-open` 失败降级为 stderr 警告，访问 URL 无条件打印，服务器继续运行。
+- **属性值注入防护与错误消息失实**（`orgserde.py` / `core.py` / `cli.py` / `extract/*`）：`set_org_prop` 拒绝含换行的值（防伪 `:END:` 抽屉注入），category 校验同步拒绝换行；KB 锁超时的可操作提示完整透传到 stderr；git 失败消息不再虚构异常类型名；claude / codex / omp 未安装消息不再携带完整本地路径；`safe_adapter_error` 对字符串输入不再虚构「Exception」表述；crush 单 session 错误补齐缺失导入。
+- **crush 全局库判定不遵守配置覆盖**（`extract/crush.py`）：由 `.config/crush` 字符串包含改为与 `CRUSH_GLOBAL_DB` 配置值路径比对，覆盖 `crush_global_db` 后不再误判为项目库。
+- **extract 发布写盘绕过原子写原语**（`extract/base.py` / `safeio.py`）：KB 内输出路径改走 `atomic_write`（tmp→rename），显式 `--output-dir` 的 KB 外路径保留直接写；批级回滚语义不变。
 
 ### Removed
 

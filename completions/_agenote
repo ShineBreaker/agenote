@@ -4,8 +4,6 @@
 # Usage: copy to $fpath, e.g. ~/.zsh/completions/_agenote && compinit
 
 _agenote() {
-    local -a completions
-    local -a response
     (( $+functions[_arguments] )) || autoload -U _arguments
     (( $+functions[_describe] )) || autoload -U _describe
 
@@ -31,7 +29,7 @@ _agenote() {
                     _describe -t values 'shell' '("bash:bash completion" "zsh:zsh completion" "fish:fish completion")'
                     ;;
                 get)
-                    _arguments '--used[读取后记录使用]'
+                    _arguments '--used[读取后记录使用]' '-h[显示帮助]' '--help[显示帮助]'
                     ;;
                 add)
                     _arguments \

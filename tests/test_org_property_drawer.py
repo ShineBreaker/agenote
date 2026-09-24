@@ -96,6 +96,15 @@ def test_property_mutators_reject_body_only_drawer():
         delete_org_prop(content, "USAGE_COUNT")
 
 
+def test_set_org_prop_rejects_newline_value():
+    """含换行的值会把伪 :END: 注入抽屉使其提前闭合，必须拒绝。"""
+    content = "* DONE 示例\n:PROPERTIES:\n:ID: x\n:END:\n"
+    with pytest.raises(ValueError, match="换行"):
+        set_org_prop(content, "TECH", "a\n:END:")
+    with pytest.raises(ValueError, match="换行"):
+        set_org_prop(content, "TECH", "a\r\nb")
+
+
 def test_short_id_survives_renamed_card_and_ignores_body_example(
     tmp_path, monkeypatch
 ):

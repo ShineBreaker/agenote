@@ -22,7 +22,7 @@ from typing import Any
 
 from agenote import config
 from agenote.extract import open_sqlite_ro, resolve_xdg_path
-from agenote.extract.base import AdapterMessage, Turn, pair_turns, register
+from agenote.extract.base import AdapterMessage, AdapterSkip, Turn, pair_turns, register
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
 
 CRUSH_GLOBAL_DB = resolve_xdg_path(
@@ -36,8 +36,12 @@ CRUSH_SEARCH_ROOTS = [
 
 
 def find_crush_dbs() -> list[Path]:
-    """Scan all project-level Crush databases (dedup, skip nix store/Trash)."""
-    found: set[Path] = {CRUSH_GLOBAL_DB}
+    """Scan all project-level Crush databases (dedup, skip nix store/Trash).
+
+    全局 DB 只在真实存在时才进入扫描——crush 未安装时不能把不存在的路径
+    塞给 extract_crush 变成一条 error（部分安装机器上的可用性回归点）。
+    """
+    found: set[Path] = {CRUSH_GLOBAL_DB} if CRUSH_GLOBAL_DB.exists() else set()
     for root_str in CRUSH_SEARCH_ROOTS:
         root = Path(root_str).expanduser()
         if not root.exists():
@@ -122,14 +126,21 @@ def extract_crush() -> tuple[list, list[str]]:
     """Extract from all Crush databases (global + project-level)."""
     facts = []
     errors: list[str] = []
-    for db_path in find_crush_dbs():
+    dbs = find_crush_dbs()
+    if not dbs:
+        # 一个 DB 都没有 = crush 未安装（预期状态）；skip 不阻塞整批。
+        return [], [AdapterSkip("crush 数据库不存在")]
+    for db_path in dbs:
         try:
             conn = open_sqlite_ro(db_path)
-        except FileNotFoundError as exc:
-            errors.append(AdapterMessage(f"数据库不存在（{type(exc).__name__}）"))
+        except FileNotFoundError:
+            # DB 在扫描后消失（TOCTOU）等存在性缺失按 skip 处理，不是真实错误。
+            errors.append(AdapterSkip("数据库不存在"))
             continue
         try:
-            if ".config/crush" in str(db_path):
+            # 全局库判定用路径相等而非 ".config/crush" 字符串包含：CRUSH_GLOBAL_DB
+            # 可被 env/config 覆盖到任意位置，包含判定会把覆盖后的全局库误判为项目库
+            if db_path.resolve() == CRUSH_GLOBAL_DB.resolve():
                 project_dir = "(global)"
             else:
                 project_dir = str(db_path).rsplit("/.crush/", 1)[0]
