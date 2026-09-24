@@ -159,16 +159,6 @@ SCHEMA: dict[str, dict[str, Key]] = {
             comment="项目级 crush.db 扫描根列表",
         ),
     },
-    "memories": {
-        "import_dedup_threshold": Key(0.7, comment="import 标题相似度阈值（Jaccard，越高越严）"),
-        "secret_scan_enabled": Key(True, comment="import/export secret 双道闸总开关"),
-    },
-    "memories.targets": {
-        # 宿主投影根路径（空 = 该目标不投影）；import 按非空路径前缀做回声排除
-        "zcode_dir": Key("", comment="zcode 投影根（空 = 不投影）"),
-        "claude_dir": Key("", comment="claude 投影根（空 = 不投影）"),
-        "codex_suggest_dir": Key("", comment="codex 建议清单输出目录（不直写记忆树）"),
-    },
     "memories.sources": {
         # 键名 = 对应 env var 的小写形式；配置值替代各记忆源默认根目录（memscan 用）
         "zcode_memories_dir": Key(
@@ -191,6 +181,22 @@ SCHEMA: dict[str, dict[str, Key]] = {
         "hermes_home": Key(
             "$XDG_DATA_HOME/hermes", env="HERMES_HOME",
             comment="hermes 根（分节记忆在 memories/*.md）",
+        ),
+    },
+    "memories": {
+        # N3/N4 投影与裁决面；[memories.sources]（既有读路径）与 [memories.targets] 分立，
+        # import 按 targets 非空路径前缀做回声排除（见 projector.export_target_prefixes）。
+        "import_dedup_threshold": Key(0.7, comment="import 标题相似度去重阈值（N2）"),
+        "secret_scan_enabled": Key(True, comment="import/export 双道闸总开关（命中只记类别不记值）"),
+        "machine_key": Key("", comment="E 类事件驱动重验的机器键（空 = 自动取 hostname）"),
+        "export_stale_days": Key(30, comment="投影时效标记阈值：超 N 天未验证的条目附 (unverified)"),
+    },
+    "memories.targets": {
+        # 宿主投影根路径（空 = 该目标不投影）；v1 仅三键，pi/reasonix/hermes 不做
+        "zcode_dir": Key("", env="AGENOTE_ZCODE_DIR", comment="zcode 聚合投影根（空 = 不投影）"),
+        "claude_dir": Key("", env="AGENOTE_CLAUDE_DIR", comment="claude 聚合投影根（空 = 不投影）"),
+        "codex_suggest_dir": Key(
+            "", env="AGENOTE_CODEX_SUGGEST_DIR", comment="codex 建议清单目录（只出清单，不直写记忆树）"
         ),
     },
     "reconcile": {

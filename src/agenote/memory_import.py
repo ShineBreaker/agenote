@@ -174,7 +174,7 @@ def load_conflicts(ctx) -> list[dict]:
         return []
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
+        return data if isinstance(data, list) else data.get("conflicts", [])
     except (OSError, ValueError):
         return []
 
