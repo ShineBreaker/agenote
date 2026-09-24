@@ -267,6 +267,51 @@ def cmd_memory(args: argparse.Namespace, ctx=None) -> None:
         _memory_stale(ctx)
         return
 
+    # --conflicts：只读列出冲突队列（agent/人裁决，不自动合并）
+    if getattr(args, "conflicts", False):
+        from agenote.memory_import import load_conflicts  # lazy：与 memory_import 互引
+
+        import json as _json2
+
+        items = load_conflicts(ctx)
+        if getattr(args, "json", False):
+            print(_json2.dumps(items, ensure_ascii=False))
+            return
+        if not items:
+            print("(无冲突)")
+            return
+        for it in items:
+            c = it.get("candidate", {})
+            e = it.get("existing", {})
+            print(f"[{c.get('type', '?')}] {c.get('title', '')} ⇄ {e.get('id', '')} {e.get('title', '')}")
+            print(f"    origin={c.get('origin_id', '')} ← {c.get('source', '')} | {it.get('reason', '')}")
+        return
+
+    # --import：N2 摄取管道（写命令；--dry-run 只预览不落盘，但仍持锁）
+    if getattr(args, "do_import", False):
+        from agenote.memory_import import run_import  # lazy：与 memory_import 互引
+
+        import json as _json3
+
+        report = run_import(
+            source=getattr(args, "source", None) or "all",
+            dry_run=getattr(args, "dry_run", False),
+            ctx=ctx,
+        )
+        if getattr(args, "json", False):
+            print(_json3.dumps(report, ensure_ascii=False))
+            return
+        print(f"import ({report['source']}, dry_run={report['dry_run']}): "
+              f"imported={len(report['imported'])} skipped={len(report['skipped'])} "
+              f"suspected_dup={len(report['suspected_dup'])} "
+              f"conflicted={len(report['conflicted'])} "
+              f"secret_blocked={len(report['secret_blocked'])}")
+        for key in ("imported", "suspected_dup", "conflicted", "secret_blocked", "skipped"):
+            for it in report[key]:
+                extra = it.get("reason") or it.get("category") or it.get("existing", "")
+                print(f"  [{key}] {it.get('title', '')}" + (f" ({extra})" if extra else ""))
+        return
+
     # --add：添加记忆（优先于 --project 检索）
     if getattr(args, "add", False):
         _memory_add(args, ctx)
