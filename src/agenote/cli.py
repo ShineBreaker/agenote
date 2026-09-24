@@ -555,6 +555,9 @@ def print_help() -> None:
             agenote memory --archive <ID>            归档记忆到 deprecated
             agenote memory --archive-to-file <ID>    归档 feedback 到 MEMORY-ARCHIVE.org
             agenote memory --project-touch <名称>    更新项目 LAST_ACTIVE
+             agenote memory --export [--type T] [--scope S] [--project P]  投影到宿主聚合文件
+             agenote memory --supersede <新ID> <旧ID>  裁决：旧条目入 deprecated
+             agenote memory --conflicts              只读列出冲突队列
             agenote memory --get                     查看全文
 
   reindex   重建知识库索引（WEIGHT 随之按 usage/新鲜度公式重算）
@@ -860,6 +863,17 @@ def _main() -> None:
     )
     memory_parser.add_argument(
         "--freshness", action="store_true", help="条目列表追加 (unverified Nd) 时效标记"
+    )
+    memory_parser.add_argument(
+        "--export", action="store_true",
+        help="N3 投影到宿主聚合文件（幂等+漂移检测；路径只来自配置）",
+    )
+    memory_parser.add_argument(
+        "--supersede", nargs=2, metavar=("NEW_ID", "OLD_ID"),
+        help="N4 裁决：新条目记 SUPERSEDES，旧条目入 deprecated",
+    )
+    memory_parser.add_argument(
+        "--conflicts", action="store_true", help="只读列出冲突队列",
     )
 
     # ── reindex ───────────────────────────────────────────────────────────
@@ -1282,11 +1296,15 @@ def _main() -> None:
         # 锁在 agent 域根，一把锁覆盖人类+agent 两域；临界区毫秒级无性能问题）
         command = commands[args.command]
         try:
-            # memory --list 是只读命令，不持 KB 锁（其余 memory 子动作仍走锁）
+            # memory --list/--conflicts 只读，--export 按 N3 不持 KB 锁（外部目录无锁语义）；
+            # 其余 memory 子动作仍走锁
             read_only = args.command == "memory" and bool(
-                getattr(args, "list", False)
+                getattr(args, "list", False) or getattr(args, "conflicts", False)
             )
-            if args.command in MUTATING_COMMANDS and not read_only:
+            no_lock = read_only or (
+                args.command == "memory" and bool(getattr(args, "export", False))
+            )
+            if args.command in MUTATING_COMMANDS and not no_lock:
                 with kb_lock(agenote_context().root / ".agenote.lock"):
                     command(args, ctx)
             else:

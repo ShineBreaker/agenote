@@ -217,6 +217,11 @@ def cmd_memory(args: argparse.Namespace, ctx=None) -> None:
         _memory_list(args, ctx)
         return
 
+    # --conflicts：只读列出冲突队列（N2 落盘，N4 裁决消费；不持 KB 锁）
+    if getattr(args, "conflicts", False):
+        _memory_conflicts(ctx)
+        return
+
     # --get：输出 MEMORY.org 全文或指定节
     if getattr(args, "get", False):
         if not ctx.memory_org.exists():
@@ -240,6 +245,19 @@ def cmd_memory(args: argparse.Namespace, ctx=None) -> None:
             print(f"(未找到 {mem_type} 节)")
         else:
             print(text, end="")
+        return
+
+    # --export：N3 投影（MUTATING 但不持 kb_lock，见 projector；路径只来自 SCHEMA）
+    if getattr(args, "export", False):
+        from agenote import projector as _projector  # lazy：projector 反向引用本模块
+
+        _projector.cmd_export(args, ctx)
+        return
+
+    # --supersede：N4 裁决落地（MUTATING，双侧写一步完成）
+    if getattr(args, "supersede", None):
+        new_id, old_id = args.supersede
+        _memory_supersede(new_id, old_id, ctx)
         return
 
     # --touch：更新时间戳
@@ -302,13 +320,14 @@ def _memory_list(args: argparse.Namespace, ctx=None) -> None:
         scope = (e["props"].get("SCOPE") or "").strip().lower()
         if want_scope and scope != str(want_scope).lower():
             continue
-        rows.append({**e, "scope": scope})
+        rows.append({**e, "scope": scope, "orphan": _entry_orphan(e)})
 
     if getattr(args, "json", False):
         print(_json.dumps([
             {"id": e["id"], "title": e["title"], "type": e["type"],
              "kind": e["kind"], "section": e["section"], "scope": e["scope"],
-             "hook": e["hook"], "validated_at": e["validated_at"]}
+             "hook": e["hook"], "validated_at": e["validated_at"],
+             "orphan": e["orphan"]}
             for e in rows
         ], ensure_ascii=False))
         return
@@ -323,11 +342,29 @@ def _memory_list(args: argparse.Namespace, ctx=None) -> None:
             details.append(f"scope={e['scope']}")
         if e["validated_at"]:
             details.append(f"validated={e['validated_at']}")
+        if e["orphan"]:
+            details.append("orphan")
         if details:
             meta += f" ({', '.join(details)})"
         print(meta)
         if e["hook"]:
             print(f"    # {e['hook']}")
+
+
+def _entry_orphan(entry: dict) -> bool:
+    """N4 轻量孤儿检测：有 ORIGIN_AGENT + ORIGIN_PATH 但源文件已消失。
+
+    完整版（源消失→重验队列）归 N2 import；此处 --list 仅打标记。
+    接口假设：ORIGIN_PATH 为源文件绝对路径或 ~ 路径。
+    """
+    agent = (entry["props"].get("ORIGIN_AGENT") or "").strip()
+    opath = (entry["props"].get("ORIGIN_PATH") or "").strip()
+    if not agent or not opath:
+        return False
+    try:
+        return not Path(opath).expanduser().exists()
+    except (OSError, RuntimeError):
+        return False
 
 
 def _memory_overview(args: argparse.Namespace, ctx=None) -> None:
@@ -862,3 +899,117 @@ def _memory_project_touch(project_name: str, ctx=None) -> None:
     atomic_write(ctx.memory_org, "\n".join(lines))
 
     print(f"已更新项目 {project_name} LAST_ACTIVE → {today()}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# N4 冲突裁决：冲突队列只读 + supersede 双侧写
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _memory_conflicts(ctx=None) -> None:
+    """只读列出 .memory-conflicts.json（N2 落盘结构，tolerant 消费）。"""
+    import json as _json
+
+    from agenote import projector as _projector  # lazy：与 --export 同因
+
+    ctx = ctx or default_context()
+    path = _projector.conflicts_path(ctx)
+    if not path.exists():
+        print("(无冲突)")
+        return
+    try:
+        data = _json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        die(f"冲突队列文件损坏: {path}")
+    items = data if isinstance(data, list) else data.get("conflicts", [])
+    if not items:
+        print("(无冲突)")
+        return
+    print(_json.dumps(items, ensure_ascii=False, indent=1))
+
+
+def _set_prop_in_block(block: list[str], key: str, value: str, bracket: bool = False) -> list[str]:
+    """条目块内置/改属性：已存在改值（orgserde 层保留缩进），否则 :END: 前插入。"""
+    out = list(block)
+    val = f"[{value}]" if bracket else value
+    for i, ln in enumerate(out):
+        new_line = set_memory_prop_line(ln, key, value)
+        if new_line is not None:
+            out[i] = new_line
+            return out
+        pm = MEMORY_PROP_RE.match(ln)
+        if pm and pm.group(1).upper() == key.upper():
+            indent = ln[: len(ln) - len(ln.lstrip())]
+            out[i] = f"{indent}:{key}:      {val}"
+            return out
+    for i, ln in enumerate(out):
+        if ln.strip() == ":END:":
+            indent = ln[: len(ln) - len(ln.lstrip())]
+            out.insert(i, f"{indent}:{key}:      {val}")
+            return out
+    # 无属性抽屉：标题行后补抽屉
+    out[1:1] = ["   :PROPERTIES:", f"   :{key}:      {val}", "   :END:"]
+    return out
+
+
+def _memory_supersede(new_id: str, old_id: str, ctx=None) -> None:
+    """N4 裁决落地一步完成：新条目写 SUPERSEDES + 刷 VALIDATED_AT，
+    旧条目记 SUPERSEDED_BY 后移入 deprecated 节。单次 atomic_write。
+
+    裁决方向（谁胜）由 agent/人按 human>agent、同级比 VALIDATED_AT 定，CLI 只落地。
+    """
+    ctx = ctx or default_context()
+    if new_id == old_id:
+        die("supersede 新旧条目不能相同")
+    if not ctx.memory_org.exists():
+        die("记忆文件不存在")
+
+    text = _read_memory_org_text(ctx)
+    lines = text.split("\n")
+
+    def _find(entry_id: str, hay: list[str]) -> tuple[int, int] | None:
+        start = None
+        for i, ln in enumerate(hay):
+            if match_memory_entry(ln, entry_id):
+                start = i
+                break
+        if start is None:
+            return None
+        end = start + 1
+        while end < len(hay) and not is_memory_boundary(hay[end]):
+            end += 1
+        return (start, end)
+
+    new_span = _find(new_id, lines)
+    if new_span is None:
+        die(f"未找到新条目: {new_id}")
+    old_span = _find(old_id, lines)
+    if old_span is None:
+        die(f"未找到旧条目: {old_id}")
+
+    # 1) 新条目：SUPERSEDES + VALIDATED_AT（就地改）
+    ns, ne = new_span
+    new_block = _set_prop_in_block(lines[ns:ne], "SUPERSEDES", old_id)
+    new_block = _set_prop_in_block(new_block, "VALIDATED_AT", today(), bracket=True)
+    lines[ns:ne] = new_block
+
+    # 2) 旧条目：重定位后记 SUPERSEDED_BY，搬 deprecated（ mirrors _memory_archive）
+    old_span = _find(old_id, lines)
+    assert old_span is not None
+    os_, oe = old_span
+    old_block = _set_prop_in_block(lines[os_:oe], "SUPERSEDED_BY", new_id)
+    del lines[os_:oe]
+    sections = _parse_memory_sections("\n".join(lines))
+    dep = next((ents[0] for name, ents in sections.items()
+                if "deprecated" in name.lower()), None)
+    if dep:
+        insert = _find_section_end(lines, dep[0])
+    else:
+        lines.append("")
+        lines.append("* deprecated")
+        insert = len(lines)
+    for k, el in enumerate(old_block):
+        lines.insert(insert + k, el)
+
+    atomic_write(ctx.memory_org, "\n".join(lines))
+    print(f"已裁决 {old_id} → {new_id}（旧条目入 deprecated）")

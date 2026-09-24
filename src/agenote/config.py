@@ -183,6 +183,22 @@ SCHEMA: dict[str, dict[str, Key]] = {
             comment="hermes 根（分节记忆在 memories/*.md）",
         ),
     },
+    "memories": {
+        # N3/N4 投影与裁决面；[memories.sources]（既有读路径）与 [memories.targets] 分立，
+        # import 按 targets 非空路径前缀做回声排除（见 projector.export_target_prefixes）。
+        "import_dedup_threshold": Key(0.7, comment="import 标题相似度去重阈值（N2）"),
+        "secret_scan_enabled": Key(True, comment="import/export 双道闸总开关（命中只记类别不记值）"),
+        "machine_key": Key("", comment="E 类事件驱动重验的机器键（空 = 自动取 hostname）"),
+        "export_stale_days": Key(30, comment="投影时效标记阈值：超 N 天未验证的条目附 (unverified)"),
+    },
+    "memories.targets": {
+        # 宿主投影根路径（空 = 该目标不投影）；v1 仅三键，pi/reasonix/hermes 不做
+        "zcode_dir": Key("", env="AGENOTE_ZCODE_DIR", comment="zcode 聚合投影根（空 = 不投影）"),
+        "claude_dir": Key("", env="AGENOTE_CLAUDE_DIR", comment="claude 聚合投影根（空 = 不投影）"),
+        "codex_suggest_dir": Key(
+            "", env="AGENOTE_CODEX_SUGGEST_DIR", comment="codex 建议清单目录（只出清单，不直写记忆树）"
+        ),
+    },
     "reconcile": {
         "min_fact_len": Key(15, comment="事实最短长度（更短视为噪声，dream 同用）"),
         "noise_scan_chars": Key(250, comment="噪声标记扫描窗口（USER 提问区字符数）"),
