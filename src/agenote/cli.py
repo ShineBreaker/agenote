@@ -556,6 +556,8 @@ def print_help() -> None:
             agenote memory --archive-to-file <ID>    归档 feedback 到 MEMORY-ARCHIVE.org
             agenote memory --project-touch <名称>    更新项目 LAST_ACTIVE
             agenote memory --get                     查看全文
+            agenote memory --import [--source X|all] [--dry-run]  N2 摄取导入
+            agenote memory --conflicts [--json]      只读列出冲突队列
 
   reindex   重建知识库索引（WEIGHT 随之按 usage/新鲜度公式重算）
             agenote reindex
@@ -860,6 +862,20 @@ def _main() -> None:
     )
     memory_parser.add_argument(
         "--freshness", action="store_true", help="条目列表追加 (unverified Nd) 时效标记"
+    )
+    memory_parser.add_argument(
+        "--import", dest="do_import", action="store_true",
+        help="N2 摄取：从 scan-memories 源导入（写命令；--dry-run 只预览，仍持锁）",
+    )
+    memory_parser.add_argument(
+        "--conflicts", action="store_true", help="只读列出冲突队列（配合 --json）"
+    )
+    memory_parser.add_argument(
+        "--source", default="all",
+        help="import 来源（zcode|claude|codex|pi|reasonix|hermes|all，默认 all）",
+    )
+    memory_parser.add_argument(
+        "--dry-run", action="store_true", help="只预览不落盘（import 用）",
     )
 
     # ── reindex ───────────────────────────────────────────────────────────
@@ -1282,9 +1298,10 @@ def _main() -> None:
         # 锁在 agent 域根，一把锁覆盖人类+agent 两域；临界区毫秒级无性能问题）
         command = commands[args.command]
         try:
-            # memory --list 是只读命令，不持 KB 锁（其余 memory 子动作仍走锁）
+            # memory --list/--conflicts 是只读命令，不持 KB 锁（import 即使 --dry-run
+            # 仍持锁：与写路径同一临界区，避免预览与落盘之间状态漂移）
             read_only = args.command == "memory" and bool(
-                getattr(args, "list", False)
+                getattr(args, "list", False) or getattr(args, "conflicts", False)
             )
             if args.command in MUTATING_COMMANDS and not read_only:
                 with kb_lock(agenote_context().root / ".agenote.lock"):

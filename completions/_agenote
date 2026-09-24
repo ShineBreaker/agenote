@@ -58,7 +58,7 @@ _agenote() {
                     _arguments '--source[来源]:来源:(claude codex hermes pi reasonix zcode all)' '--json[输出 JSON]'
                     ;;
                 memory)
-                    _arguments '--type[记忆类型]:记忆类型:(user feedback project environment reference)'
+                    _arguments '--type[记忆类型]:记忆类型:(user feedback project environment reference)' '--source[导入来源]:来源:(claude codex hermes pi reasonix zcode all)' '--import[摄取导入]' '--conflicts[列出冲突队列]' '--dry-run[只预览不落盘]'
                     ;;
             esac
             ;;

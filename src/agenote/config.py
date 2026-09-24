@@ -159,6 +159,16 @@ SCHEMA: dict[str, dict[str, Key]] = {
             comment="项目级 crush.db 扫描根列表",
         ),
     },
+    "memories": {
+        "import_dedup_threshold": Key(0.7, comment="import 标题相似度阈值（Jaccard，越高越严）"),
+        "secret_scan_enabled": Key(True, comment="import/export secret 双道闸总开关"),
+    },
+    "memories.targets": {
+        # 宿主投影根路径（空 = 该目标不投影）；import 按非空路径前缀做回声排除
+        "zcode_dir": Key("", comment="zcode 投影根（空 = 不投影）"),
+        "claude_dir": Key("", comment="claude 投影根（空 = 不投影）"),
+        "codex_suggest_dir": Key("", comment="codex 建议清单输出目录（不直写记忆树）"),
+    },
     "memories.sources": {
         # 键名 = 对应 env var 的小写形式；配置值替代各记忆源默认根目录（memscan 用）
         "zcode_memories_dir": Key(

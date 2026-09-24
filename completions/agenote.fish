@@ -21,5 +21,9 @@ complete -c agenote -n '__fish_seen_subcommand_from extract' -l source -x -a 'cl
 complete -c agenote -n '__fish_seen_subcommand_from extract' -l dry-run -d '只预览不落盘'
 complete -c agenote -n '__fish_seen_subcommand_from scan-memories' -l source -x -a 'claude codex hermes pi reasonix zcode all' -d '来源'
 complete -c agenote -n '__fish_seen_subcommand_from memory' -l type -x -a 'user feedback project environment reference' -d '记忆类型'
+complete -c agenote -n '__fish_seen_subcommand_from memory' -l source -x -a 'claude codex hermes pi reasonix zcode all' -d '导入来源'
+complete -c agenote -n '__fish_seen_subcommand_from memory' -l import -d '摄取导入'
+complete -c agenote -n '__fish_seen_subcommand_from memory' -l conflicts -d '列出冲突队列'
+complete -c agenote -n '__fish_seen_subcommand_from memory' -l dry-run -d '只预览不落盘'
 complete -c agenote -n '__fish_seen_subcommand_from lint; and not __fish_seen_subcommand_from --fix --check' -F
 complete -c agenote -n '__fish_seen_subcommand_from format' -F

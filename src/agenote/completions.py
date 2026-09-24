@@ -152,6 +152,10 @@ def _gen_fish() -> str:
         "complete -c agenote -n '__fish_seen_subcommand_from extract' -l dry-run -d '只预览不落盘'",
         f"complete -c agenote -n '__fish_seen_subcommand_from scan-memories' -l source -x -a '{_memscan_sources()}' -d '来源'",
         f"complete -c agenote -n '__fish_seen_subcommand_from memory' -l type -x -a '{_memory_types()}' -d '记忆类型'",
+        f"complete -c agenote -n '__fish_seen_subcommand_from memory' -l source -x -a '{_memscan_sources()}' -d '导入来源'",
+        "complete -c agenote -n '__fish_seen_subcommand_from memory' -l import -d '摄取导入'",
+        "complete -c agenote -n '__fish_seen_subcommand_from memory' -l conflicts -d '列出冲突队列'",
+        "complete -c agenote -n '__fish_seen_subcommand_from memory' -l dry-run -d '只预览不落盘'",
         # 文件补全（lint/format 的 files 位置参数）
         "complete -c agenote -n '__fish_seen_subcommand_from lint; and not __fish_seen_subcommand_from --fix --check' -F",
         "complete -c agenote -n '__fish_seen_subcommand_from format' -F",
@@ -239,7 +243,8 @@ def _gen_bash() -> str:
                 memory)
                     case "$prev" in
                         --type) COMPREPLY=( $(compgen -W "{mem_types}" -- "$cur") );;
-                        *) COMPREPLY=( $(compgen -W "--type --project --add --get --title --stdin --stale --touch --archive --archive-to-file --project-touch -h --help" -- "$cur") );;
+                        --source) COMPREPLY=( $(compgen -W "{mem_src}" -- "$cur") );;
+                        *) COMPREPLY=( $(compgen -W "--type --project --add --get --title --stdin --stale --touch --archive --archive-to-file --project-touch --import --conflicts --source --dry-run -h --help" -- "$cur") );;
                     esac
                     ;;
                 *) COMPREPLY=() ;;
@@ -324,7 +329,7 @@ def _gen_zsh() -> str:
                             _arguments '--source[来源]:来源:({mem_src})' '--json[输出 JSON]'
                             ;;
                         memory)
-                            _arguments '--type[记忆类型]:记忆类型:({mem_types})'
+                            _arguments '--type[记忆类型]:记忆类型:({mem_types})' '--source[导入来源]:来源:({mem_src})' '--import[摄取导入]' '--conflicts[列出冲突队列]' '--dry-run[只预览不落盘]'
                             ;;
                     esac
                     ;;
