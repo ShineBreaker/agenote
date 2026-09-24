@@ -74,6 +74,7 @@ class ReconcileReport:
     indexed: int = 0  # 新增/更新的条目数
     skipped: int = 0  # 因 KB 已有同标题而跳过的条目数
     pruned: int = 0  # 源已删除、本次清理掉的陈旧索引项
+    orphaned: int = 0  # S5：本轮抽空、标 orphan 保留的旧事实数
     errors: int = 0
     error_details: list[str] = field(default_factory=list)
     indexed_items: list[dict] = field(default_factory=list)  # 前 N 条摘要
@@ -134,7 +135,7 @@ def _valid_reconcile_fact(fact: object) -> bool:
 
 
 def _empty_reconcile_index() -> dict:
-    return {"version": 1, "updated": "", "by_source": {}, "facts": []}
+    return {"version": 1, "updated": "", "by_source": {}, "facts": [], "meta": {}}
 
 
 def _load_reconcile_index() -> dict:
@@ -159,6 +160,13 @@ def _load_reconcile_index() -> dict:
         or not isinstance(index.get("by_source", {}), dict)
     ):
         raise ReconcileIndexError(f"reconcile 索引结构非法: {RECONCILE_INDEX}")
+    # S5 水位节：旧索引缺失回空 dict；类型错误 fail-closed。
+    if "meta" not in index:
+        index["meta"] = {}
+    elif not isinstance(index["meta"], dict) or not all(
+        isinstance(v, dict) for v in index["meta"].values()
+    ):
+        raise ReconcileIndexError(f"reconcile 索引 meta 非法: {RECONCILE_INDEX}")
     return index
 
 
@@ -176,6 +184,10 @@ def _save_reconcile_index(index: dict) -> None:
     for f in index["facts"]:
         by_source[f["source"]] = by_source.get(f["source"], 0) + 1
     index["by_source"] = dict(sorted(by_source.items(), key=lambda kv: (-kv[1], kv[0])))
+    meta = index.get("meta", {})
+    if not isinstance(meta, dict):
+        raise ReconcileIndexError("reconcile 索引 meta 非法（拒绝写入）")
+    index["meta"] = meta
     atomic_write(
         RECONCILE_INDEX,
         json.dumps(index, ensure_ascii=False, indent=2) + "\n",
@@ -211,8 +223,15 @@ def _reconcile_source(
     source: str,
     extractor,
     old_facts: list[dict],
-) -> tuple[ReconcileReport, list[dict]]:
-    """计算单个 source 的结果，但不写入索引。"""
+    *,
+    old_meta: dict | None = None,
+    prune_orphans: bool = False,
+) -> tuple[ReconcileReport, list[dict], dict]:
+    """计算单个 source 的结果，但不写入索引。
+
+    返回 (report, entries, src_meta)：entries 是本源应进新索引的事实
+    （新鲜抽取 + orphan 保留），src_meta 是本源的新水位。
+    """
     try:
         facts, extract_errors = extractor()
     except ValueError:
@@ -241,10 +260,12 @@ def _reconcile_source(
         safe_adapter_error(error, source=source) for error in hard_errors
     )
     report.errors = len(hard_errors)
-    report.pruned = sum(1 for f in old_facts if f.get("source") == source)
+
+    # S5 判定用原始抽取是否为空（KB 跳过/噪声过滤不算“源空”）。
+    raw_empty = not facts
 
     # 0-fact 提示：extractor 跑通但抽不到任何事实（数据未生成 / 已清空 / schema 漂移）。
-    # 空结果与「源真清空」无法区分，两者都应允许落盘清掉该源旧事实，故不再计为失败。
+    # 空结果不再计为失败；落盘时走下方的 orphan 语义（保留标 orphan 而非静默清空）。
     if not facts and not extract_errors:
         report.error_details.append(
             f"[info] {source} 抽取到 0 facts（数据未生成或源已清空）"
@@ -286,21 +307,50 @@ def _reconcile_source(
         {"id": e["id"], "title": e["title"], "category": e["category"]}
         for e in new_entries[:REPORT_ITEMS]
     ]
-    return report, new_entries
+
+    # S5 水位 + orphan：本轮抽空（raw_empty）且上轮有数 → 保留旧事实并标
+    # orphan:true + orphan_detected_at，不静默清空。上轮数取 meta 水位，
+    # 缺 meta 的旧索引回落到旧事实计数。已标 orphan 的继续保留（持久保留，
+    # 只由 --prune-orphans 显式清理），orphan_detected_at 保留首次检测时间。
+    old_src = [f for f in old_facts if f.get("source") == source]
+    prev_count = len(old_src)
+    prev_meta = (old_meta or {}).get(source)
+    if isinstance(prev_meta, dict):
+        try:
+            prev_count = int(prev_meta.get("last_fact_count", prev_count))
+        except (TypeError, ValueError):
+            pass
+    carried: list[dict] = []
+    if not prune_orphans and raw_empty and report.errors == 0 and prev_count > 0:
+        for f in old_src:
+            g = dict(f)
+            g["orphan"] = True
+            g.setdefault("orphan_detected_at", now)
+            carried.append(g)
+    report.orphaned = len(carried)
+    report.pruned = len(old_src) - len(carried)
+    src_meta = {
+        "last_success_at": now,
+        "last_fact_count": len(new_entries) + len(carried),
+    }
+    return report, new_entries + carried, src_meta
 
 
-def reconcile_source(source: str = "all", dry_run: bool = False) -> ReconcileReport:
+def reconcile_source(
+    source: str = "all", dry_run: bool = False, prune_orphans: bool = False
+) -> ReconcileReport:
     """对单个 source 跑一次只读 reconcile。
 
     Args:
         source: SOURCES registry 中的 source 名（或 "all" 跑全部）
         dry_run: True 只返回报告不落盘（首次/审核场景）
+        prune_orphans: True 则显式清理本源的 orphan 旧事实（单源模式只清本源）
 
     Returns:
-        ReconcileReport（含 indexed/skipped/pruned/errors）
+        ReconcileReport（含 indexed/skipped/pruned/orphaned/errors）
     """
     if source == "all":
-        return reconcile_all(dry_run=dry_run)
+        return reconcile_all(dry_run=dry_run, prune_orphans=prune_orphans)
     extractors = _known_extractors()
     if source not in extractors:
         raise UnknownSourceError(
@@ -311,25 +361,33 @@ def reconcile_source(source: str = "all", dry_run: bool = False) -> ReconcileRep
     # 不能因为“不落盘”就静默降级为空库。
     old_index = _load_reconcile_index()
     old_facts = old_index.get("facts", [])
-    report, new_entries = _reconcile_source(source, extractors[source], old_facts)
+    old_meta = old_index.get("meta", {})
+    report, entries, src_meta = _reconcile_source(
+        source, extractors[source], old_facts,
+        old_meta=old_meta, prune_orphans=prune_orphans,
+    )
     if not dry_run and report.errors == 0:
+        new_meta = dict(old_meta)
+        new_meta[source] = src_meta
         merged = {
             "version": 1,
             "updated": "",
             "by_source": {},
-            "facts": [f for f in old_facts if f.get("source") != source] + new_entries,
+            "facts": [f for f in old_facts if f.get("source") != source] + entries,
+            "meta": new_meta,
         }
         _save_reconcile_index(merged)
     return report
 
 
-def reconcile_all(dry_run: bool = False) -> ReconcileReport:
+def reconcile_all(dry_run: bool = False, prune_orphans: bool = False) -> ReconcileReport:
     """对所有已注册 source 跑 reconcile，返回合并报告。
 
     source 字段为 "all"，indexed/skipped/pruned/errors 是各 source 之和，
     indexed_items 是各 source 前 5 条的合并摘要。非 dry-run 会先删除索引里
     已不在 registry 的历史 source，避免退役 adapter 的旧事实继续被 search/dream 消费。
     所有 source 计算成功后才一次性落盘，避免部分失败留下半更新索引。
+    prune_orphans 为 True 时清理全部 orphan 标记的旧事实。
     """
     extractors = _known_extractors()
     merged = ReconcileReport(source="all")
@@ -338,6 +396,7 @@ def reconcile_all(dry_run: bool = False) -> ReconcileReport:
     # 不能因为“不落盘”就静默降级为空库。
     old_index = _load_reconcile_index()
     old_facts = old_index.get("facts", [])
+    old_meta = old_index.get("meta", {})
     unregistered_facts = [
         f for f in old_facts if f.get("source") not in extractors
     ]
@@ -347,12 +406,18 @@ def reconcile_all(dry_run: bool = False) -> ReconcileReport:
         merged.error_details.append(f"[info] 清理未注册 source: {', '.join(sources)}")
 
     new_facts: list[dict] = []
+    new_meta: dict = {}
     for src, extractor in extractors.items():
-        sub, entries = _reconcile_source(src, extractor, old_facts)
+        sub, entries, src_meta = _reconcile_source(
+            src, extractor, old_facts,
+            old_meta=old_meta, prune_orphans=prune_orphans,
+        )
+        new_meta[src] = src_meta
         new_facts.extend(entries)
         merged.indexed += sub.indexed
         merged.skipped += sub.skipped
         merged.pruned += sub.pruned
+        merged.orphaned += sub.orphaned
         merged.errors += sub.errors
         merged.error_details.extend(sub.error_details)
         merged.indexed_items.extend(sub.indexed_items[:REPORT_ITEMS_ALL])
@@ -364,6 +429,7 @@ def reconcile_all(dry_run: bool = False) -> ReconcileReport:
                 "updated": "",
                 "by_source": {},
                 "facts": new_facts,
+                "meta": new_meta,
             }
         )
     return merged

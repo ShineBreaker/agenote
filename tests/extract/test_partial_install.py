@@ -193,7 +193,7 @@ def test_extract_crush_global_db_recognized_via_override(tmp_path):
 
 
 def test_reconcile_all_skip_source_does_not_block_publish(tmp_path):
-    """skip 源不阻塞整批：好源事实落盘，skip 源旧事实按清空语义清理。"""
+    """S5：skip 源不阻塞整批：好源事实落盘，skip 源旧事实保留并标 orphan。"""
     import agenote.reconcile as r
     from agenote.extract.models import ReconciledFact
 
@@ -236,8 +236,11 @@ def test_reconcile_all_skip_source_does_not_block_publish(tmp_path):
     assert report.errors == 0
     assert any(d.startswith("[skip]") and "skipsrc" in d for d in report.error_details)
     saved = json.loads(reconcile_index.read_text(encoding="utf-8"))
-    assert [f["id"] for f in saved["facts"]] == ["a:new"]
-    assert saved["by_source"] == {"a": 1}
+    assert [f["id"] for f in saved["facts"]] == ["a:new", "skipsrc:old"]
+    assert saved["by_source"] == {"a": 1, "skipsrc": 1}
+    skipped = [f for f in saved["facts"] if f["id"] == "skipsrc:old"][0]
+    assert skipped["orphan"] is True and skipped["orphan_detected_at"]
+    assert saved["meta"]["skipsrc"]["last_fact_count"] == 1
 
 
 def test_reconcile_all_empty_machine_succeeds(tmp_path):

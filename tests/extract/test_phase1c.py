@@ -713,8 +713,8 @@ def test_reconcile_source_does_not_write_when_extractor_reports_errors(tmp_path)
     assert reconcile_index.read_bytes() == before
 
 
-def test_reconcile_empty_extractor_result_prunes_source(tmp_path):
-    """0 facts + 0 errors 不再视为失败：源真清空后允许落盘清掉该源旧事实。"""
+def test_reconcile_empty_extractor_result_orphans_source(tmp_path):
+    """S5：0 facts + 0 errors 不再视为失败，也不静默清空——旧事实保留并标 orphan。"""
     import agenote.reconcile as r
 
     reconcile_dir = tmp_path / ".reconcile"
@@ -736,11 +736,15 @@ def test_reconcile_empty_extractor_result_prunes_source(tmp_path):
         report = r.reconcile_source("fake")
 
     assert report.errors == 0
-    assert report.pruned == 1
+    assert report.orphaned == 1
+    assert report.pruned == 0
     assert "0 facts" in report.error_details[0]
     saved = json.loads(reconcile_index.read_text(encoding="utf-8"))
-    assert saved["facts"] == []
-    assert saved["by_source"] == {}
+    assert len(saved["facts"]) == 1
+    assert saved["facts"][0]["orphan"] is True
+    assert saved["facts"][0]["orphan_detected_at"]
+    assert saved["by_source"] == {"fake": 1}
+    assert saved["meta"]["fake"]["last_fact_count"] == 1
 
 
 def test_reconcile_source_uses_registry():
