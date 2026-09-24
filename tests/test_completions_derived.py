@@ -82,9 +82,15 @@ def test_bash_script_carries_derived_values():
 
 
 def test_zsh_script_carries_derived_values():
+    """zsh 生成器必须用 _arguments 的「:消息:(a b c)」值列表形式。
+
+    `:{a,b,c}` 会被 zsh 当作 shell 代码执行，选项值补全静默失效（实测
+    `command not found: aa,bb,cc`），所以这里同时锁住列表形式本身。
+    """
     zsh = generate("zsh")
-    assert ",".join(_extract_sources().split()) in zsh
-    assert ",".join(MEMORY_TYPES) in zsh
+    assert f":来源:({_extract_sources()})" in zsh
+    assert f":记忆类型:({_memory_types()})" in zsh
+    assert ":{" not in zsh
 
 
 def test_commands_match_cli_handlers():
@@ -149,9 +155,10 @@ run agenote curate ""
 
 
 def test_zsh_completion_uses_separated_values():
+    """_arguments 值列表是空格分隔的「:消息:(a b c)」，逗号形式是单字面量。"""
     zsh = generate("zsh")
-    assert ":domain:(human,agenote)" in zsh
-    assert ":domain:(humanagenote)" not in zsh
+    assert ":domain:(human agenote)" in zsh
+    assert "human,agenote" not in zsh
     assert "(-h --help)-h[显示帮助]" in zsh
     assert "(-h --help)--help[显示帮助]" in zsh
     assert "scan-memories)" in zsh

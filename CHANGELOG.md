@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- **zsh 补全的选项值列表全部失效**（`completions.py`）：`_arguments` 的 `:{a,b,c}` 写法会被 zsh 当成 shell 代码执行（实测 `command not found: aa,bb,cc`），`--source` / `--type` / `--theme` / `--domain` 的候选列表静默为空；改为 `:消息:(a b c)` 形式并重新生成 `completions/_agenote`（`test_zsh_completion_uses_separated_values` 同时锁住空格分隔形式）。
 - **带 BOM 的卡片无法被策展**（`orgserde.py`）：首行 UTF-8 BOM 会让顶层标题匹配 `^\* ` 失配，`update` / `touch` / `archive` / `restore` / `merge` 一律以 `OrgPropertyDrawerError` 失败（fail-closed，不损坏数据但卡片等于只读）。现在只在标题匹配时剥离首行 BOM，写回仍使用原始行，BOM 字节保持不变。
 - **`inbox-archive` 失败后留下 `ensure_dirs` 骨架文件**（`inbox_archive.py`）：事务快照原本在 `ensure_dirs` 之后读取，索引 / inbox 原本不存在时会被补建成空文件，回滚只能恢复到「空骨架」而非「不存在」。快照前移到 `ensure_dirs` 之前，并把 inbox 纳入回滚集（无论是否 `--prune`）。
 - **reconcile 索引写入缺校验、读取放行非法数值**（`reconcile.py`）：`trust_score` / `weight` 增加有限性校验（NaN / Infinity 不再落盘或回读），`id` 必须以 `source` 前缀派生；顶层 `version` / `updated` / `by_source` 类型错误一律 fail-closed；`_save_reconcile_index()` 落盘前复用同一 `_valid_reconcile_fact()` 校验。

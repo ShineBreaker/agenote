@@ -114,13 +114,6 @@ def _memory_types() -> str:
     return " ".join(MEMORY_TYPES)
 
 
-def _memory_types_csv() -> str:
-    """bash/zsh 生成器用的逗号分隔形态（zsh {} 内联、bash compgen 均吃逗号表）。"""
-    from agenote.core import MEMORY_TYPES
-
-    return ",".join(MEMORY_TYPES)
-
-
 def _subcmd_list() -> list[str]:
     return sorted(COMMANDS.keys())
 
@@ -260,15 +253,16 @@ def _gen_bash() -> str:
 
 def _gen_zsh() -> str:
     subs = " ".join(f'"{k}:{v}"' for k, v in sorted(COMMANDS.items()))
-    ext_src = ",".join(_extract_sources().split())
-    mem_src = ",".join(_memscan_sources().split())
-    domain_vals = ",".join(DOMAIN_VALUES)
-    type_vals = ",".join(_type_values().split())
-    owner_vals = ",".join(_owner_values().split())
-    entry_vals = ",".join(_entry_values().split())
-    theme_vals = ",".join(VIZ_THEMES)
-    mem_types = _memory_types_csv()
-    domain_vals = ",".join(DOMAIN_VALUES)
+    # zsh 的 _arguments 值列表必须是「:消息:(a b c)」形式；「:{a,b,c}」会被当作
+    # shell 代码执行（command not found），选项值补全等于没有。
+    ext_src = _extract_sources()
+    mem_src = _memscan_sources()
+    domain_vals = _values(DOMAIN_VALUES)
+    type_vals = _type_values()
+    owner_vals = _owner_values()
+    entry_vals = _entry_values()
+    theme_vals = _values(VIZ_THEMES)
+    mem_types = _memory_types()
     return textwrap.dedent(
         f"""\
         #compdef agenote
@@ -311,9 +305,9 @@ def _gen_zsh() -> str:
                                 '--title[任务标题]:' \\
                                 '--category[类别]:' \\
                                 '--tech[技术栈]:' \\
-                                '--type[类型]:{{{type_vals}}}' \\
-                                '--owner[执行者]:{{{owner_vals}}}' \\
-                                '--entry[条目语义]:{{{entry_vals}}}' \\
+                                '--type[类型]:类型:({type_vals})' \\
+                                '--owner[执行者]:执行者:({owner_vals})' \\
+                                '--entry[条目语义]:条目语义:({entry_vals})' \\
                                 '--summary[一句话总结]:' \\
                                 '--stdin[从标准输入读取]'
                             ;;
@@ -324,16 +318,16 @@ def _gen_zsh() -> str:
                                 '--no-open[不打开浏览器]' \\
                                 '--serve[启动本地 HTTP 服务器]' \\
                                 '--port[监听端口]:' \\
-                                '--theme[主题]:{{{theme_vals}}}'
+                                '--theme[主题]:主题:({theme_vals})'
                             ;;
                         reconcile|extract)
-                            _arguments '--source[来源]:{{{ext_src}}}' '--dry-run[只预览不落盘]'
+                            _arguments '--source[来源]:来源:({ext_src})' '--dry-run[只预览不落盘]'
                             ;;
                         scan-memories)
-                            _arguments '--source[来源]:{{{mem_src}}}' '--json[输出 JSON]'
+                            _arguments '--source[来源]:来源:({mem_src})' '--json[输出 JSON]'
                             ;;
                         memory)
-                            _arguments '--type[记忆类型]:{{{mem_types}}}'
+                            _arguments '--type[记忆类型]:记忆类型:({mem_types})'
                             ;;
                     esac
                     ;;

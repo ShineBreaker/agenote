@@ -10,7 +10,7 @@ _agenote() {
     (( $+functions[_describe] )) || autoload -U _describe
 
     _arguments -C \
-        '--domain[操作域]:domain:(human,agenote)' \
+        '--domain[操作域]:domain:(human agenote)' \
         '--version[显示版本号]' \
         '(-h --help)-h[显示帮助]' \
         '(-h --help)--help[显示帮助]' \
@@ -38,9 +38,9 @@ _agenote() {
                         '--title[任务标题]:' \
                         '--category[类别]:' \
                         '--tech[技术栈]:' \
-                        '--type[类型]:{config,debug,feature,refactor,research,workflow}' \
-                        '--owner[执行者]:{ai,collab,human}' \
-                        '--entry[条目语义]:{ascended,mistake,note}' \
+                        '--type[类型]:类型:(config debug feature refactor research workflow)' \
+                        '--owner[执行者]:执行者:(ai collab human)' \
+                        '--entry[条目语义]:条目语义:(ascended mistake note)' \
                         '--summary[一句话总结]:' \
                         '--stdin[从标准输入读取]'
                     ;;
@@ -51,16 +51,16 @@ _agenote() {
                         '--no-open[不打开浏览器]' \
                         '--serve[启动本地 HTTP 服务器]' \
                         '--port[监听端口]:' \
-                        '--theme[主题]:{light,dark,auto}'
+                        '--theme[主题]:主题:(light dark auto)'
                     ;;
                 reconcile|extract)
-                    _arguments '--source[来源]:{claude,codex,crush,omp,opencode,zcode,all}' '--dry-run[只预览不落盘]'
+                    _arguments '--source[来源]:来源:(claude codex crush omp opencode zcode all)' '--dry-run[只预览不落盘]'
                     ;;
                 scan-memories)
-                    _arguments '--source[来源]:{claude,codex,hermes,pi,reasonix,zcode,all}' '--json[输出 JSON]'
+                    _arguments '--source[来源]:来源:(claude codex hermes pi reasonix zcode all)' '--json[输出 JSON]'
                     ;;
                 memory)
-                    _arguments '--type[记忆类型]:{feedback,project,reference}'
+                    _arguments '--type[记忆类型]:记忆类型:(feedback project reference)'
                     ;;
             esac
             ;;
