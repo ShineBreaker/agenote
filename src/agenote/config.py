@@ -200,11 +200,20 @@ SCHEMA: dict[str, dict[str, Key]] = {
         ),
     },
     "memories.targets": {
-        # 宿主投影根路径（空 = 该目标不投影）；v1 仅三键，pi/reasonix/hermes 不做（设计 N6）
+        # 宿主投影根路径（空 = 该目标不投影）；Q4 增 pi/reasonix/hermes 三键
         "zcode_dir": Key("", env="AGENOTE_ZCODE_DIR", comment="zcode 聚合投影根（空 = 不投影）"),
         "claude_dir": Key("", env="AGENOTE_CLAUDE_DIR", comment="claude 聚合投影根（空 = 不投影）"),
         "codex_suggest_dir": Key(
             "", env="AGENOTE_CODEX_SUGGEST_DIR", comment="codex 建议清单目录（只出清单，不直写记忆树）"
+        ),
+        "reasonix_dir": Key(
+            "", env="AGENOTE_REASONIX_DIR", comment="reasonix 直写根（只写既有 slug，不建目录不动索引）"
+        ),
+        "pi_suggest_dir": Key(
+            "", env="AGENOTE_PI_SUGGEST_DIR", comment="pi 建议清单目录（只出清单，不直写记忆树）"
+        ),
+        "hermes_suggest_dir": Key(
+            "", env="AGENOTE_HERMES_SUGGEST_DIR", comment="hermes 待录入清单目录（§切分，需手动调 memory 工具录入）"
         ),
     },
     "reconcile": {

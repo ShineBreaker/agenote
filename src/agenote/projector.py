@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: MIT
 """agenote.projector — N3 export 投影器：SSOT→宿主聚合投影（单向派生物）。
 
-v1 仅 zcode/claude 聚合 Markdown + codex 建议清单；pi/reasonix/hermes 不做。
+zcode/claude 聚合 Markdown + codex/pi 建议清单 + hermes 待录入清单（§切分，
+手动录入）+ reasonix 既有 slug 直写（per-entry，不动 MEMORY.md 索引）。
 KB 外写入纪律：走 safeio._atomic_replace_bytes（与 atomic_write 同机制，
 tmp+rename，不留半文件），不持 kb_lock；路径只来自 SCHEMA，不接受命令行任意路径。
 """
@@ -68,7 +69,8 @@ def target_dirs() -> dict[str, Path]:
     """非空 [memories.targets] 投影根（空 = 该目标不投影）。"""
     out: dict[str, Path] = {}
     for key, name in (("zcode_dir", "zcode"), ("claude_dir", "claude"),
-                      ("codex_suggest_dir", "codex")):
+                      ("codex_suggest_dir", "codex"), ("reasonix_dir", "reasonix"),
+                      ("pi_suggest_dir", "pi"), ("hermes_suggest_dir", "hermes")):
         raw = str(config.get("memories.targets", key) or "").strip()
         if raw:
             out[name] = config.get_path("memories.targets", key)
@@ -105,7 +107,7 @@ def load_export_state(ctx) -> dict:
 
 
 def _marker_of(text: str) -> str:
-    m = re.search(rf"^{re.escape(MARKER_KEY)}:\s*(\S+)", text, re.MULTILINE)
+    m = re.search(rf"{re.escape(MARKER_KEY)}:\s*(\S+)", text)
     return m.group(1).strip() if m else ""
 
 
@@ -174,6 +176,17 @@ def _select_entries(args, entries: list[dict]) -> list[dict]:
     return rows
 
 
+def _entry_lines(e: dict) -> list[str]:
+    """聚合条目渲染（build_profile 与 reasonix 直写共用）。"""
+    line = f"- ** {e['id']} {e['title']}".rstrip()
+    if _entry_stale(e):
+        line += " (unverified)"
+    out = [line]
+    if e["hook"]:
+        out.append(f"  # {e['hook']}")
+    return out
+
+
 def build_profile(entries: list[dict]) -> str:
     """聚合投影：frontmatter（含 marker）+ 按类型分节（标题+钩子索引级投影，正文留 SSOT）。"""
     first = entries[0] if entries else None
@@ -188,19 +201,14 @@ def build_profile(entries: list[dict]) -> str:
             continue
         parts.append(f"\n## {sec}\n")
         for e in rows:
-            line = f"- ** {e['id']} {e['title']}".rstrip()
-            if _entry_stale(e):
-                line += " (unverified)"
-            parts.append(line)
-            if e["hook"]:
-                parts.append(f"  # {e['hook']}")
+            parts.extend(_entry_lines(e))
     # 未知类型兜底一节（不静默丢条目）
     rest = [e for t, es in by_type.items()
             for e in es if t not in {s for s, _ in TYPE_SECTIONS}]
     if rest:
         parts.append("\n## misc\n")
         for e in rest:
-            parts.append(f"- ** {e['id']} {e['title']}".rstrip())
+            parts.extend(_entry_lines(e))
     body = "\n".join(parts).rstrip() + "\n" if parts else "(空)\n"
     marker = content_hash(body)
     head = (f"---\nname: agenote-profile\ndescription: {desc[:120]}\n"
@@ -222,6 +230,52 @@ def build_suggestions(entries: list[dict]) -> str:
             lines.append(f"- ** {e['id']} {e['title']}".rstrip()
                          + (f" — {e['hook']}" if e["hook"] else ""))
     return "\n".join(lines).rstrip() + "\n"
+
+
+def build_hermes_suggest(entries: list[dict]) -> str:
+    """hermes 待录入清单：禁直写 memories/*.md，只出 §切分文本手动录入。
+
+    每条一节（§ 行分隔），首句为 40 字内摘要，正文禁 § 字符。
+    """
+    head = (f"# agenote hermes 待录入清单（{today()} 生成，需经 memory 工具手动录入）\n"
+            f"# 路由：U→USER.md（user memory），F/P/E/R→MEMORY.md（memory）；"
+            f"正文已剔除切分符\n")
+    blocks = []
+    for e in entries:
+        first = (e["hook"] or e["title"])[:40].replace("§", "")
+        body = "\n".join([f"- ** {e['id']} {e['title']}".rstrip()]
+                         + ([f"  # {e['hook']}"] if e["hook"] else [])).replace("§", "")
+        blocks.append(f"{first}\n{body}")
+    return head + "\n§\n".join(blocks).rstrip() + "\n" if blocks else head + "(空)\n"
+
+
+REASONIX_TYPE_WORDS = {"U": "user", "F": "feedback", "P": "project",
+                       "E": "environment", "R": "reference"}
+
+
+def build_reasonix_entry(e: dict) -> str:
+    """reasonix per-entry 直写文件：frontmatter 贴近原生键名，id/revision 留空注来源。"""
+    body = "\n".join(_entry_lines(e))
+    # 正文禁首行超长（读侧标题启发式截断）：首行兜底截断
+    lines = body.split("\n")
+    lines[0] = lines[0][:120]
+    body = "\n".join(lines)
+    marker = content_hash(e["id"] + body)
+    head = (f"---\nname: agenote-{e['id']}\ntitle: {e['title'][:120]}\n"
+            f"description: {(e['hook'] or e['title'])[:120]}\n"
+            f"id: \"\"  # SSOT id 见正文（agenote 投影，宿主请勿直接改）\n"
+            f"revision: \"\"  # 同上\n"
+            f"metadata:\n  type: {REASONIX_TYPE_WORDS.get(e['type'], 'reference')}\n---\n")
+    tail = f"\n<!-- {MARKER_KEY}: {marker}（agenote SSOT 投影） -->\n"
+    return head + body + tail
+
+
+def _reasonix_slugs(root: Path) -> list[str]:
+    """枚举 reasonix 根下既有 project slug（只读既有目录，绝不新建）。"""
+    proot = root / "projects"
+    if not proot.is_dir():
+        return []
+    return sorted(p.parent.name for p in proot.glob("*/memory") if p.is_dir())
 
 
 def _sync_pointer(index_path: Path, aggregate: str = AGGREGATE_NAME) -> bool:
@@ -273,13 +327,44 @@ def cmd_export(args, ctx=None) -> None:
     if not targets:
         print("(未配置 [memories.targets]，无投影目标)")
     for name, root in targets.items():
-        if name == "codex":
+        if name in ("codex", "pi"):
             path = root / SUGGEST_NAME
-            wrote = _write_if_changed(path, build_suggestions(entries))
-            print(f"codex 建议清单 → {path}（{'已更新' if wrote else '无变化跳过'}）")
+            text = build_suggestions(entries)
+            wrote = _write_if_changed(path, text)
+            print(f"{name} 建议清单 → {path}（{'已更新' if wrote else '无变化跳过'}）")
             if wrote:
                 rec_targets[name] = {"path": str(path),
-                                     "content_hash": content_hash(build_suggestions(entries))}
+                                     "content_hash": content_hash(text)}
+            continue
+        if name == "hermes":
+            path = root / SUGGEST_NAME
+            text = build_hermes_suggest(entries)
+            wrote = _write_if_changed(path, text)
+            print(f"hermes 待录入清单 → {path}（{'已更新' if wrote else '无变化跳过'}）")
+            if wrote:
+                rec_targets[name] = {"path": str(path),
+                                     "content_hash": content_hash(text)}
+            continue
+        if name == "reasonix":
+            slug = getattr(args, "project", None)
+            if slug and "/" in str(slug):
+                slug = Path(str(slug)).name
+            slugs = _reasonix_slugs(root)
+            if not slug or slug not in slugs:
+                _mem.die(f"reasonix 直写需 --project 指定既有 slug"
+                         f"（既有：{', '.join(slugs) if slugs else '无'}）")
+            memdir = root / "projects" / slug / "memory"
+            n = 0
+            for e in entries:
+                path = memdir / f"agenote-{e['id']}.md"
+                text = build_reasonix_entry(e)
+                if path.exists() and not _marker_of(_read_target(path) or ""):
+                    print(f"[!] reasonix → {path} 存在非投影文件，本次不覆盖")
+                    continue
+                if _write_if_changed(path, text):
+                    n += 1
+            print(f"reasonix → {memdir}（{n} 个条目更新）")
+            rec_targets[name] = {"path": str(memdir), "content_hash": content_hash(profile)}
             continue
         path = root / AGGREGATE_NAME
         cur = _read_target(path)

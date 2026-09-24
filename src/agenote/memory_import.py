@@ -71,13 +71,14 @@ def jaccard(a: str, b: str) -> float:
 
 
 def _echo_prefixes() -> list[Path]:
-    """非空 [memories.targets] 路径（展开 ~ 与 XDG 占位符）。"""
-    out = []
-    for key in ("zcode_dir", "claude_dir", "codex_suggest_dir"):
-        val = str(config.get("memories.targets", key)).strip()
-        if val:
-            out.append(config.get_path("memories.targets", key))
-    return out
+    """非空 [memories.targets] 路径（展开 ~ 与 XDG 占位符）。
+
+    复用 projector.export_target_prefixes（N2 回声排除共用口径），
+    不在此手抄键清单，免 targets 加键即漂移。
+    """
+    from agenote import projector  # lazy：projector 侧同样 lazy，避免成环
+
+    return [Path(p) for p in projector.export_target_prefixes()]
 
 
 def _is_echo(path: str, prefixes: list[Path]) -> bool:
