@@ -302,6 +302,16 @@ def cmd_reindex(args: argparse.Namespace, ctx=None) -> None:
     index = _rebuild_index(ctx)
     _save_index(index, ctx)
     print(f"索引已重建 ({ctx.name}): {index['total']} 条卡片 → {ctx.index}")
+    # S7：遗留 WEIGHT 属性不再静默忽略，告警提示清理（索引值已按公式重算）
+    from agenote.index import find_legacy_weight_files  # lazy：cli 聚合层惯例
+
+    legacy = find_legacy_weight_files(ctx)
+    if legacy:
+        preview = "、".join(legacy[:5]) + ("…" if len(legacy) > 5 else "")
+        print(
+            f"警告：{len(legacy)} 张卡片仍含遗留 :WEIGHT: 属性"
+            f"（索引已忽略该值，按 usage/新鲜度公式重算），建议清理：{preview}"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -793,6 +803,9 @@ def _main() -> None:
         "--case-sensitive", action="store_true", help="大小写敏感匹配"
     )
     search_parser.add_argument("--json", action="store_true", help="JSON 输出")
+    search_parser.add_argument(
+        "--freshness", action="store_true", help="超期未验证结果追加 (unverified Nd) 标记"
+    )
 
     # ── fields ────────────────────────────────────────────────────────────
     fields_parser = subparsers.add_parser("fields", help="列出已有字段值")
@@ -831,6 +844,9 @@ def _main() -> None:
     )
     memory_parser.add_argument(
         "--project-touch", metavar="NAME", help="更新项目 LAST_ACTIVE 时间戳"
+    )
+    memory_parser.add_argument(
+        "--freshness", action="store_true", help="条目列表追加 (unverified Nd) 时效标记"
     )
 
     # ── reindex ───────────────────────────────────────────────────────────

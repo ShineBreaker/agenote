@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agenote.extract import resolve_xdg_path
+from agenote.safeio import safe_read_text
 
 
 @dataclass
@@ -118,7 +119,7 @@ def _scan_dir_source(spec: MemorySourceSpec) -> tuple[list[dict], list[str]]:
         if path.name == "MEMORY.md":
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = safe_read_text(path, errors="replace")
         except OSError as exc:
             errors.append(f"记忆文件读取失败（{type(exc).__name__}）")
             continue
@@ -156,7 +157,7 @@ def _scan_section_files(spec: MemorySourceSpec) -> tuple[list[dict], list[str]]:
             errors.append(f"{spec.name} 记忆文件不存在: {path}")
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = safe_read_text(path, errors="replace")
         except OSError as exc:
             errors.append(f"记忆文件读取失败（{type(exc).__name__}）")
             continue

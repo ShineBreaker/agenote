@@ -14,19 +14,24 @@ import argparse
 import json
 import re
 import shlex
+from datetime import date
 from pathlib import Path
 
 from agenote import config
 from agenote.core import (
+    STALE_DAYS,
     die,
     default_context,
     agenote_context,
 )
 from agenote.extract.models import RECONCILE_DEFAULT_WEIGHT
 from agenote.ranking import BM25, tokenize
+from agenote.safeio import safe_read_text
 from agenote.orgserde import (
+    parse_memory_date,
     parse_org_prop,
     read_org_title,
+    unverified_tag,
 )
 
 # 检索评分系数与片段参数（config [weights] / [search] 覆盖）
@@ -146,10 +151,31 @@ def _make_search_snippet(
     return snippet
 
 
+def _freshness_tag(content: str, filepath: Path | None, enabled: bool) -> str:
+    """S7：enabled 且内容超 STALE_DAYS 未验证时返回 `(unverified Nd)`，否则 ""。
+
+    验证时刻取 LAST_VERIFIED（卡片）或 UPDATED（记忆条目），缺省文件 mtime（文件级粗粒度）。
+    """
+    if not enabled:
+        return ""
+    raw = parse_org_prop(content, "LAST_VERIFIED") or parse_org_prop(content, "UPDATED")
+    verified = parse_memory_date(raw)
+    days = None
+    if verified is not None:
+        days = (date.today() - verified).days
+    elif filepath is not None:
+        try:
+            days = (date.today() - date.fromtimestamp(filepath.stat().st_mtime)).days
+        except OSError:
+            return ""
+    return unverified_tag(days, STALE_DAYS)
+
+
 def _cross_domain_search(
     query: str,
     limit: int = SEARCH_LIMIT,
     case_sensitive: bool = False,
+    freshness: bool = False,
 ) -> list[dict]:
     """跨域加权检索：同时扫人类域 + agenote 域 + reconcile 事实。
 
@@ -170,7 +196,7 @@ def _cross_domain_search(
         weight = ctx.default_weight
         for filepath in _iter_search_targets(ctx):
             try:
-                content = filepath.read_text(encoding="utf-8")
+                content = safe_read_text(filepath)
             except OSError:
                 continue
             haystack = content if case_sensitive else content.casefold()
@@ -180,19 +206,21 @@ def _cross_domain_search(
             key = f"file:{filepath}"
             docs_tokens[key] = tokenize(content, case_sensitive)
             title_hay = title if case_sensitive else title.casefold()
-            results.append(
-                {
-                    "_key": key,
-                    "domain": ctx.name,
-                    "weight": weight,
-                    "title": title,
-                    "file": str(filepath),
-                    "_snippet": _make_search_snippet(
-                        {"content": content}, normalized_terms, case_sensitive
-                    ),
-                    "_title_hits": sum(1 for t in normalized_terms if t in title_hay),
-                }
-            )
+            entry = {
+                "_key": key,
+                "domain": ctx.name,
+                "weight": weight,
+                "title": title,
+                "file": str(filepath),
+                "_snippet": _make_search_snippet(
+                    {"content": content}, normalized_terms, case_sensitive
+                ),
+                "_title_hits": sum(1 for t in normalized_terms if t in title_hay),
+            }
+            if freshness:
+                # S10 兼容：JSON 默认无此键，--freshness 开启才增补
+                entry["freshness"] = _freshness_tag(content, filepath, True)
+            results.append(entry)
 
     # reconcile 事实（其他 agent 的 memory，weight 低于 KB 卡片）
     from agenote.reconcile import load_reconcile_facts
@@ -238,6 +266,7 @@ def _cmd_cross_domain_search(args: argparse.Namespace) -> None:
         args.query,
         limit=getattr(args, "limit", SEARCH_LIMIT),
         case_sensitive=getattr(args, "case_sensitive", False),
+        freshness=getattr(args, "freshness", False),
     )
 
     if not results:
@@ -255,7 +284,8 @@ def _cmd_cross_domain_search(args: argparse.Namespace) -> None:
         domain_tag = f"[{r.get('domain', '?')}]"
         if r.get("source"):
             domain_tag = f"[{r['domain']}:{r['source']}]"
-        print(f"{domain_tag} {r['title']}  score={r['score']}  {r.get('file', r.get('id', ''))}")
+        fresh = f" {r['freshness']}" if r.get("freshness") else ""
+        print(f"{domain_tag} {r['title']}  score={r['score']}  {r.get('file', r.get('id', ''))}{fresh}")
         if r.get("snippet"):
             for line in r["snippet"].splitlines():
                 print(f"  | {line}")
@@ -293,7 +323,7 @@ def cmd_search(args: argparse.Namespace, ctx=None) -> None:
 
     for filepath in _iter_search_targets(ctx):
         try:
-            content = filepath.read_text(encoding="utf-8")
+            content = safe_read_text(filepath)
         except OSError:
             continue
 
@@ -353,16 +383,20 @@ def cmd_search(args: argparse.Namespace, ctx=None) -> None:
                 parse_org_prop(match["content"], "ID")
                 or match["filepath"].stem.split("-")[0]
             )
-            results.append(
-                {
-                    "id": card_id,
-                    "title": match["title"],
-                    "score": match["score"],
-                    "snippet": _make_search_snippet(
-                        match, normalized_terms, args.case_sensitive
-                    ),
-                }
-            )
+            row = {
+                "id": card_id,
+                "title": match["title"],
+                "score": match["score"],
+                "snippet": _make_search_snippet(
+                    match, normalized_terms, args.case_sensitive
+                ),
+            }
+            if getattr(args, "freshness", False):
+                # S10 兼容：默认无此键，--freshness 开启才增补
+                row["freshness"] = _freshness_tag(
+                    match["content"], match["filepath"], True
+                )
+            results.append(row)
         print(json.dumps(results, ensure_ascii=False, indent=2))
         return
 
@@ -373,8 +407,12 @@ def cmd_search(args: argparse.Namespace, ctx=None) -> None:
             if filepath.is_relative_to(ctx.root)
             else filepath
         )
+        tag = _freshness_tag(
+            match["content"], filepath, getattr(args, "freshness", False)
+        )
+        fresh = f" {tag}" if tag else ""
         print(
-            f"== {rel} | score={match['score']} | matched={', '.join(match['matched'])} =="
+            f"== {rel} | score={match['score']} | matched={', '.join(match['matched'])} =={fresh}"
         )
         if match["title"] != "unknown":
             print(f"title: {match['title']}")

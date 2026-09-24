@@ -17,6 +17,7 @@ import contextlib
 import fcntl
 import itertools
 import os
+import stat
 import time
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -163,3 +164,34 @@ def kb_lock(lock_path: Path, timeout: float | None = None) -> Iterator[None]:
         yield
     finally:
         os.close(fd)
+
+
+class SafeReadError(OSError):
+    """受控读取拒绝：symlink / 非普通文件 / 读前后身份变化。OSError 子类，调用方原有 except OSError 继续生效。"""
+
+
+def safe_read_text(path: Path | str, *, encoding: str = "utf-8", errors: str = "strict") -> str:
+    """S8 受控读取：lstat 拒 symlink 与非普通文件，O_NOFOLLOW 打开，读前后 fstat 身份比对。
+
+    供 scan-memories / import / export（外部不可信输入）与 KB 内部读取渐进迁移用。
+    """
+    path = Path(path)
+    try:
+        pre = os.lstat(path)
+    except FileNotFoundError:
+        raise
+    if stat.S_ISLNK(pre.st_mode):
+        raise SafeReadError(f"拒绝读取 symlink: {path}")
+    if not stat.S_ISREG(pre.st_mode):
+        raise SafeReadError(f"拒绝读取非普通文件: {path}")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        with os.fdopen(fd, "rb") as f:
+            before = os.fstat(f.fileno())
+            data = f.read()
+            after = os.fstat(f.fileno())
+    except OSError:
+        raise
+    if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+        raise SafeReadError(f"读取中文件身份变化: {path}")
+    return data.decode(encoding, errors)

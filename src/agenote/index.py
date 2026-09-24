@@ -144,6 +144,30 @@ def _valid_index_card(card: object) -> bool:
     return True
 
 
+def find_legacy_weight_files(ctx: "KBContext | None" = None) -> list[str]:
+    """S7：扫描 experiences/ 下仍带 :WEIGHT: 属性的卡片（索引忽略该值，按公式重算）。
+
+    返回相对 ctx.root 的路径列表；reindex 告警提示清理用。
+    """
+    ctx = ctx or default_context()
+    found: list[str] = []
+    if not ctx.experiences.exists():
+        return found
+    for path in sorted(ctx.experiences.rglob("*.org")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        if parse_org_prop(content, "WEIGHT"):
+            try:
+                found.append(str(path.relative_to(ctx.root)))
+            except ValueError:
+                found.append(str(path))
+    return found
+
+
 def _load_index(ctx: "KBContext | None" = None) -> dict:
     """加载 JSON 索引；已有文件损坏或结构非法时 fail-closed，缺失文件返回空骨架。"""
     ctx = ctx or default_context()
