@@ -237,9 +237,10 @@ SCHEMA: dict[str, dict[str, Key]] = {
             comment="recall 模式返回条数上限",
         ),
         "recall_min_score": Key(
-            1.0, env="AGENOTE_INJECTION_RECALL_MIN_SCORE",
-            comment="BM25 分数下限（低于不输出）。初值占位：W1 验收对真实语料抽样标定后更新"
-            "（CJK n-gram 语料 BM25 可到数十，过低形同虚设）",
+            8.0, env="AGENOTE_INJECTION_RECALL_MIN_SCORE",
+            comment="BM25 分数下限（低于不输出）。标定 2026-09-25：真实 reconcile 事实语料"
+            "（130 条条目）× 10 类 query 全量采样（600 样本），纯噪声上限 6.7、"
+            "人工核对的相关命中下限 9.6，取 8.0 居中分隔；语料长大后建议重标定",
         ),
         "recall_min_query": Key(
             6, env="AGENOTE_INJECTION_RECALL_MIN_QUERY",

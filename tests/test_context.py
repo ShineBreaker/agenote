@@ -3,16 +3,20 @@
 # SPDX-License-Identifier: MIT
 """`agenote context` 注入简报（C1）：三态×两格式、预算裁剪、marker、recall 门槛、项目三步匹配。
 
-recall_min_score 标定方法（SCHEMA 默认值的由来，2026-09-25）：
-  1. 以 KB 真实 reconcile 事实（~/Documents/Org/agenote/.reconcile/index.json，
-     只读抽样 240 条）在 /tmp 临时 KB 渲染成 MEMORY.org 类型化条目——
-     import 管道的产物形态即如此，语料真实；
-  2. `KB_ROOT=<tmp> AGENOTE_INJECTION_RECALL_MIN_SCORE=0 uv run agenote context
-     --mode recall --query <q> --format json` 跑 10 类典型 query（项目名/技术词/
-     中文短语/英文标识符/日常短词），收集全部分数分布；
-  3. 相关命中（条目含 query 词）分数 ≥12.3，纯 n-gram 偶然重叠的噪声 ≤5.7，
-     取 8.0 居中分隔。语料增长后可用同法重标定（改 SCHEMA 默认值即可）。
-  本文件单测语料只有几条，BM25 分数量级远小于真实语料，故统一用
+recall_min_score 标定方法（SCHEMA 默认值 8.0 的由来，2026-09-25）：
+  1. 真实 KB 的 MEMORY.org 当时尚无类型化条目，故以 KB 真实 reconcile 事实
+     （~/Documents/Org/agenote/.reconcile/index.json，只读抽样 130 条、噪声过滤后
+     5 源）在 /tmp 临时 KB 渲染成 MEMORY.org 类型化条目——import 管道的产物
+     形态即如此，词汇与长度分布真实；
+  2. `KB_ROOT=<tmp> AGENOTE_INJECTION_RECALL_MIN_SCORE=0 AGENOTE_INJECTION_
+     RECALL_TOPK=60 uv run agenote context --mode recall --query <q> --format json
+     --budget 100000` 跑 10 类典型 query（项目名/技术词/中文短语/英文标识符/
+     日常短词；预算拉满排除裁剪干扰），共 600 样本；
+  3. 非零分数分布 min=0.92 / median=3.00 / p95=12.57；语料外话题（tomllib、
+     atomic_write）的纯噪声上限 6.73，人工核对的相关命中下限 9.61，取 8.0
+     居中分隔（仅 14% 非零样本过线，符合注入简报的克制取向）。
+  BM25 绝对量级随语料规模漂移，MEMORY.org 长大后按同法重标定（改 SCHEMA
+  默认值即可）。本文件单测语料只有几条，分数远低于标定值，故统一用
   AGENOTE_INJECTION_RECALL_MIN_SCORE env 放宽下限；标定默认值单独回归
   （test_recall_min_score_default_is_calibrated）。
 """
@@ -338,3 +342,10 @@ def test_entry_body_captured_for_corpus(kb):
     entries = _iter_memory_entries(_read_memory_org_text(kb))
     u001 = next(e for e in entries if e["id"] == "U001")
     assert "正文段落补充说明中文语料" in u001["body"]
+
+
+def test_recall_min_score_default_is_calibrated():
+    """SCHEMA 默认值必须是标定值而非占位 1.0（1.0 对真实语料形同虚设）。"""
+    from agenote import config
+
+    assert float(config.get("injection", "recall_min_score")) == 8.0
