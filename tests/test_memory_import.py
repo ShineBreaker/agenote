@@ -250,6 +250,26 @@ def test_import_legacy_absolute_id_still_skipped(tmp_path, monkeypatch):
     assert any(s["reason"] == "origin_id" for s in rep["skipped"])
 
 
+def test_import_bom_crlf_source_normalized(tmp_path, monkeypatch):
+    """BOM/CRLF 源文件：读取侧归一，frontmatter 正常解析、正文无 \\r 进 SSOT。"""
+    root = tmp_path / "srcmem"
+    p = root / "projects/p/memory/bom.md"
+    p.parent.mkdir(parents=True)
+    fm = FM.format(name="带 BOM 的条目标题也足够长避免噪声过滤",
+                   desc="编码边界",
+                   body="这是带 BOM 与 CRLF 换行的正文内容，用来验证读取侧归一化后写进知识库的文本是干净的。")
+    p.write_bytes(b"\xef\xbb\xbf" + fm.replace("\n", "\r\n").encode("utf-8"))
+    monkeypatch.setenv("ZCODE_MEMORIES_DIR", str(root))
+    ctx = _ctx(tmp_path, monkeypatch=monkeypatch)
+    rep = run_import("zcode", ctx=ctx)
+    assert len(rep["imported"]) == 1
+    text = ctx.memory_org.read_text(encoding="utf-8")
+    assert "\r" not in text
+    assert "带 BOM 的条目标题也足够长避免噪声过滤" in text
+    assert "description: 编码边界" not in text  # frontmatter 没有整段漏进正文
+    assert "验证读取侧归一化" in text
+
+
 def test_import_secret_blocked_no_value_leak(tmp_path, monkeypatch):
     _src(monkeypatch, tmp_path, {
         "projects/p/memory/leak.md": FM.format(

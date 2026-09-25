@@ -109,6 +109,18 @@ def _mtime(path: Path) -> str:
     return time.strftime("%Y-%m-%d", time.localtime(path.stat().st_mtime))
 
 
+def _read_source_text(path: Path) -> str:
+    """源记忆文件统一读入口：safe_read + 剥 BOM + CRLF 归一为 LF。
+
+    BOM 会让 `_FM_RE` 的 `\\A---` 失配（frontmatter 整段当正文、标题退化
+    为文件名），CRLF 会把 `\\r` 原样写进 SSOT——都在读取侧一次归一。
+    """
+    text = safe_read_text(path, errors="replace")
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _is_projected(text: str) -> bool:
     """内容自识别 agenote 投影 marker（P0 回声双保险；lazy 防与 projector 成环）。"""
     from agenote.projector import has_projection_marker
@@ -126,7 +138,7 @@ def _scan_dir_source(spec: MemorySourceSpec) -> tuple[list[dict], list[str]]:
         if path.name == "MEMORY.md":
             continue
         try:
-            text = safe_read_text(path, errors="replace")
+            text = _read_source_text(path)
         except OSError as exc:
             errors.append(f"记忆文件读取失败（{type(exc).__name__}）")
             continue
@@ -166,7 +178,7 @@ def _scan_section_files(spec: MemorySourceSpec) -> tuple[list[dict], list[str]]:
             errors.append(f"{spec.name} 记忆文件不存在: {path}")
             continue
         try:
-            text = safe_read_text(path, errors="replace")
+            text = _read_source_text(path)
         except OSError as exc:
             errors.append(f"记忆文件读取失败（{type(exc).__name__}）")
             continue
