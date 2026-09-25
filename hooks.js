@@ -25,6 +25,8 @@ export const name = "agenote-hooks";
 
 /** system-prompt 里的 section 名。 */
 const SECTION_NAME = "agenote-health-summary";
+/** 注入的 review/curate 提示的 plugin 名——也是 durable log 里识别自注入的依据。 */
+const PLUGIN_SOURCE = "agenote-hooks";
 
 /**
  * 任务完成信号（取自 agenote-review skill references/triggers.md — 单一真相源）。
@@ -139,7 +141,7 @@ function normalize(cfg = {}) {
  * 消息 source 标为 plugin：既便于用户分辨"这不是我说的话"，也让
  * 'agent/inbox/inserted' 侧能干净地区分自注入。
  */
-function deliver(agent, text, plugin = "agenote-hooks") {
+function deliver(agent, text, plugin = PLUGIN_SOURCE) {
   agent.followup(
     createUserMessage({
       content: [{ type: "text", text }],
@@ -157,6 +159,33 @@ function deliver(agent, text, plugin = "agenote-hooks") {
  */
 function isSubagent(agent) {
   return agent?.session?.header?.origin === "subagent";
+}
+
+/**
+ * 防抖与"本会话已触发过"的判定一律从 durable log 推导，不存内存标志。
+ *
+ * 内存标志（signalFired/idleFired）在 resume/clear/compact 后会被 agent/created
+ * 重置——web 刷新即 resume，同一会话干完活又触发一次；进程重启同理。而
+ * durable log 是会话的单一真相源：扫一遍历史，本插件注入过几条、最后一条
+ * 何时落盘，resume/重启后答案不变，防抖天然稳定。
+ */
+function deliveredByUs(session) {
+  const events = [];
+  const surface = session?.surface?.nodes;
+  if (surface === undefined) return events;
+  for (const seq of surface) {
+    const event = session.eventAt(seq);
+    if (
+      event?.type === "user/message" &&
+      // source 形态：v3 旧日志 {kind:"plugin", plugin}；v4 {kind:"plugin:<名>"}
+      ((event.data?.source?.kind === "plugin" &&
+        event.data.source.plugin === PLUGIN_SOURCE) ||
+        event.data?.source?.kind === `plugin:${PLUGIN_SOURCE}`)
+    ) {
+      events.push(event);
+    }
+  }
+  return events;
 }
 
 export function apply(ctx, config = {}) {
@@ -188,9 +217,8 @@ export function apply(ctx, config = {}) {
   }
 
   // ── 每会话触发状态 ──
-  // 用 Map<sessionId, state> 而非模块级标量：一个进程里可以并存多个会话
-  // （web 端多标签、subagent），模块级状态会串台——这正是 pi 版修过的 bug。
-  /** @type {Map<string, {lastTrigger:number, signalFired:boolean, idleFired:boolean, workTurns:number, toolActivity:boolean, lastUserText:string, selfInjected:boolean, timer:any}>} */
+  // 只存「驱动 timer 所需的最小瞬态」；防抖与"已触发过"从 durable log 推导。
+  /** @type {Map<string, {timer:any, toolActivity:boolean, lastUserText:string, selfInjected:boolean}>} */
   const sessions = new Map();
 
   function stateOf(agent) {
@@ -198,14 +226,10 @@ export function apply(ctx, config = {}) {
     let state = sessions.get(id);
     if (!state) {
       state = {
-        lastTrigger: 0,
-        signalFired: false,
-        idleFired: false,
-        workTurns: 0,
+        timer: undefined,
         toolActivity: false,
         lastUserText: "",
         selfInjected: false,
-        timer: undefined,
       };
       sessions.set(id, state);
     }
@@ -219,17 +243,11 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  // ── 'agent/created'：会话进入 —— 重置状态 ──
-  // 必须重置：agent 可能在 resumed/clear/compact 后复用同一 session id，
-  // 上一轮的 timer 与 signalFired 不能带到新会话。
+  // ── 'agent/created'：清瞬态（timer 随进程消亡，resume 后不能残留）──
   ctx.on("agent/created", ({ agent }) => {
     if (isSubagent(agent)) return;
     const state = stateOf(agent);
     clearIdle(state);
-    state.lastTrigger = 0;
-    state.signalFired = false;
-    state.idleFired = false;
-    state.workTurns = 0;
     state.toolActivity = false;
     state.lastUserText = "";
     state.selfInjected = false;
@@ -279,7 +297,12 @@ export function apply(ctx, config = {}) {
     // 本轮的产出，先落定再清标志——它要随该轮武装的 timer 一起带到回调里。
     const workedThisTurn = state.toolActivity;
     state.toolActivity = false;
-    if (workedThisTurn) state.workTurns += 1;
+
+    // durable log 推导：本插件在本会话的既往注入（防抖依据，跨 resume 稳定）
+    const own = deliveredByUs(agent.session);
+    const lastOwn = own[own.length - 1];
+    const lastTrigger = lastOwn?.time ?? 0;
+    const everFired = own.length > 0;
 
     // 显式完成信号
     if (cfg.completionSignals && !state.selfInjected) {
@@ -289,28 +312,30 @@ export function apply(ctx, config = {}) {
         const hit = cfg.signals.some((s) =>
           text.includes(String(s).toLowerCase()),
         );
-        if (hit && now - state.lastTrigger >= cfg.debounceMs) {
-          state.lastTrigger = now;
-          state.signalFired = true;
+        if (hit && now - lastTrigger >= cfg.debounceMs) {
           state.lastUserText = ""; // 一条用户消息只触发一次
           deliver(agent, buildReviewPrompt("检测到任务完成信号"));
+          return; // 已触发，本轮不再武装 idle
         }
       }
     }
 
     // 空闲兜底：覆盖夜间无人值守——用户 kick-off 后离开，无人说"完成"。
-    // 一旦被显式信号触发过就永久禁用本条路径，避免与信号路径重复打扰。
+    // 一旦触发过（信号或兜底，见 durable log）就永久禁用本条路径，
+    // 避免与信号路径重复打扰。内存判定（idleFired/signalFired）在 resume
+    // 后会被重置，这里改读 durable log——刷新/重启后不会二次触发。
     if (!cfg.idleFallback) return;
     clearIdle(state);
+    if (everFired) return;
     // 只有"刚结束的这一轮真的干过活"才武装：纯对话轮不该在 5 分钟后收到
     // "一段工作已结束"的提示。workedThisTurn 随闭包进入本次 timer 的回调，
     // 因此判定的是**触发本轮**，不受后续轮次影响。
     if (!workedThisTurn) return;
     state.timer = setTimeout(() => {
       state.timer = undefined;
-      if (state.idleFired || state.signalFired) return;
-      state.idleFired = true;
-      state.lastTrigger = Date.now();
+      // timer 到点时日志里可能有新的注入（信号路径在别的轮次触发过），
+      // 重新推导，已经触发过就静默退出。
+      if (deliveredByUs(agent.session).length > 0) return;
       try {
         deliver(
           agent,
