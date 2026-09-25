@@ -4,6 +4,24 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.0.1] - 2026-09-25
+
+对照 agent 记忆系统研究报告补齐记忆模型：项目/工作区分区隔离、受限条目不离开 SSOT、写入侧 secret 门禁与生命周期元数据。
+
+### Added
+
+- **`:PROJECT:` 全类型分区键**（`memory.py` / `context.py` / `projector.py` / `memory_import.py` / `memscan.py`）：memscan 提取的 `projects/<slug>` 原值经 import 落盘；`project_key_matches` 判定扁平名 / `-<16hex>` 工作区哈希后缀 / claude 消毒路径三形态 slug；context 注入与 export 投影对带分区键的 U/F/P/E/R 条目统一按当前项目门禁——无法确定项目上下文时不注入、不投影。linked git worktree 的 `.git` gitfile 解析回主仓根，worktree 与主仓共享项目身份。
+- **`:SENSITIVITY:` 受限标记**：非空即不注入不投影、仅存 SSOT（`context._load_entries` 与 `projector._select_entries` 同口径排除）；`memory --add --sensitivity <LEVEL>` 落盘；`--list` / `--json` 以 sensitive 标记可见，不回显内容。
+- **写入侧 secret 门禁**（`core.py` `gate_secret_write` / `warn_secret_write`）：与 import/export 共用 `SECRET_PATTERNS` 和 `[memories].secret_scan_enabled` 开关。`add` / `update --append|--stdin` / `memory --add` 直入 SSOT 命中即拒写；`inbox` 草稿捕获温和告警；`inbox-archive` 逐条跳过不阻断整批；四路均有 `--allow-secret` 显式豁免。
+- **doctor `kb-secrets` 事后审计**：扫描 MEMORY.org / 卡片 / inbox 的密钥形态内容，只报类别与文件名不回显值——写侧门禁的存量兜底。
+- **记忆生命周期字段**：`memory --touch` 递增 `USAGE_COUNT`；`--archive` / `--supersede` 落 `ARCHIVED_AT` / `SUPERSEDED_BY` 墓碑。
+
+### Fixed
+
+- `cmd_touch` 单次调用 USAGE_COUNT 计两次：默认路径连续两次 `touch_card`（LAST_USED + LAST_VERIFIED），`touch_card` 新增 `count` 参数，第二次只刷时间戳；`count=False` 调用不再消耗 session 幂等键。
+- 项目作用域门禁传播：P 条目经项目索引行 PATH 命中后，`:PROJECT:` 指向索引行名字的条目可被正确放行（`_scope_gate` 纳入已命中项目身份集合）。
+- 测试 404 → 425（新增 `tests/test_memory_isolation.py`：分区/敏感/secret/生命周期回归 21 项）。
+
 ## [0.2.0] - 2026-09-25
 
 跨 agent 记忆注入架构（C 线）落地：agenote 保持纯粹 CLI，各宿主插件/hook 实时调 CLI 注入记忆简报，替代宿主自带记忆系统；含上一轮实现审查的 22 项修复闭环。
