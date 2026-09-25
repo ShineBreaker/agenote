@@ -82,8 +82,19 @@ def _echo_prefixes() -> list[Path]:
 
 
 def _is_echo(path: str, prefixes: list[Path]) -> bool:
-    p = str(Path(path))
-    return any(p == str(t) or p.startswith(str(t).rstrip("/") + "/") for t in prefixes)
+    """realpath 归一后前缀比对（C7 P0）：symlink/拼写差异不再静默失配。"""
+    try:
+        p = Path(path).resolve()
+    except OSError:
+        p = Path(path)
+    for t in prefixes:
+        try:
+            t = t.resolve()
+        except OSError:
+            pass
+        if p == t or t in p.parents:
+            return True
+    return False
 
 
 def _heuristic_type(title: str, body: str) -> tuple[str, bool]:
@@ -209,7 +220,9 @@ def run_import(source: str = "all", dry_run: bool = False, ctx=None) -> dict:
         if is_noise_fact({"content": entry.get("body", ""), "title": title}):
             report["skipped"].append({"title": title, "reason": "noise"})
             continue
-        if prefixes and _is_echo(entry.get("path", ""), prefixes):
+        # 回声双保险（P0）：路径前缀之外，内容自识别投影 marker 也拒收——
+        # targets 重配/前缀失灵时，防止自家投影被 ingest 进 SSOT 后递归再投影。
+        if entry.get("projected") or (prefixes and _is_echo(entry.get("path", ""), prefixes)):
             report["skipped"].append({"title": title, "reason": "echo"})
             continue
         cand = normalize(entry)

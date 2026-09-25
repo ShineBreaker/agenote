@@ -80,9 +80,19 @@ def target_dirs() -> dict[str, Path]:
 def export_target_prefixes() -> list[str]:
     """N2 回声排除共用口径：targets 任一非空前缀匹配即跳过（import 侧复用本函数）。
 
-    ponytail: 字符串前缀比对，symlink/大小写归一化上游 N2 做。
+    realpath 归一后比对（C7 P0）：config 里的路径拼写/symlink 与源侧实际
+    路径不一致时，裸字符串前缀会静默失配导致自家投影被 ingest。
     """
-    return [str(p) for p in target_dirs().values()]
+    return [str(p.resolve()) for p in target_dirs().values()]
+
+
+def has_projection_marker(text: str) -> bool:
+    """内容自识别：命中任一 agenote 投影 marker（聚合 frontmatter / 指针行 / reasonix 尾注）。
+
+    import 侧消费（P0 双保险的第二道）：前缀排除因 targets 重配失灵时，
+    投影文件靠自身 marker 仍可被拒收，避免投影被当新事实递归 ingest。
+    """
+    return MARKER_KEY in text or POINTER_MARK in text
 
 
 def state_path(ctx) -> Path:
@@ -107,8 +117,9 @@ def load_export_state(ctx) -> dict:
 
 
 def _marker_of(text: str) -> str:
-    m = re.search(rf"{re.escape(MARKER_KEY)}:\s*(\S+)", text)
-    return m.group(1).strip() if m else ""
+    """提取投影 marker 的 content hash（hex）；缺失返回 ""。"""
+    m = re.search(rf"{re.escape(MARKER_KEY)}:\s*([0-9a-f]+)", text)
+    return m.group(1) if m else ""
 
 
 def _read_target(path: Path) -> str | None:

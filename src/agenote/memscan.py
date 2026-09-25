@@ -109,6 +109,13 @@ def _mtime(path: Path) -> str:
     return time.strftime("%Y-%m-%d", time.localtime(path.stat().st_mtime))
 
 
+def _is_projected(text: str) -> bool:
+    """内容自识别 agenote 投影 marker（P0 回声双保险；lazy 防与 projector 成环）。"""
+    from agenote.projector import has_projection_marker
+
+    return has_projection_marker(text)
+
+
 def _scan_dir_source(spec: MemorySourceSpec) -> tuple[list[dict], list[str]]:
     root = resolve_xdg_path(spec.env, spec.default, section="memories.sources")
     if not root.is_dir():
@@ -135,6 +142,7 @@ def _scan_dir_source(spec: MemorySourceSpec) -> tuple[list[dict], list[str]]:
             "description": fm.get("description", ""),
             "body": body.strip(),
             "modified": _mtime(path),
+            "projected": _is_projected(text),
         })
     return entries, errors
 
@@ -173,6 +181,7 @@ def _scan_section_files(spec: MemorySourceSpec) -> tuple[list[dict], list[str]]:
                 "description": "",
                 "body": chunk.strip(),
                 "modified": _mtime(path),
+                "projected": _is_projected(text),
             })
     return entries, errors
 

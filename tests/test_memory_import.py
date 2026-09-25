@@ -88,18 +88,68 @@ def test_import_idempotent_origin_skip(tmp_path, monkeypatch):
     assert ctx.memory_org.read_text(encoding="utf-8").count("代码评审要跑完整测试套件") == 1
 
 
-def test_import_echo_excluded(tmp_path, monkeypatch):
+def test_import_echo_excluded_real_config_chain(tmp_path, monkeypatch):
+    """回声排除走真实配置链路：targets env → projector 前缀 → 扫描路径，不 monkeypatch。"""
     root = _src(monkeypatch, tmp_path, {
         "projects/p/memory/echo-note.md": FM.format(
             name="自家投影回声条目内容足够长才不会被噪声过滤",
             desc="echo",
             body="这是投影回声文件的内容正文部分，用来验证回声排除逻辑是否正常工作生效。"),
     })
-    monkeypatch.setattr(mi, "_echo_prefixes", lambda: [root])
+    # 源根就在投影目标树内（记忆库目录被误配进 targets 的真实事故形态）
+    monkeypatch.setenv("AGENOTE_ZCODE_DIR", str(tmp_path))
     ctx = _ctx(tmp_path, monkeypatch=monkeypatch)
     rep = run_import("zcode", ctx=ctx)
     assert rep["imported"] == []
     assert len(rep["skipped"]) == 1 and rep["skipped"][0]["reason"] == "echo"
+
+
+def test_import_echo_excluded_via_symlink_prefix(tmp_path, monkeypatch):
+    """targets 配置写 symlink 拼写时仍命中（realpath 归一，C7 P0）。"""
+    root = _src(monkeypatch, tmp_path, {
+        "projects/p/memory/echo-note.md": FM.format(
+            name="自家投影回声条目内容足够长才不会被噪声过滤",
+            desc="echo",
+            body="这是投影回声文件的内容正文部分，用来验证回声排除逻辑是否正常工作生效。"),
+    })
+    link = tmp_path / "target-link"
+    link.symlink_to(tmp_path)
+    monkeypatch.setenv("AGENOTE_ZCODE_DIR", str(link))
+    ctx = _ctx(tmp_path, monkeypatch=monkeypatch)
+    rep = run_import("zcode", ctx=ctx)
+    assert rep["imported"] == []
+    assert rep["skipped"][0]["reason"] == "echo"
+
+
+def test_import_rejects_projection_marker_aggregate(tmp_path, monkeypatch):
+    """P0 双保险：targets 失配时，聚合投影 frontmatter marker 仍拒收（不 ingest）。"""
+    marker = "x-agenote-projected: " + "a" * 64
+    _src(monkeypatch, tmp_path, {
+        "projects/p/memory/agenote-profile.md": (
+            f"---\nname: agenote-profile\ndescription: d\ntype: project\n{marker}\n---\n"
+            "# agenote memories\n\n## feedback\n- ** F001 条目标题足够长避免噪声过滤\n"
+            "  # 投影正文不应被再次摄取进单一真相源。够长的正文。\n"),
+    })
+    ctx = _ctx(tmp_path, monkeypatch=monkeypatch)
+    rep = run_import("zcode", ctx=ctx)
+    assert rep["imported"] == []
+    assert rep["skipped"][0]["reason"] == "echo"
+    assert "投影正文不应被再次摄取" not in ctx.memory_org.read_text(encoding="utf-8")
+
+
+def test_import_rejects_projection_marker_reasonix_tail(tmp_path, monkeypatch):
+    """reasonix 尾注 `<!-- x-agenote-projected: ... -->` 同口径拒收。"""
+    _src(monkeypatch, tmp_path, {
+        "projects/p/memory/agenote-F001.md": (
+            "---\nname: agenote-F001\ntitle: 投影条目标题足够长避免噪声过滤\n---\n"
+            "- ** F001 投影条目标题足够长避免噪声过滤\n"
+            "  # 正文摘要足够长，验证尾注 marker 命中回声拒收逻辑。\n"
+            "<!-- x-agenote-projected: beefbeef（agenote SSOT 投影） -->\n"),
+    })
+    ctx = _ctx(tmp_path, monkeypatch=monkeypatch)
+    rep = run_import("zcode", ctx=ctx)
+    assert rep["imported"] == []
+    assert rep["skipped"][0]["reason"] == "echo"
 
 
 def test_import_secret_blocked_no_value_leak(tmp_path, monkeypatch):
