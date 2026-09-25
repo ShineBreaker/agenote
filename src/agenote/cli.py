@@ -73,6 +73,7 @@ from agenote.curator import (
 )
 from agenote.inbox_archive import cmd_inbox_archive
 from agenote.memory import cmd_memory
+from agenote.context import cmd_context
 from agenote.lint import cmd_lint
 from agenote.orgfmt import cmd_format
 from agenote.health import CARD_STALE_DAYS, cmd_health, cmd_gaps
@@ -564,6 +565,13 @@ def print_help() -> None:
             agenote memory --get                     查看全文
             agenote memory --import [--source X|all] [--dry-run]  N2 摄取导入
 
+  context  注入简报（只读免锁；宿主插件/hook 实时调用的注入通道）
+            agenote context                                    会话简报（U→E→P→F→R 选集）
+            agenote context --mode recall --query <词>          BM25 召回（带分数下限）
+            选项: --budget N(字符) --project NAME --types U,F,P,E,R
+                  --host zcode|claude|codex|pi|opencode|hermes|generic --format text|json
+            开关关/无条目时 text 零字节；json status=ok|empty|disabled
+
   reindex   重建知识库索引（WEIGHT 随之按 usage/新鲜度公式重算）
             agenote reindex
 
@@ -897,6 +905,39 @@ def _main() -> None:
     )
     memory_parser.add_argument(
         "--conflicts", action="store_true", help="只读列出冲突队列（配合 --json）",
+    )
+
+    # ── context ──────────────────────────────────────────────────────────
+    # C 线注入通道（设计 C1）：只读免锁，宿主插件/hook 每轮调用取注入正文
+    context_parser = subparsers.add_parser(
+        "context", help="生成注入简报（只读免锁；开关/条目不满足时零字节输出）"
+    )
+    context_parser.add_argument(
+        "--mode", choices=["session", "recall"], default="session",
+        help="session=开篇简报（默认）；recall=BM25 召回（需 --query）",
+    )
+    context_parser.add_argument(
+        "--query", help="recall 检索词（recall 模式必填）",
+    )
+    context_parser.add_argument(
+        "--budget", type=int, default=None,
+        help="输出字符预算（恒为字符；默认取 [injection].default_budget）",
+    )
+    context_parser.add_argument(
+        "--project", metavar="NAME", help="项目名或路径（确定性匹配，不模糊）",
+    )
+    context_parser.add_argument(
+        "--types", default=None, help="逗号分隔类型集（默认取 [injection].types_default）",
+    )
+    context_parser.add_argument(
+        "--host",
+        choices=["zcode", "claude", "codex", "pi", "opencode", "hermes", "generic"],
+        default="generic",
+        help="调用方宿主（查 [injection.hosts] 开关；generic 走默认值）",
+    )
+    context_parser.add_argument(
+        "--format", choices=["text", "json"], default="text",
+        help="text=注入正文（非 ok 态零字节）；json=带 status 的结构化输出",
     )
 
     # ── reindex ───────────────────────────────────────────────────────────
@@ -1293,6 +1334,8 @@ def _main() -> None:
         "extract": cmd_extract,
         # 记忆库巡检（只读，免锁）
         "scan-memories": cmd_scan_memories,
+        # 注入简报（只读，免锁；不进 MUTATING_COMMANDS）
+        "context": cmd_context,
     }
     if args.command in commands:
         # 初始化上下文、确保目录和读取参数都在同一公共错误边界内；否则

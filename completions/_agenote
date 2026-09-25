@@ -18,7 +18,7 @@ _agenote() {
     case "$state" in
         subcmd)
             _describe -t commands 'agenote commands' \
-                '("add:添加经验卡片" "archive:归档卡片" "commit:提交知识库变更" "completions:生成 shell 补全脚本" "config:配置管理" "connect:双向链接两张卡片" "deduplicate:检测重复卡片" "distill:工作流蒸馏" "doctor:环境自诊断（外部工具/配置/KB 结构）" "dream:从 reconcile 事实提炼候选新卡片" "extract:跨 agent 对话抽取为 Org 文件" "fields:列出已有字段值" "format:格式化卡片" "gaps:知识空白检测" "get:读取卡片详情" "health:知识库健康度报告" "inbox:快速捕获到 inbox.org" "inbox-archive:把 inbox 条目归档为经验卡片" "init:初始化知识库" "lint:格式校验与报告" "list:列出卡片" "memory:管理记忆系统" "merge:合并卡片" "reconcile:跨 agent memory 只读 reconcile" "reindex:重建知识库索引" "restore:恢复归档卡片" "review:审查卡片" "scan-memories:只读扫描各 agent 记忆库" "search:全文检索" "stats:知识库统计概览" "sweep:done/stable → stale 降级" "tags:按标签检索" "touch:更新卡片时间戳" "trace:回查 dream 候选的原始对话" "update:更新已有卡片" "viz:生成知识库可视化 Web 页面")' && return 0
+                '("add:添加经验卡片" "archive:归档卡片" "commit:提交知识库变更" "completions:生成 shell 补全脚本" "config:配置管理" "connect:双向链接两张卡片" "context:生成注入简报（只读免锁）" "deduplicate:检测重复卡片" "distill:工作流蒸馏" "doctor:环境自诊断（外部工具/配置/KB 结构）" "dream:从 reconcile 事实提炼候选新卡片" "extract:跨 agent 对话抽取为 Org 文件" "fields:列出已有字段值" "format:格式化卡片" "gaps:知识空白检测" "get:读取卡片详情" "health:知识库健康度报告" "inbox:快速捕获到 inbox.org" "inbox-archive:把 inbox 条目归档为经验卡片" "init:初始化知识库" "lint:格式校验与报告" "list:列出卡片" "memory:管理记忆系统" "merge:合并卡片" "reconcile:跨 agent memory 只读 reconcile" "reindex:重建知识库索引" "restore:恢复归档卡片" "review:审查卡片" "scan-memories:只读扫描各 agent 记忆库" "search:全文检索" "stats:知识库统计概览" "sweep:done/stable → stale 降级" "tags:按标签检索" "touch:更新卡片时间戳" "trace:回查 dream 候选的原始对话" "update:更新已有卡片" "viz:生成知识库可视化 Web 页面")' && return 0
             ;;
         args)
             case $words[1] in

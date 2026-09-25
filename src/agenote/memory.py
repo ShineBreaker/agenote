@@ -147,6 +147,8 @@ SECTION_TO_TYPE = {
 }
 # SCOPE 单一口径：import（normalize）与 --add 共用，两侧写出的 P/E 条目同构
 SCOPE_FOR_TYPE = {"E": "machine", "P": "project"}
+# 条目正文捕获上限（context 注入简报语料用；纯展示层截断，刻意不进配置）
+ENTRY_BODY_SNIPPET_CHARS = 400
 
 
 def scope_for_type(mem_type: str) -> str:
@@ -172,9 +174,11 @@ def _iter_memory_entries(text: str) -> list[dict]:
     """解析 MEMORY.org 全部 `**` 条目。
 
     每个条目 dict：section/id(K001 或项目名)/title/type(U|F|P|E|R|None)/
-    kind(entry|index)/props/hook/validated_at。
+    kind(entry|index)/props/hook/validated_at/body。
     TYPE 推导优先级：显式 :TYPE: > 前缀字母+序号 > 所在节映射；
     project 节无前缀行是项目索引（kind=index），其余为约定条目。
+    body 为钩子行之外的正文拼接（截 400 字符）——context 注入简报的
+    BM25 语料与正文首行展示用；既有消费方只读既有键，不受新增键影响。
     """
     entries: list[dict] = []
     lines = text.split("\n")
@@ -196,15 +200,20 @@ def _iter_memory_entries(text: str) -> list[dict]:
         # 条目正文：到下一个 ** 或 * 为止；收集 props 与钩子行（`# ...`）
         props: dict[str, str] = {}
         hook = ""
+        body_parts: list[str] = []
         j = i + 1
         while j < len(lines) and not re.match(r"^\*\*?\s+", lines[j]):
             pm = re.match(r"\s*:(\w+):\s*(.+)", lines[j])
             if pm:
                 props[pm.group(1)] = pm.group(2).strip()
-            elif not hook:
+            else:
                 hm = re.match(r"\s*#\s?(.*)", lines[j])
-                if hm and hm.group(1).strip():
+                if not hook and hm and hm.group(1).strip():
                     hook = hm.group(1).strip()[:120]
+                else:
+                    stripped = lines[j].strip()
+                    if stripped:
+                        body_parts.append(stripped)
             j += 1
         if m_typed:
             entry_id = m_typed.group(1) + m_typed.group(2)
@@ -223,6 +232,7 @@ def _iter_memory_entries(text: str) -> list[dict]:
             "section": section, "id": entry_id, "title": title,
             "type": entry_type, "kind": kind, "props": props,
             "hook": hook,
+            "body": " ".join(body_parts)[:ENTRY_BODY_SNIPPET_CHARS],
             "validated_at": props.get("VALIDATED_AT", "").strip("[] "),
         })
         i = j
