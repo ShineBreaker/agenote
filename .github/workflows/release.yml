@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "回填 Release 的 tag（须已存在于远端）"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: 校验 tag 与 pyproject 版本一致
+        run: |
+          VERSION="${TAG#v}"
+          PKG_VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
+          if [ "$PKG_VERSION" != "$VERSION" ]; then
+            echo "::error::tag ${TAG} 指向提交的 pyproject.toml version=${PKG_VERSION}，不一致（核对 tag 是否打在 release commit 上）" >&2
+            exit 1
+          fi
+
+      - name: 从 CHANGELOG 提取本版本段落
+        run: |
+          VERSION="${TAG#v}" python3 - <<'PY'
+          import os, re, sys
+          version = os.environ["VERSION"]
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          m = re.search(rf"^## \[{re.escape(version)}\][^\n]*\n.*?(?=^## \[|\Z)",
+                        text, re.M | re.S)
+          if not m or not m.group(0).strip():
+              sys.exit(f"CHANGELOG.md 中未找到 ## [{version}] 段落——发版流程要求先记日志")
+          open("release_notes.md", "w", encoding="utf-8").write(m.group(0).strip() + "\n")
+          PY
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 构建 wheel / sdist
+        run: uv build
+
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$TAG" --title "$TAG" --notes-file release_notes.md dist/*
