@@ -129,6 +129,29 @@ def is_noise_fact(fact: dict) -> bool:
     return bool(NOISE_MARKERS.search(content[:NOISE_SCAN_CHARS]))
 
 
+# ── secret 门禁（memory import/export 共用单一清单）───────────────────────────
+# 高置信密钥前缀子集（v1 不承诺完备，宁可误拦）。命中只记类别名，不记值。
+# 同一类别多条正则取历史双份清单的并集（较宽者）；改清单只改这一处。
+SECRET_PATTERNS: list[tuple[str, "re.Pattern[str]"]] = [
+    ("anthropic_key", re.compile(r"sk-ant-[A-Za-z0-9_\-]{8,}")),
+    ("openai_key", re.compile(r"sk-(?:proj|live|test)-[A-Za-z0-9_\-]{8,}")),
+    ("openai_key", re.compile(r"sk-[A-Za-z0-9]{16,}")),
+    ("github_token", re.compile(r"gh[pousr]_[A-Za-z0-9_]{8,}")),
+    ("github_token", re.compile(r"github_pat_[A-Za-z0-9_]{8,}")),
+    ("gitlab_token", re.compile(r"glpat-[A-Za-z0-9_\-]{8,}")),
+    ("slack_token", re.compile(r"xox[abprs]\-[A-Za-z0-9\-]{8,}")),
+    ("aws_key", re.compile(r"AKIA[0-9A-Z]{16}")),
+    ("google_key", re.compile(r"AIza[0-9A-Za-z_\-]{10,}")),
+    ("hf_token", re.compile(r"hf_[A-Za-z0-9]{8,}")),
+    ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+]
+
+
+def scan_secret_categories(text: str) -> list[str]:
+    """扫文本命中的密钥类别（排序去重；只回类别名，永不回值）。"""
+    return sorted({name for name, rx in SECRET_PATTERNS if rx.search(text)})
+
+
 # ── 阈值 ──────────────────────────────────────────────────────────────────────
 DEFAULT_LIST_COUNT = 20  # kb list 默认显示条数（CLI --limit 覆盖，不进配置文件）
 

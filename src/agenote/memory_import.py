@@ -20,23 +20,12 @@ import re
 from pathlib import Path
 
 from agenote import config
-from agenote.core import default_context, is_noise_fact, today
+from agenote.core import default_context, is_noise_fact, scan_secret_categories, today
 from agenote.safeio import atomic_write
 
 CONFLICTS_FILE = ".memory-conflicts.json"
 
-# gate：高置信密钥前缀子集（v1 不承诺完备，宁可误拦）。命中只记类别名。
-_SECRET_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("anthropic_key", re.compile(r"sk-ant-[A-Za-z0-9_-]{8,}")),
-    ("openai_key", re.compile(r"sk-(?:proj|live|test)-[A-Za-z0-9_-]{8,}")),
-    ("github_token", re.compile(r"(?:ghp_|gho_|github_pat_)[A-Za-z0-9_]{8,}")),
-    ("slack_token", re.compile(r"xox[bpas]-[A-Za-z0-9-]{8,}")),
-    ("aws_key", re.compile(r"AKIA[0-9A-Z]{16}")),
-    ("google_key", re.compile(r"AIza[0-9A-Za-z_-]{10,}")),
-    ("hf_token", re.compile(r"hf_[A-Za-z0-9]{8,}")),
-    ("gitlab_token", re.compile(r"glpat-[A-Za-z0-9_-]{8,}")),
-    ("private_key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")),
-]
+# gate：密钥类别单一清单在 core.SECRET_PATTERNS（与 export 门禁共用，C7 P2 合一）
 
 _TYPE_WORDS = {
     "u": "U", "user": "U",
@@ -55,11 +44,9 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]", re.UNICODE)
 
 
 def scan_secret(text: str) -> str:
-    """返回命中的密钥类别名；无命中返回 \"\"（只记类别不记值）。"""
-    for category, pat in _SECRET_PATTERNS:
-        if pat.search(text):
-            return category
-    return ""
+    """返回命中的密钥类别名（首个）；无命中返回 ""（只记类别不记值）。"""
+    cats = scan_secret_categories(text)
+    return cats[0] if cats else ""
 
 
 def jaccard(a: str, b: str) -> float:

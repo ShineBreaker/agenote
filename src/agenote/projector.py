@@ -27,27 +27,20 @@ SUGGEST_NAME = "agenote-suggestions.md"
 POINTER_MARK = "x-agenote-pointer"
 MARKER_KEY = "x-agenote-projected"
 EXPORT_STATE = ".memory-export.json"
-CONFLICTS_STATE = ".memory-conflicts.json"
+# 冲突队列文件名单一来源是 memory_import.CONFLICTS_FILE（写入方），见 conflicts_path
 
 TYPE_SECTIONS = (("U", "user"), ("F", "feedback"), ("P", "project"),
                  ("E", "environment"), ("R", "reference"))
 
-# 高置信密钥前缀子集（v1 不做行为分析，不承诺完备；命中只记类别不记值）
-SECRET_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("sk-ant-key", re.compile(r"sk-ant-[A-Za-z0-9\-_]{8,}")),
-    ("openai-key", re.compile(r"sk-[A-Za-z0-9]{16,}")),
-    ("github-token", re.compile(r"gh[pousr]_[A-Za-z0-9]{8,}")),
-    ("gitlab-token", re.compile(r"glpat-[A-Za-z0-9\-_]{8,}")),
-    ("slack-token", re.compile(r"xox[abpras]-[A-Za-z0-9\-]{8,}")),
-    ("aws-key", re.compile(r"AKIA[0-9A-Z]{16}")),
-    ("google-key", re.compile(r"AIza[0-9A-Za-z\-_]{20,}")),
-    ("private-key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
-]
-
 
 def scan_secrets(text: str) -> list[str]:
-    """扫正文命中类别（只回类别名，永不回值）。"""
-    return sorted({name for name, rx in SECRET_PATTERNS if rx.search(text)})
+    """扫正文命中类别（只回类别名，永不回值）。
+
+    清单单一来源 core.SECRET_PATTERNS（与 import 门禁共用，C7 P2 合一）。
+    """
+    from agenote.core import scan_secret_categories
+
+    return scan_secret_categories(text)
 
 
 def content_hash(text: str) -> str:
@@ -101,9 +94,14 @@ def state_path(ctx) -> Path:
 
 
 def conflicts_path(ctx) -> Path:
-    """冲突队列路径（N2 落盘，N4 只读列出；缺失即无冲突）。"""
+    """冲突队列路径（N2 落盘，N4 只读列出；缺失即无冲突）。
+
+    文件名单一来源 memory_import.CONFLICTS_FILE（import 是写入方，C7 合一）。
+    """
+    from agenote.memory_import import CONFLICTS_FILE  # lazy：memory_import 亦 lazy 引本模块
+
     base = getattr(ctx, "root", None) or ctx.memory_org.parent
-    return Path(base) / CONFLICTS_STATE
+    return Path(base) / CONFLICTS_FILE
 
 
 def load_export_state(ctx) -> dict:
