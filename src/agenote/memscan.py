@@ -136,6 +136,7 @@ def _scan_dir_source(spec: MemorySourceSpec) -> tuple[list[dict], list[str]]:
         entries.append({
             "source": spec.name,
             "path": str(path),
+            "rel": path.relative_to(root).as_posix(),
             "project": project,
             "name": fm.get("name") or fm.get("title") or path.stem,
             "type": fm.get("type", ""),
@@ -175,6 +176,7 @@ def _scan_section_files(spec: MemorySourceSpec) -> tuple[list[dict], list[str]]:
             entries.append({
                 "source": spec.name,
                 "path": str(path),
+                "rel": rel,
                 "project": "",
                 "name": _section_title(chunk),
                 "type": "",

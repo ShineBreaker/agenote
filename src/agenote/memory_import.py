@@ -122,6 +122,8 @@ def normalize(entry: dict) -> dict:
     # lazy：memory 薄转发循环依赖，helpers 在调用时导入
     from agenote.memory import origin_id
 
+    # 幂等键用相对源根路径派生（C7 P1）：源根改名/搬家不再碎裂全部 ID
+    rel = entry.get("rel") or entry.get("path", "")
     return {
         "source": entry.get("source", ""),
         "path": entry.get("path", ""),
@@ -130,8 +132,20 @@ def normalize(entry: dict) -> dict:
         "type": mem_type,
         "scope": scope,
         "needs_review": review,
-        "origin_id": origin_id(entry.get("source", ""), entry.get("path", ""), entry.get("name", "")),
+        "origin_id": origin_id(entry.get("source", ""), rel, entry.get("name", "")),
     }
+
+
+def _legacy_origin_id(entry: dict) -> str:
+    """旧版绝对路径派生的幂等键。
+
+    迁移过渡期双算兼容（C7 P1：新算法 miss 回退旧算法一个版本），
+    供未跑 `memory --migrate` 的存量 KB 继续幂等；下版本随迁移命令一并移除。
+    """
+    from agenote.memory import origin_id_legacy
+
+    return origin_id_legacy(entry.get("source", ""), entry.get("path", ""),
+                            entry.get("name", ""))
 
 
 def _existing_state(ctx) -> tuple[set[str], list[dict]]:
@@ -226,7 +240,8 @@ def run_import(source: str = "all", dry_run: bool = False, ctx=None) -> dict:
             report["skipped"].append({"title": title, "reason": "echo"})
             continue
         cand = normalize(entry)
-        if cand["origin_id"] in origins:
+        legacy_id = _legacy_origin_id(entry)
+        if cand["origin_id"] in origins or (legacy_id and legacy_id in origins):
             report["skipped"].append({"title": title, "reason": "origin_id"})
             continue
         # ⑤⑥：同 TYPE+SCOPE 下标题 Jaccard ≥ 阈值 → body 似为 dup，异为 conflict

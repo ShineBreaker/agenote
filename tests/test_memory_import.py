@@ -206,6 +206,50 @@ def test_import_orphan_detected_after_source_removal(tmp_path, monkeypatch, caps
     assert "orphan" in out and "代码评审要跑完整测试套件" in out
 
 
+def test_import_id_survives_source_root_rename(tmp_path, monkeypatch):
+    """ORIGIN_ID 相对源根派生：源根改名后重复 import 仍幂等（不再全量碎裂）。"""
+    root = _src(monkeypatch, tmp_path, {
+        "projects/p/memory/code-review.md": FM.format(
+            name="代码评审要跑完整测试套件",
+            desc="评审流程记忆",
+            body="代码评审的时候必须运行完整的测试套件来验证所有的修改内容没有破坏现有功能。"),
+    })
+    ctx = _ctx(tmp_path, monkeypatch=monkeypatch)
+    run_import("zcode", ctx=ctx)
+    renamed = tmp_path / "renamed-mem"
+    root.rename(renamed)
+    monkeypatch.setenv("ZCODE_MEMORIES_DIR", str(renamed))
+    rep2 = run_import("zcode", ctx=ctx)
+    assert rep2["imported"] == []
+    assert len(rep2["skipped"]) == 1 and rep2["skipped"][0]["reason"] == "origin_id"
+
+
+def test_import_legacy_absolute_id_still_skipped(tmp_path, monkeypatch):
+    """迁移过渡期双算：存量旧绝对路径 ID 的条目重复 import 仍幂等跳过。"""
+    from agenote.memory import origin_id_legacy
+
+    root = _src(monkeypatch, tmp_path, {
+        "projects/p/memory/code-review.md": FM.format(
+            name="代码评审要跑完整测试套件",
+            desc="评审流程记忆",
+            body="代码评审的时候必须运行完整的测试套件来验证所有的修改内容没有破坏现有功能。"),
+    })
+    ctx = _ctx(tmp_path, monkeypatch=monkeypatch)
+    legacy = origin_id_legacy("zcode", str(root / "projects/p/memory/code-review.md"),
+                              "代码评审要跑完整测试套件")
+    legacy_block = (
+        "\n** F099 存量旧键条目\n   :PROPERTIES:\n"
+        f"   :ORIGIN_ID: {legacy}\n   :ORIGIN_AGENT: zcode\n   :END:\n"
+        "   代码评审的时候必须运行完整的测试套件来验证所有的修改内容没有破坏现有功能。\n")
+    # 用旧标题构造：normalize 的标题来自源 name，保持一致才命中 origin 检查
+    legacy_block = legacy_block.replace("F099 存量旧键条目", "F099 代码评审要跑完整测试套件")
+    with open(ctx.memory_org, "a", encoding="utf-8") as f:
+        f.write(legacy_block)
+    rep = run_import("zcode", ctx=ctx)
+    assert rep["imported"] == []
+    assert any(s["reason"] == "origin_id" for s in rep["skipped"])
+
+
 def test_import_secret_blocked_no_value_leak(tmp_path, monkeypatch):
     _src(monkeypatch, tmp_path, {
         "projects/p/memory/leak.md": FM.format(

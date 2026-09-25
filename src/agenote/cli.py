@@ -559,6 +559,7 @@ def print_help() -> None:
             agenote memory --project-touch <名称>    更新项目 LAST_ACTIVE
              agenote memory --export [--type T] [--scope S] [--project P]  投影到宿主聚合文件
              agenote memory --supersede <新ID> <旧ID>  裁决：旧条目入 deprecated
+             agenote memory --migrate                 一次性迁移 ORIGIN_ID 到相对路径派生
              agenote memory --conflicts              只读列出冲突队列
             agenote memory --get                     查看全文
             agenote memory --import [--source X|all] [--dry-run]  N2 摄取导入
@@ -889,6 +890,10 @@ def _main() -> None:
     memory_parser.add_argument(
         "--supersede", nargs=2, metavar=("NEW_ID", "OLD_ID"),
         help="N4 裁决：新条目记 SUPERSEDES，旧条目入 deprecated",
+    )
+    memory_parser.add_argument(
+        "--migrate", action="store_true",
+        help="一次性迁移：存量 ORIGIN_ID 重算为相对源根派生（幂等可重跑）",
     )
     memory_parser.add_argument(
         "--conflicts", action="store_true", help="只读列出冲突队列（配合 --json）",

@@ -133,8 +133,17 @@ SECTION_TO_TYPE = {
 
 
 def origin_id(agent: str, relpath: str, title: str) -> str:
-    """N1 幂等键：sha256(AGENT:相对路径:标题)[:16]。"""
+    """N1 幂等键：sha256(AGENT:相对源根路径:标题)[:16]。
+
+    路径口径为「相对源根」（C7 P1）——源根改名/搬家不再碎裂全部 ID；
+    存量绝对路径键由 `memory --migrate` 一次性重算，过渡期读取侧双算兼容。
+    """
     return hashlib.sha256(f"{agent}:{relpath}:{title}".encode("utf-8")).hexdigest()[:16]
+
+
+def origin_id_legacy(agent: str, abspath: str, title: str) -> str:
+    """旧版幂等键（绝对路径派生）：仅供 --migrate 验证出处与读取侧双算兼容，随下版本移除。"""
+    return hashlib.sha256(f"{agent}:{abspath}:{title}".encode("utf-8")).hexdigest()[:16]
 
 
 def _iter_memory_entries(text: str) -> list[dict]:
@@ -294,6 +303,11 @@ def cmd_memory(args: argparse.Namespace, ctx=None) -> None:
     # --validate：刷新单条 VALIDATED_AT（MUTATING）
     if getattr(args, "validate", None):
         _memory_validate(args.validate, ctx)
+        return
+
+    # --migrate：C7 一次性迁移（MUTATING；ORIGIN_ID 相对路径化）
+    if getattr(args, "migrate", False):
+        _memory_migrate(ctx)
         return
 
     # --import：N2 摄取管道（写命令；--dry-run 只预览不落盘，但仍持锁）
@@ -1180,3 +1194,84 @@ def _memory_supersede(new_id: str, old_id: str, ctx=None) -> None:
 
     atomic_write(ctx.memory_org, "\n".join(lines))
     print(f"已裁决 {old_id} → {new_id}（旧条目入 deprecated）")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# C7 一次性迁移：ORIGIN_ID 绝对路径 → 相对源根派生（存量重算）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _rewrite_entry_prop(lines: list[str], entry_id: str, key: str, value: str) -> bool:
+    """按条目 id 原位改属性（复用 supersede 的块内置换；找不到返回 False）。"""
+    for i, ln in enumerate(lines):
+        if match_memory_entry(ln, entry_id):
+            end = i + 1
+            while end < len(lines) and not is_memory_boundary(lines[end]):
+                end += 1
+            lines[i:end] = _set_prop_in_block(lines[i:end], key, value)
+            return True
+    return False
+
+
+def _migrated_origin_id(agent: str, opath: str, old_id: str, title: str) -> tuple[str, str]:
+    """计算 ORIGIN_ID 迁移目标，返回 (新 ID, "") 或 ("", 跳过原因)。
+
+    只在旧 ID 与绝对路径算法重算一致时才迁移（证明确由旧版 import 产生，
+    手写/已迁移条目不动），且源路径必须落在该 agent 已知源根之下。
+    """
+    if origin_id_legacy(agent, opath, title) != old_id:
+        return "", "旧 ID 与绝对路径算法不符（手写或已迁移）"
+    from agenote.extract import resolve_xdg_path
+    from agenote.memscan import SOURCES
+
+    spec = SOURCES.get(agent)
+    if spec is None:
+        return "", f"未知记忆源 {agent}"
+    root = resolve_xdg_path(spec.env, spec.default, section="memories.sources")
+    p = Path(opath)
+    try:
+        rel = p.relative_to(root).as_posix()
+    except ValueError:
+        try:
+            rel = p.expanduser().resolve().relative_to(
+                root.expanduser().resolve()).as_posix()
+        except (ValueError, OSError):
+            return "", f"源路径不在 {agent} 源根下"
+    return origin_id(agent, rel, title), ""
+
+
+def _memory_migrate(ctx=None) -> None:
+    """一次性迁移（C7）：存量条目 ORIGIN_ID 重算为相对源根派生。
+
+    单次 atomic_write；逐条报告改动与跳过原因，宁可少迁不误迁——
+    无法验证出处的条目保持原 ID（读取侧双算兼容仍幂等）。
+    """
+    ctx = ctx or default_context()
+    if not ctx.memory_org.exists():
+        die("记忆文件不存在")
+
+    text = _read_memory_org_text(ctx)
+    entries = _iter_memory_entries(text)
+    lines = text.split("\n")
+    migrated = skipped = 0
+    dirty = False
+    for e in entries:
+        props = e["props"]
+        agent = (props.get("ORIGIN_AGENT") or "").strip()
+        opath = (props.get("ORIGIN_PATH") or "").strip()
+        old_id = (props.get("ORIGIN_ID") or "").strip()
+        if not (agent and opath and old_id):
+            continue
+        new_id, why = _migrated_origin_id(agent, opath, old_id, e["title"])
+        if not new_id:
+            skipped += 1
+            print(f"[skip] {e['id']}: {why}")
+            continue
+        if new_id != old_id and _rewrite_entry_prop(lines, e["id"], "ORIGIN_ID", new_id):
+            migrated += 1
+            dirty = True
+            print(f"[migrate] {e['id']}: ORIGIN_ID {old_id} → {new_id}")
+    if dirty:
+        atomic_write(ctx.memory_org, "\n".join(lines))
+    print(f"迁移完成：ORIGIN_ID 重算 {migrated} 条，跳过 {skipped} 条"
+          + ("" if skipped else "（全部迁移）"))
