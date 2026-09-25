@@ -380,7 +380,7 @@ def _memory_list(args: argparse.Namespace, ctx=None) -> None:
         print("(记忆文件不存在)")
         return
 
-    text = ctx.memory_org.read_text(encoding="utf-8")
+    text = _read_memory_org_text(ctx)
     entries = _iter_memory_entries(text)
 
     want_type = getattr(args, "type", None)

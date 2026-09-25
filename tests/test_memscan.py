@@ -148,6 +148,16 @@ def test_cmd_json_output(tmp_path, monkeypatch, capsys):
     assert out["entries"][0]["name"] == "hard-gates-for-agents"
 
 
+def test_unknown_source_lists_valid_names(capsys):
+    """--source 未知名：报错枚举合法源，不再以 KeyError 冒泡成「操作失败」。"""
+    import pytest
+
+    with pytest.raises(SystemExit):
+        scan_memories("nosuch")
+    err = capsys.readouterr().err
+    assert "nosuch" in err and "zcode" in err and "all" in err
+
+
 def test_source_envs_have_matching_schema_keys():
     """每个记忆源的 env 必须在 SCHEMA[memories.sources] 中有对应键（键名 = env 小写）。
 

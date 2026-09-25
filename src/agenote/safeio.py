@@ -187,7 +187,12 @@ def safe_read_text(path: Path | str, *, encoding: str = "utf-8", errors: str = "
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         with os.fdopen(fd, "rb") as f:
-            before = os.fstat(f.fileno())
+            opened = os.fstat(f.fileno())
+            # lstat→open 窗口内被 rename 替换成另一普通文件时拒绝（O_NOFOLLOW
+            # 只挡 symlink 替换，普通文件替换需身份比对闭合）
+            if (opened.st_dev, opened.st_ino) != (pre.st_dev, pre.st_ino):
+                raise SafeReadError(f"打开文件与 lstat 身份不符: {path}")
+            before = opened
             data = f.read()
             after = os.fstat(f.fileno())
     except OSError:

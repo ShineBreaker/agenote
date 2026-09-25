@@ -405,26 +405,13 @@ def _term_density(term: str, content: str) -> float:
 def _kb_covered_titles() -> set[str]:
     """收集 KB（agenote experiences/）已有卡片标题，用于"KB 已覆盖 → 跳过"判断。
 
-    dream 只补缺口，不复制。旧实现把整张卡片正文都 tokenize 进集合，粒度过粗：
-    KB 卡片提过一次 "repo"，全库所有含 "repo" 的候选词都被判覆盖。
-    现改为只收标题——只有候选词**正好等于**某张 KB 卡片标题时才判覆盖。
+    dream 只补缺口，不复制。粒度为标题精确匹配（orgserde.collect_card_titles
+    单一实现，BOM 卡片不再漏收集）；token 级会误杀——KB 提过一次 "repo" 会
+    判覆盖全部含 "repo" 的候选词。
     """
-    titles: set[str] = set()
-    exp = AGENOTE_ROOT / "experiences"
-    if not exp.exists():
-        return titles
-    for f in exp.rglob("*.org"):
-        if f.is_symlink():
-            continue
-        try:
-            txt = f.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        # org 标题行：* DONE <title> / * TODO <title>
-        m = re.search(r"^\* (?:DONE|TODO) (.+)$", txt, re.MULTILINE)
-        if m:
-            titles.add(m.group(1).strip().casefold())
-    return titles
+    from agenote.orgserde import collect_card_titles
+
+    return collect_card_titles(AGENOTE_ROOT / "experiences")
 
 
 # 噪声过滤复用 core 的单一真相源（与 reconcile 写入层一致）。

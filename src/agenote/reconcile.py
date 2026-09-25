@@ -198,25 +198,11 @@ def _kb_titles() -> set[str]:
     """收集 KB（agenote experiences/）已有卡片标题，用于冲突跳过。
 
     KB 优先原则：reconcile 抽到的事实若与 KB 卡片同名，跳过不索引。
+    实现走 orgserde.collect_card_titles（与 dream 共用，含 BOM 剥离）。
     """
-    titles: set[str] = set()
-    exp = AGENOTE_ROOT / "experiences"
-    if not exp.exists():
-        return titles
-    for f in exp.rglob("*.org"):
-        if f.is_symlink():
-            continue
-        try:
-            txt = f.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        # org 标题行：* DONE <title>；首行 UTF-8 BOM 会让 ^\* 失配（对齐
-        # orgserde._heading_probe 口径：仅匹配时剥离首字符 BOM，不改写原文）。
-        probe = txt[1:] if txt.startswith("\ufeff") else txt
-        m = re.search(r"^\* (?:DONE|TODO) (.+)$", probe, re.MULTILINE)
-        if m:
-            titles.add(m.group(1).strip().casefold())
-    return titles
+    from agenote.orgserde import collect_card_titles
+
+    return collect_card_titles(AGENOTE_ROOT / "experiences")
 
 
 def _reconcile_source(

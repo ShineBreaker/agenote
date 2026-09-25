@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from pathlib import Path
 
 from agenote import config
 from agenote.core import PublicError
@@ -178,6 +179,31 @@ def read_org_title(content: str) -> str:
         if m:
             return m.group(1).strip()
     return "unknown"
+
+
+def collect_card_titles(root) -> set[str]:
+    """收集 KB 卡片标题（`* DONE|TODO` 行，casefold），dream/reconcile 覆盖判断共用。
+
+    此前两侧各持一份实现且 BOM 处理不一致：带 BOM 的卡片标题在 dream 的
+    「已覆盖跳过」判断中收集不到，同名候选会重复报。标题粒度＝只有候选词
+    正好等于某卡片标题才判覆盖（token 级会误杀好候选，见 dream 模块注释）。
+    S8 口径：跳过 symlink；单文件读取失败容忍（不阻塞全量收集）。
+    """
+    titles: set[str] = set()
+    root = Path(root)
+    if not root.exists():
+        return titles
+    for f in root.rglob("*.org"):
+        if f.is_symlink():
+            continue
+        try:
+            txt = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        m = re.search(r"^\* (?:DONE|TODO) (.+)$", _heading_probe(txt, 0), re.MULTILINE)
+        if m:
+            titles.add(m.group(1).strip().casefold())
+    return titles
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

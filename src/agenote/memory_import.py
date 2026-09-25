@@ -21,7 +21,7 @@ from pathlib import Path
 
 from agenote import config
 from agenote.core import default_context, is_noise_fact, scan_secret_categories, today
-from agenote.safeio import atomic_write
+from agenote.safeio import atomic_write, safe_read_text
 
 CONFLICTS_FILE = ".memory-conflicts.json"
 
@@ -142,11 +142,11 @@ def _existing_state(ctx) -> tuple[set[str], list[dict]]:
     deprecated 节是终态（已被裁决取代），不参与去重比对——否则终态条目
     永远拦截同主题新事实进 dup/conflict 队列（设计 P2）。
     """
-    from agenote.memory import _iter_memory_entries
+    from agenote.memory import _iter_memory_entries, _read_memory_org_text
 
     if not ctx.memory_org.exists():
         return set(), []
-    text = ctx.memory_org.read_text(encoding="utf-8")
+    text = _read_memory_org_text(ctx)  # S8：MEMORY.org 统一走 safe_read 入口
     entries = [e for e in _iter_memory_entries(text)
                if e["section"].lower() != "deprecated"]
     origins = {e["props"].get("ORIGIN_ID", "") for e in entries} - {""}
@@ -192,7 +192,7 @@ def load_conflicts(ctx) -> list[dict]:
     if not p.exists():
         return []
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(safe_read_text(p))
         return data if isinstance(data, list) else data.get("conflicts", [])
     except (OSError, ValueError):
         return []

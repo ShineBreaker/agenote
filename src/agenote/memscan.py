@@ -202,6 +202,11 @@ def _scan_section_files(spec: MemorySourceSpec) -> tuple[list[dict], list[str]]:
 
 def scan_memories(source: str = "all") -> dict:
     """扫描（多个）记忆源，返回 {total, by_source, entries, notes}。"""
+    if source != "all" and source not in SOURCES:
+        # 未知名不再以 KeyError 冒泡成「操作失败」：直接枚举合法源
+        from agenote.core import die
+
+        die(f"未知记忆源: {source}（合法：{', '.join([*SOURCES, 'all'])}）")
     specs = [SOURCES[source]] if source != "all" else list(SOURCES.values())
     entries: list[dict] = []
     notes: list[str] = []
