@@ -686,14 +686,18 @@ def run_dream(
                 drift_hint if offset > 0 else "",
             )
         )
-    # S4 持久游标短路：snapshot 与上次一致 → 标「未变化」，省 agent 复核注意力。
-    # ponytail: 先重算后比对（评分离线幂等且便宜）；真跳过评分需输入指纹， scoring 变贵时再加。
+    # S4 持久游标短路（C7）：snapshot 与上次一致 → 清空 candidates，
+    # 只返回上次报告指针信息（last_run_at + snapshot_hash + 候选数）。
+    # 消费方以 unchanged=True 区分「未变化（本轮无新注意力负担）」与
+    # unchanged=False 的「真·无候选」；total_candidates 保留候选总数。
     cursor = _load_dream_cursor()
     if snapshot_hash and cursor.get("snapshot_hash") == snapshot_hash:
         report.unchanged = True
+        report.candidates = []
         report.message = (
-            "【未变化】snapshot %s 与上次（%s）一致，候选未变，无需复核。\n%s"
-            % (snapshot_hash, cursor.get("last_run_at", "?"), report.message)
+            "【未变化】候选集与上次 dream（%s）一致：snapshot %s，共 %d 个候选，"
+            "本次不重复列出（省复核注意力；reconcile 索引更新后 snapshot 变化会重新列出）。"
+            % (cursor.get("last_run_at", "?"), snapshot_hash, total)
         )
     _save_dream_cursor(snapshot_hash)
     return report

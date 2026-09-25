@@ -59,24 +59,50 @@ def _write_index(tmp_path, facts: list[dict], meta: dict | None = None) -> None:
 
 
 def test_dream_same_hash_short_circuits(tmp_path, monkeypatch):
-    """同 hash 二次调用短路：unchanged=True +「未变化」标注 + 游标落盘。"""
+    """同 hash 二次调用短路：unchanged=True + candidates 清空 + 游标指针信息。"""
     _redirect(tmp_path, monkeypatch)
     _write_index(tmp_path, [_fact(i, "host-spawn") for i in range(6)])
 
     first = dream.run_dream()
     assert first.snapshot_hash, "首轮应有候选与指纹"
     assert first.unchanged is False
+    assert len(first.candidates) == 5
 
     second = dream.run_dream()
     assert second.unchanged is True
+    assert second.candidates == []  # 短路不重复报候选（省消费方注意力）
+    assert second.total_candidates == first.total_candidates  # 候选数保留在指针信息里
     assert "未变化" in second.message
+    cursor = json.loads((tmp_path / "dream-cursor.json").read_text(encoding="utf-8"))
+    assert cursor["last_run_at"] in second.message  # 指回上次报告时间
+    assert first.snapshot_hash in second.message
     assert second.snapshot_hash == first.snapshot_hash
 
-    cursor = json.loads(
-        (tmp_path / "dream-cursor.json").read_text(encoding="utf-8")
-    )
-    assert cursor["snapshot_hash"] == first.snapshot_hash
-    assert cursor["last_run_at"]
+
+def test_dream_cursor_corrupt_falls_back(tmp_path, monkeypatch):
+    """游标损坏/非 dict → 回空 dict 不 fail-closed：本轮按首跑处理，游标重建。"""
+    _redirect(tmp_path, monkeypatch)
+    _write_index(tmp_path, [_fact(i, "host-spawn") for i in range(6)])
+    (tmp_path / "dream-cursor.json").write_text("{not-json!!", encoding="utf-8")
+
+    report = dream.run_dream()
+    assert report.unchanged is False  # 损坏游标不误判「未变化」
+    rebuilt = json.loads((tmp_path / "dream-cursor.json").read_text(encoding="utf-8"))
+    assert rebuilt["snapshot_hash"] == report.snapshot_hash
+
+    (tmp_path / "dream-cursor.json").write_text('["wrong", "shape"]', encoding="utf-8")
+    assert dream.run_dream().unchanged is False  # 非 dict 同样回退
+
+
+def test_dream_zero_candidates_skips_cursor_write(tmp_path, monkeypatch):
+    """零候选（total==0 提前返回）不写游标：无可固化的候选集指纹。"""
+    _redirect(tmp_path, monkeypatch)
+    _write_index(tmp_path, [_fact(0, "host-spawn")])  # df=1 < MIN_TERM_FREQ → 无候选
+
+    report = dream.run_dream()
+    assert report.candidates == [] and report.total_candidates == 0
+    assert report.unchanged is False  # 与「未变化短路」可区分
+    assert not (tmp_path / "dream-cursor.json").exists()
 
 
 def test_dream_recomputes_after_index_update(tmp_path, monkeypatch):
