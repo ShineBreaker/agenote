@@ -148,6 +148,17 @@ function deliver(agent, text, plugin = "agenote-hooks") {
   );
 }
 
+/**
+ * DSH 的 subagent 是同进程独立 agent（session.header.origin === 'subagent'，
+ * 持久化字段，见 dsh-session SessionHeader），主进程插件对其事件一律豁免：
+ * worker 的内部对话不该投 review 提示（污染 handoff），也不该各自武装 idle
+ * 计时器（大量委派时的"反复触发"正来源于此）。pi 版靠 argv/env 嗅探子进程，
+ * DSH 有权威字段，直接读。
+ */
+function isSubagent(agent) {
+  return agent?.session?.header?.origin === "subagent";
+}
+
 export function apply(ctx, config = {}) {
   const cfg = normalize(config);
   if (!cfg.enabled) return;
@@ -212,6 +223,7 @@ export function apply(ctx, config = {}) {
   // 必须重置：agent 可能在 resumed/clear/compact 后复用同一 session id，
   // 上一轮的 timer 与 signalFired 不能带到新会话。
   ctx.on("agent/created", ({ agent }) => {
+    if (isSubagent(agent)) return;
     const state = stateOf(agent);
     clearIdle(state);
     state.lastTrigger = 0;
@@ -227,6 +239,7 @@ export function apply(ctx, config = {}) {
   // 只认真正的用户发言（source.kind === 'user'），排除插件注入与本插件自注入，
   // 断开"提示词自己含完成词 → 下轮又匹配到自己"的反馈环。
   ctx.on("agent/inbox/inserted", ({ agent, message }) => {
+    if (isSubagent(agent)) return;
     const state = stateOf(agent);
     const kind = message?.source?.kind;
     if (kind !== "user") return;
@@ -244,6 +257,7 @@ export function apply(ctx, config = {}) {
   // 否则上一轮武装的 timer 会在"正在流式输出"时到点误触发。
   ctx.on("agent/status", ({ agent, status }) => {
     if (status !== "running") return;
+    if (isSubagent(agent)) return;
     clearIdle(stateOf(agent));
   });
 
@@ -254,12 +268,13 @@ export function apply(ctx, config = {}) {
   // 判据必须绑在**当轮**上，不能用累计计数：累计值一旦 ≥1 就永久成立，
   // 之后任何纯对话轮都会照样越过门槛（本插件的第一次修复就踩了这个坑）。
   ctx.on("tools/result", ({ agent }) => {
-    const state = stateOf(agent);
-    state.toolActivity = true;
+    if (isSubagent(agent)) return;
+    stateOf(agent).toolActivity = true;
   });
 
   // ── 'agent/turn-stopping'：turn 即将关闭 → 检测完成信号 + 武装空闲兜底 ──
   ctx.on("agent/turn-stopping", ({ agent }) => {
+    if (isSubagent(agent)) return;
     const state = stateOf(agent);
     // 本轮的产出，先落定再清标志——它要随该轮武装的 timer 一起带到回调里。
     const workedThisTurn = state.toolActivity;
