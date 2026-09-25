@@ -19,7 +19,6 @@ from pathlib import Path
 
 from agenote import config
 from agenote.core import today
-from agenote.orgserde import parse_memory_date
 from agenote.safeio import _atomic_replace_bytes, atomic_write, safe_read_text
 
 AGGREGATE_NAME = "agenote-profile.md"
@@ -147,17 +146,18 @@ def _stale_days() -> int:
 
 
 def _entry_stale(entry: dict) -> bool:
-    """VALIDATED_AT 缺失或超 export_stale_days 即附时效标记。"""
-    days = _stale_days()
-    vd = parse_memory_date(entry.get("validated_at") or "")
-    if vd is None:
-        return True
-    from datetime import datetime
-    return (datetime.now().date() - vd).days > days
+    """统一时效口径（VALIDATED_AT → UPDATED → CREATED），见 memory.entry_freshness_tag。"""
+    from agenote.memory import entry_freshness_tag  # lazy：memory 侧亦 lazy 引本模块
+
+    return bool(entry_freshness_tag(entry["props"], _stale_days()))
 
 
 def _select_entries(args, entries: list[dict]) -> list[dict]:
-    """默认全量 active（deprecated 节除外）；U 全投，P 无 --project 时排除。"""
+    """默认全量 active（deprecated 节除外）；U 全投，P 无 --project 时排除。
+
+    kind=index 的行（项目索引/PATH 指针）不投影：指针不是事实，
+    投出去会被宿主当记忆事实读（设计 P2：索引行当事实投影）。
+    """
     want_type = getattr(args, "type", None)
     want_scope = getattr(args, "scope", None)
     want_project = getattr(args, "project", None)
@@ -167,6 +167,8 @@ def _select_entries(args, entries: list[dict]) -> list[dict]:
     rows = []
     for e in entries:
         if e["section"].lower() == "deprecated":
+            continue
+        if e["kind"] == "index":
             continue
         if want_type and e["type"] != want_type:
             continue
@@ -219,10 +221,11 @@ def build_profile(entries: list[dict]) -> str:
         for e in rest:
             parts.extend(_entry_lines(e))
     body = "\n".join(parts).rstrip() + "\n" if parts else "(空)\n"
+    # 无生成日期戳（C7 P2）：带日期则跨天必重写，对有 git baseline 的宿主目录
+    # 产生每日噪声 diff，与「幂等重生成」不符；投影新鲜度看条目自身时效标记
     marker = content_hash(body)
     head = (f"---\nname: agenote-profile\ndescription: {desc[:120]}\n"
-            f"type: project\n{MARKER_KEY}: {marker}\n"
-            f"x-agenote-generated: {today()}\n---\n"
+            f"type: project\n{MARKER_KEY}: {marker}\n---\n"
             f"# agenote memories（SSOT 派生物：宿主请勿直接改，下轮 export 覆盖）\n")
     return head + body
 

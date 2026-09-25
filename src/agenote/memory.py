@@ -88,13 +88,28 @@ def _read_memory_org_text(ctx) -> str:
     return safe_read_text(ctx.memory_org)
 
 
+def entry_freshness_tag(props: dict, stale_days: int) -> str:
+    """统一时效口径（C7）：VALIDATED_AT → UPDATED → CREATED，超阈值标 unverified。
+
+    projector._entry_stale 与 --list --freshness 共用本函数——同一配置键
+    export_stale_days 不再有两种语义；缺 VALIDATED_AT 回退 UPDATED/CREATED，
+    新导入条目（CREATED=今天）不再在投影里立刻 unverified。
+    """
+    for key in ("VALIDATED_AT", "UPDATED", "CREATED"):
+        d = parse_memory_date((props.get(key) or "").strip("[] "))
+        if d is not None:
+            return unverified_tag((datetime.now().date() - d).days, stale_days)
+    return unverified_tag(None, stale_days)
+
+
 def memory_entry_freshness(entry_lines: list[str], stale_days: int = STALE_DAYS) -> str:
-    """S7：条目时效标记。UPDATED 缺省 CREATED；超 stale_days 返回 `(unverified Nd)`。"""
-    updated = parse_memory_date(memory_prop(entry_lines, "UPDATED")) or parse_memory_date(
-        memory_prop(entry_lines, "CREATED")
-    )
-    days = (datetime.now().date() - updated).days if updated else None
-    return unverified_tag(days, stale_days)
+    """S7：条目时效标记（从属性行算，委托 entry_freshness_tag 统一口径）。"""
+    props: dict[str, str] = {}
+    for ln in entry_lines:
+        pm = MEMORY_PROP_RE.match(ln)
+        if pm:
+            props[pm.group(1)] = pm.group(2)
+    return entry_freshness_tag(props, stale_days)
 
 
 def format_memory_entry_line(
@@ -380,14 +395,7 @@ def _memory_list(args: argparse.Namespace, ctx=None) -> None:
         if want_scope and scope != str(want_scope).lower():
             continue
         if fresh_on:
-            vd = parse_memory_date(
-                e["props"].get("VALIDATED_AT")
-                or e["props"].get("UPDATED")
-                or e["props"].get("CREATED")
-                or ""
-            )
-            days = (datetime.now().date() - vd).days if vd else None
-            e["freshness"] = unverified_tag(days, export_stale_days)
+            e["freshness"] = entry_freshness_tag(e["props"], export_stale_days)
         rows.append({**e, "scope": scope, "orphan": _entry_orphan(e)})
 
     if getattr(args, "json", False):

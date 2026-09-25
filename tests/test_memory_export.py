@@ -138,6 +138,44 @@ def test_export_codex_suggest_only(kb_ctx):
     assert list((kb_ctx.root / "codex").glob("*.md")) == [suggest]
 
 
+def test_export_skips_project_index_rows(kb_ctx):
+    """project 索引行（PATH 指针）不投影——即使 --project 命中它。"""
+    projector.cmd_export(_export_args(project="agenote"), kb_ctx)
+    text = (kb_ctx.root / "zcode" / "agenote-profile.md").read_text(encoding="utf-8")
+    assert "** agenote" not in text
+
+
+def test_export_idempotent_across_days(kb_ctx, monkeypatch):
+    """聚合文件无生成日期戳：跨天重投影字节级幂等（宿主 git 无每日噪声）。"""
+    projector.cmd_export(_export_args(), kb_ctx)
+    agg = kb_ctx.root / "zcode" / "agenote-profile.md"
+    mtime = agg.stat().st_mtime_ns
+    monkeypatch.setattr(projector, "today", lambda: "2030-01-01")
+    projector.cmd_export(_export_args(), kb_ctx)
+    assert agg.stat().st_mtime_ns == mtime
+
+
+def test_export_freshness_unified_semantics(kb_ctx):
+    """时效口径统一：无 VALIDATED_AT 回退 UPDATED/CREATED——新导入条目不立刻 unverified。"""
+    from datetime import datetime, timedelta
+
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    mem = kb_ctx.memory_org
+    mem.write_text(
+        "#+title: MEMORY-test\n\n* user\n"
+        f"** U001 新导入条目\n   :PROPERTIES:\n"
+        f"   :CREATED:  [{yesterday}]\n   :UPDATED:  [{yesterday}]\n   :END:\n"
+        "** U002 陈年未验证\n   :PROPERTIES:\n"
+        "   :CREATED:  [2020-01-01]\n   :UPDATED:  [2020-01-01]\n   :END:\n",
+        encoding="utf-8")
+    projector.cmd_export(_export_args(type="U"), kb_ctx)
+    text = (kb_ctx.root / "zcode" / "agenote-profile.md").read_text(encoding="utf-8")
+    u001 = next(ln for ln in text.split("\n") if "U001" in ln)
+    u002 = next(ln for ln in text.split("\n") if "U002" in ln)
+    assert "(unverified" not in u001  # CREATED=昨天，统一口径下新鲜
+    assert "(unverified" in u002
+
+
 def test_export_secret_gate(kb_ctx):
     mem = kb_ctx.memory_org
     mem.write_text(mem.read_text(encoding="utf-8").replace(
