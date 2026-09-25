@@ -42,7 +42,10 @@ def main() -> None:
 def _main() -> None:
     parser = argparse.ArgumentParser(
         prog="orgfmt",
-        description="通用 org-mode 格式化工具（属性对齐、block 大小写、空行、表格、标记间距）",
+        description=(
+            "通用 org-mode 格式化工具（属性对齐、block 大小写、空行、表格、"
+            "标记间距、中文技术文档规范）"
+        ),
     )
     parser.add_argument("files", nargs="+", help="目标 .org 文件")
     parser.add_argument(

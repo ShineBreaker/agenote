@@ -4,6 +4,18 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Added
+
+- **orgfmt 中文技术文档规范阶段**（`_zh_style`，`orgfmt.py` 新增阶段 7）：把 zh-tech-doc-style-guide 的硬规则落到 Markdown 与 Org 两种格式，规则只写一份（复用已有的 `_iter_lines_with_block_state` 状态机，org block 与 ``` 围栏都识别）。自动修复 8 项——全角空格、全角标点旁多余空格、中英文之间补空格、破折号两侧空格、英文省略号转中文六点、连续感叹号、序数词「数字、」转「数字.」、数值与单位之间补空格；只报不改 4 项（的/地/得、顿号误用于分句、繁体用语、不规范缩略语）。保护：代码块、表格、drawer、org 元数据行（DEADLINE/SCHEDULED 的 repeat cookie、`:EFFORT:` 属性值）、行内公式一律不动。`orgfmt --check` 天然即 lint 门禁（退出码=问题数）。
+- 测试 452 → 454（`tests/test_orgfmt_zh_style.py` 29 项：R1-R8 逐规则 + 幂等 + 保护 + L1-L4 只报不改）。
+
+### Fixed
+
+- `_normalize_blank_lines` 状态机漏掉文件首行：状态更新整块在 `if out:` 内，导致以 `:PROPERTIES:` 或 `#+begin_src` 开头的文件状态永不置位，drawer 内被插入空行。状态推进抽为 `_advance_blank_state()` 纯函数，首行走同一路径。
+- `_classify_line` 不识别 markdown ``` 围栏：非 strict 模式下围栏内容被当 normal 段落，行间被插入空行。新增 `md_fence` 行类型与 `in_fence` 状态跟踪。
+
 ## [0.2.0.1] - 2026-09-25
 
 对照 agent 记忆系统研究报告补齐记忆模型：项目/工作区分区隔离、受限条目不离开 SSOT、写入侧 secret 门禁与生命周期元数据。

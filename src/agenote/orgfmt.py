@@ -10,6 +10,10 @@
 设计分层：
   - 通用规则（默认）：属性列对齐、block 大小写、affiliated keyword 紧贴、
     空行规范化、行内标记 PRE/POST 间距、表格列对齐
+  - 中文技术文档规范（默认）：全角空格、全角标点间距、中英文间距、破折号、
+    连续感叹号、序数词、数值与单位间距；规范来源为 zh-tech-doc-style-guide
+    skill，只覆盖机械可判定项，语义级规则（的/地/得、顿号误用、繁体混用）
+    以「待人工」lint 形式报告，不改文本
   - strict 规则（agenote 卡片专用）：Markdown→Org 6 条转换、fingerprint 尾随空格
 
 管线顺序（format_org 内）：
@@ -19,8 +23,9 @@
   4. _align_properties      — :PROPERTIES: drawer 列对齐
   5. _normalize_fingerprint — [strict] fingerprint 行尾随空格
   6. _fix_affiliated        — affiliated keyword 紧贴 block
-  7. _align_tables          — 表格列对齐（CJK 宽度）
-  8. _normalize_blank_lines — 空行规则（最后跑，基于已规范化的结构）
+  7. _zh_style              — 中文技术文档规范（只改行内容，须在表格对齐前）
+  8. _align_tables          — 表格列对齐（CJK 宽度）
+  9. _normalize_blank_lines — 空行规则（最后跑，基于已规范化的结构）
 """
 
 import os
@@ -61,6 +66,9 @@ def format_org(text: str, *, strict: bool = False) -> tuple[str, list[str]]:
         changes += c
 
     text, c = _fix_affiliated(text)
+    changes += c
+
+    text, c = _zh_style(text)
     changes += c
 
     text, c = _align_tables(text)
@@ -713,7 +721,345 @@ def _fix_affiliated(text: str) -> tuple[str, list[str]]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 阶段 7：表格列对齐
+# 阶段 7：中文技术文档规范（Markdown 与 Org 共用）
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# 规范来源：zh-tech-doc-style-guide skill（yikeke/zh-style-guide）。
+# 选型原则：只收「机械可判定 + 自动修复不改变语义」的项；语义级规则
+# （的/地/得、顿号误用、繁体混用、缩略语首现）需要理解上下文，一律只报不改。
+#
+# 已实现（自动修复）：
+#   R1 全角空格 → 半角空格
+#   R2 全角标点两侧多余半角空格
+#   R3 中英文之间补半角空格
+#   R4 破折号 —— 两侧空格
+#   R5 英文省略号 … → 中文 ……
+#   R6 连续感叹号 ！！→ ！
+#   R7 序数词 3、 → 3.
+#   R8 数值与单位之间补半角空格（7kg → 7 kg，角度/摄氏/百分号除外）
+#
+# 只报告（lint，不自动修复）：
+#   L1 的/地/得 疑似误用（三字都出现在同一行才报，避免噪音）
+#   L2 顿号误用：并列分句之间用顿号（，.*、.*，模式）
+#   L3 繁体字（少量高频字，非穷举）
+#   L4 不规范缩略语（16c32g / 10w 形态）
+#
+# 保护：代码块 / 表格 / drawer / 属性行内的内容一律不动。
+
+# 全角空格 U+3000
+_FULLWIDTH_SPACE = "\u3000"
+
+# 中文标点（全角形式）
+_ZH_PUNCT = "，。！？；：、（）【】《》〈〉「」『』…—"
+# 其中「可以紧邻半角空格」的行尾类：这些标点后的空格本该删
+# 另有一类「前不该有空格」的标点，用同一集合处理两侧。
+
+# 需要在中英文之间补空格的「中文侧」字符：只含汉字。
+# 顿号不算边界（「3、5、7」并列数字两侧不补空格）；
+# 中文标点不算「中文单词」，其与英文之间是否空格由 R2 单独处理
+# （上游规范是全角标点两旁不空格，故标点后绝不补）。
+# 不含 U+3000 全角空格本身（它已被 R1 转成半角）。
+_CJK_HAN = "\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff"
+_LATIN_CHAR = re.compile(r"[A-Za-z0-9]")
+
+# 单位符号集合：数值后接这些字母时应补空格
+_UNIT_TOKENS = (
+    "km",
+    "cm",
+    "mm",
+    "nm",
+    "kg",
+    "mg",
+    "ms",
+    "MB",
+    "GB",
+    "TB",
+    "KB",
+    "Mbps",
+    "Gbps",
+    "h",
+    "min",
+    "s",
+    "W",
+    "kW",
+    "V",
+    "A",
+    "Hz",
+    "kHz",
+    "MHz",
+    "GHz",
+    "rpm",
+    "fps",
+    "dpi",
+)
+
+# R8 例外的单位：数值与单位之间不空格
+_UNIT_NO_SPACE = ("°", "℃", "%")
+
+# 繁体专用词（繁简确定不同）。
+# 不用单字判定：「行」「化」「文」「表」等字两岸通用，凭单字判繁体必然误伤。
+# 表中每个词都核对过繁简写法确实不同——「伺服器」「滑鼠」「警告」「修改」
+# 等两岸同形的词一律不入表，否则纯误报。
+# ponytail: 词组级检测会漏掉单字混入的繁体（如单独的「檔」），
+# 漏网由人工审校兜底；要更严可换 OpenCC，代价是引入依赖。
+_TRAD_WORDS = (
+    "這個", "那個", "認識", "點擊",
+    "開啟", "證據", "檔案", "網路", "儲存",
+    "動態", "狀態", "視覺", "設計", "開發", "測試",
+    "環境", "組態", "參數", "資訊", "瀏覽",
+    "載入", "安裝", "卸載", "執行緒", "客戶端", "資料庫", "備份",
+    "還原", "遷移", "監視", "報表",
+    "導覽", "搜尋", "鍵盤", "螢幕", "視窗", "專輯", "專業", "筆記本",
+    "電腦", "網際網路", "服務", "架構", "模組", "欄位", "選項", "單選",
+    "複選", "方塊", "開關", "按鈕", "狀態列",
+    "訊息", "對話方塊", "錯誤", "失敗",
+    "輸入", "輸出", "刪除", "查詢", "篩選", "群組",
+    "標籤", "分類", "頁尾", "聯絡", "說明文件", "教學", "課程",
+    "線上", "離線", "並行",
+)
+
+# L4 不规范缩略语：数字+字母混搭且长度可疑
+_ABBREV_BAD = re.compile(r"\b\d+[a-z]\d*[a-z]\b|\b\d{1,3}w\b")
+
+# org 元数据行：DEADLINE/SCHEDULED/CLOCKED/CLOCK 的 timestamp（含 +1w 等
+# repeat cookie）与 #+KEYWORD directive。这些不是正文，不套中文规范。
+_ORG_DIRECTIVE = re.compile(
+    r"^\s*(DEADLINE|SCHEDULED|CLOSED|CLOCK|CLOG)\s*:|^\s*#\+\w+:", re.IGNORECASE
+)
+
+# L2 顿号误用：并列分句之间用顿号（「，…、…，」形态，粗略启发）
+_DUNHAO_MISUSE = re.compile(r"[，,][^，,。；！？]{2,40}、[^，,。；！？]{2,40}[，,]")
+
+
+def _zh_style(text: str) -> tuple[str, list[str]]:
+    """中文技术文档规范：逐行应用自动修复规则 + 收集 lint 报告。
+
+    只处理行内容，不增删行；因此必须排在 _align_tables 之前
+    （表格对齐依赖单元格内容宽度）与 _normalize_blank_lines 无关。
+    返回 (新文本, 变更说明列表)。
+    """
+    changes: list[str] = []
+    result: list[str] = []
+
+    for line, idx, in_block in _iter_lines_with_block_state(text):
+        if in_block:
+            result.append(line)
+            continue
+        stripped = line.strip()
+        # 表格行不动（列对齐阶段会重排，先改内容会与其冲突）
+        if _TABLE_ROW.match(line):
+            result.append(line)
+            continue
+        # drawer 内属性行不动（:KEY: value / :KEY: / :PROPERTIES: / :END:）
+        # ——:EFFORT: 8h 这类属性值是元数据，不是正文的单位用法
+        if _DRAWER_BEGIN.match(line) or _DRAWER_END.match(line):
+            result.append(line)
+            continue
+        if _PROP_LINE.match(line):
+            result.append(line)
+            continue
+        # org directive / timestamp 行不动：
+        # DEADLINE/SCHEDULED/CLOCK 的 +1w repeat cookie、#+KEYWORD 等
+        if _ORG_DIRECTIVE.match(line):
+            result.append(line)
+            continue
+        # 行内公式不动（$$...$$ / $...$）：4ac 是代数式，不是缩略语
+        if "$$" in line or stripped.startswith("\\["):
+            result.append(line)
+            continue
+        # Org 标题行：只做 lint，不改（标题里动标点风险高）
+        if _HEADING.match(line):
+            lint = _zh_lint(line, idx)
+            if lint:
+                changes += lint
+            result.append(line)
+            continue
+
+        new_line = line
+        # R7 必须在 R2 之前：R2 会删掉「3、 行政」中顿号后的空格，
+        # 若先跑 R2，R7 只能得到「3.行政」而非「3. 行政」。
+        new_line, c7 = _fix_ordinal_dun(new_line, idx)
+        new_line, c1 = _fix_fullwidth_space(new_line, idx)
+        new_line, c2 = _fix_punct_spacing(new_line, idx)
+        new_line, c3 = _fix_zh_latin_spacing(new_line, idx)
+        new_line, c4 = _fix_dash_spacing(new_line, idx)
+        new_line, c5 = _fix_ellipsis(new_line, idx)
+        new_line, c6 = _fix_repeated_bang(new_line, idx)
+        new_line, c8 = _fix_unit_spacing(new_line, idx)
+        changes += c7 + c1 + c2 + c3 + c4 + c5 + c6 + c8
+        changes += _zh_lint(new_line, idx)
+        result.append(new_line)
+
+    return "\n".join(result), changes
+
+
+# ── R1: 全角空格 → 半角空格 ────────────────────────────────────────────────
+
+
+def _fix_fullwidth_space(line: str, idx: int) -> tuple[str, list[str]]:
+    if _FULLWIDTH_SPACE not in line:
+        return line, []
+    new = line.replace(_FULLWIDTH_SPACE, " ")
+    return new, [f"  行 {idx + 1}: 全角空格 → 半角空格"]
+
+
+# ── R2: 全角标点两侧多余半角空格 ───────────────────────────────────────────
+
+
+def _fix_punct_spacing(line: str, idx: int) -> tuple[str, list[str]]:
+    """删除中文全角标点紧邻的半角空格（标点前、标点后各一处）。
+
+    上游规范：「中文全角标点符号两旁禁止空半角空格」。
+    """
+    changes: list[str] = []
+    new = line
+    # 标点前空格：「 。」→「。」
+    new2 = re.sub(r"[ \t]+([" + re.escape(_ZH_PUNCT) + r"])", r"\1", new)
+    # 标点后空格：「， 」→「，」
+    new2 = re.sub(r"([" + re.escape(_ZH_PUNCT) + r"])[ \t]+", r"\1", new2)
+    if new2 != new:
+        changes.append(f"  行 {idx + 1}: 全角标点旁多余空格")
+        new = new2
+    return new, changes
+
+
+# ── R3: 中英文之间补半角空格 ───────────────────────────────────────────────
+
+
+def _fix_zh_latin_spacing(line: str, idx: int) -> tuple[str, list[str]]:
+    """中文与英文/数字之间补一个半角空格。
+
+    上游规范：「英文字符和阿拉伯数字一般使用半角格式，所以应使用半角空格
+    包围」，例外为位于句首（左边省略）与右侧为标点（右边省略）——两者本就
+    没有空格可补，正则天然不匹配。
+
+    顿号不作为边界：「3、5、7」是并列数字，顿号两侧不补空格。
+    """
+    changes: list[str] = []
+    new = line
+    # 汉字 后接 英文/数字：字 → A
+    new2 = re.sub(f"([{_CJK_HAN}])(?=[A-Za-z0-9])", r"\1 ", new)
+    # 英文/数字 后接 汉字：A → 字
+    new2 = re.sub(f"(?<=[A-Za-z0-9])([{_CJK_HAN}])", r" \1", new2)
+    if new2 != new:
+        changes.append(f"  行 {idx + 1}: 中英文之间补空格")
+        new = new2
+    return new, changes
+
+
+# ── R4: 破折号 —— 两侧空格 ─────────────────────────────────────────────────
+
+
+def _fix_dash_spacing(line: str, idx: int) -> tuple[str, list[str]]:
+    """破折号前后不空格（上游：破折号前后不空格）。"""
+    if "——" not in line and " — " not in line:
+        return line, []
+    new = re.sub(r"[ \t]*——[ \t]*", "——", line)
+    if new == line:
+        return line, []
+    return new, [f"  行 {idx + 1}: 破折号两侧空格"]
+
+
+# ── R5: 英文省略号 … → 中文 …… ────────────────────────────────────────────
+
+
+def _fix_ellipsis(line: str, idx: int) -> tuple[str, list[str]]:
+    """英文省略号转为中文省略号（六个点）。
+
+    上游规范：「中文语境中禁止使用英文省略号，即三个小圆点」。
+    同时处理 ASCII 三点「...」与 U+2026 单字符「…」。
+    """
+    if "..." not in line and "…" not in line:
+        return line, []
+    new = re.sub(r"(?:\.{3,}|…+)", "……", line)
+    if new == line:
+        return line, []
+    return new, [f"  行 {idx + 1}: 英文省略号 → 中文省略号"]
+
+
+# ── R6: 连续感叹号 → 单个 ──────────────────────────────────────────────────
+
+
+def _fix_repeated_bang(line: str, idx: int) -> tuple[str, list[str]]:
+    """禁止多个感叹号连用（上游：禁止多个感叹号连用）。"""
+    if not re.search(r"！{2,}", line):
+        return line, []
+    new = re.sub(r"！{2,}", "！", line)
+    return new, [f"  行 {idx + 1}: 连续感叹号 → 单个"]
+
+
+# ── R7: 序数词 3、 → 3. ────────────────────────────────────────────────────
+
+
+def _fix_ordinal_dun(line: str, idx: int) -> tuple[str, list[str]]:
+    """阿拉伯数字作序数词后用点号不用顿号。
+
+    上游规范：「阿拉伯数字作为序数词，如『1』后用点号而不用顿号」。
+    只匹配「数字 + 、 + 非数字」形态：顿号后紧跟另一个数字的是并列
+    （如「3、5、7」），不动；后接文字才是序数词（如「3、行政文明建设」）。
+    """
+    if not re.search(r"\d、(?![0-9、])", line):
+        return line, []
+    new = re.sub(r"(\d)、", r"\1.", line)
+    return new, [f"  行 {idx + 1}: 序数词「数字、」→「数字.」"]
+
+
+# ── R8: 数值与单位之间补空格 ───────────────────────────────────────────────
+
+
+def _fix_unit_spacing(line: str, idx: int) -> tuple[str, list[str]]:
+    """数值与单位符号之间补一个半角空格（7kg → 7 kg）。
+
+    上游规范：「大多数情况下，数值与单位符号之间需要空一个半角空格」，
+    例外为角度、摄氏度、百分号（60°、37°C、100%）与英尺英寸符号。
+    """
+    changes: list[str] = []
+    new = line
+    # 为每个单位 token 匹配「数字紧接单位」的形态
+    for unit in sorted(_UNIT_TOKENS, key=len, reverse=True):
+        pat = re.compile(rf"(?<=\d)({re.escape(unit)})\b")
+        if pat.search(new):
+            new = pat.sub(r" \1", new)
+            changes.append(f"  行 {idx + 1}: 数值与单位 {unit} 之间补空格")
+    # 摄氏度：37C → 37 °C（数字后紧跟 C 且非其他单位的一部分）
+    new2 = re.sub(r"(?<=\d)C(?=[\s，。！？；：、）】」』]|$)", " °C", new)
+    if new2 != new:
+        new = new2
+        changes.append(f"  行 {idx + 1}: 摄氏度补空格与度符号")
+    return new, changes
+
+
+# ── L1-L4: 只报告不修复的语义级 lint ───────────────────────────────────────
+
+
+def _zh_lint(line: str, idx: int) -> list[str]:
+    """语义级中文规范检查：只报告，不自动修复。"""
+    out: list[str] = []
+
+    # L1 的/地/得：同一行出现多个结构助词时提示人工核对
+    hits = [ch for ch in "的地得" if ch in line]
+    if len(hits) >= 2:
+        out.append(f"  行 {idx + 1}: [待人工] 含 {'/'.join(hits)}，核对的地得用法")
+
+    # L2 顿号误用：并列分句之间用顿号
+    if _DUNHAO_MISUSE.search(line):
+        out.append(f"  行 {idx + 1}: [待人工] 顿号可能误用于分句之间")
+
+    # L3 繁体词（词组级，单字两岸通用必然误伤）
+    hits = [w for w in _TRAD_WORDS if w in line]
+    if hits:
+        out.append(f"  行 {idx + 1}: [待人工] 疑似繁体用语：{'、'.join(hits[:3])}")
+
+    # L4 不规范缩略语
+    m = _ABBREV_BAD.search(line)
+    if m:
+        out.append(f"  行 {idx + 1}: [待人工] 不规范缩略语：{m.group()}")
+
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 阶段 8：表格列对齐
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # 表格行：以 | 开头（允许前导空白）
@@ -833,6 +1179,7 @@ def _classify_line(line: str) -> str:
       heading         — * / ** 标题
       block_begin     — #+begin_xxx
       block_end       — #+end_xxx
+      md_fence        — ``` markdown 代码围栏（边界，与 block_begin/end 同类紧贴）
       drawer_begin    — :PROPERTIES: 等
       drawer_end      — :END:
       table           — 表格行
@@ -851,6 +1198,8 @@ def _classify_line(line: str) -> str:
         return "block_begin"
     if _BLOCK_END.match(line):
         return "block_end"
+    if _MD_FENCE.match(line):
+        return "md_fence"
     if _DRAWER_BEGIN.match(line):
         return "drawer_begin"
     if _DRAWER_END.match(line):
@@ -871,6 +1220,35 @@ def _classify_line(line: str) -> str:
     if line.startswith((" ", "\t")):
         return "list_continuation"
     return "normal"
+
+
+def _advance_blank_state(
+    kind: str, in_block: bool, in_drawer: bool, in_list: bool, in_table: bool
+) -> tuple[bool, bool, bool, bool]:
+    """根据当前行类型推进空行状态机的四个状态位。
+
+    抽成纯函数以便首行也走同一路径（首行无 need_blank 评估，
+    但必须进状态机，否则以 :PROPERTIES: / #+begin_src 开头的文件
+    状态永不置位）。
+    """
+    if kind == "block_begin":
+        return True, False, False, False
+    if kind == "block_end":
+        return False, False, False, False
+    if kind == "drawer_begin":
+        return in_block, True, False, False
+    if kind == "drawer_end":
+        return in_block, False, False, False
+    if kind == "list_item":
+        return in_block, in_drawer, True, False
+    if kind == "list_continuation":
+        # 延续段落：不重置 in_list（仍属于上一个列表项的内容）
+        return in_block, in_drawer, in_list, in_table
+    if kind == "table":
+        return in_block, in_drawer, False, True
+    # 普通段落 / heading / hash_directive / comment 等：重置 list/table run 状态
+    # comment 不打断 list run——但 SPDX header 紧贴规则由规则 8 处理
+    return in_block, in_drawer, False, False
 
 
 def _normalize_blank_lines(text: str) -> tuple[str, list[str]]:
@@ -914,10 +1292,10 @@ def _normalize_blank_lines(text: str) -> tuple[str, list[str]]:
 
     # 步骤 2：基于上下文状态机决定每行前的空行需求
 
-    # 步骤 2：基于上下文状态机决定每行前的空行需求
     out: list[str] = []
     # 上下文状态
     in_block = False  # 在 #+begin_* 与 #+end_* 之间
+    in_fence = False  # 在 ``` markdown 围栏之间（非 strict 模式下不转换，仍须保护）
     in_drawer = False  # 在 :PROPERTIES: 与 :END: 之间（属性行）
     in_list = False  # 上一非空行也是 list_item（连续列表项）
     in_table = False  # 上一非空行也是 table（连续表格行）
@@ -925,11 +1303,11 @@ def _normalize_blank_lines(text: str) -> tuple[str, list[str]]:
     for i, ln in enumerate(folded):
         kind = _classify_line(ln)
 
-        # blank 行：在 block/drawer 内部保留空行；
+        # blank 行：在 block/fence/drawer 内部保留空行；
         # list run / table run 内**不**保留空行（run 紧贴）；
         # run 外（normal 段落/标题/其他元素之间）丢弃（下方结构化补空行）
         if kind == "blank":
-            if in_block or in_drawer:
+            if in_block or in_drawer or in_fence:
                 out.append(ln)
             # 否则丢弃（结构化上下文外不保留空行；list/table run 不允许内空行）
             continue
@@ -940,13 +1318,9 @@ def _normalize_blank_lines(text: str) -> tuple[str, list[str]]:
             last = out[-1]
             last_kind = _classify_line(last)
 
-            # 在评估空行需求前，先更新状态（但要在看 last_kind 之后）
-            # —— 这里 last_kind 是 "上一行的 kind"，用于判定是否在 list/table run 内
-            # in_list/in_table 表示"上一行就是 list/table"（run 延续）
-
             # ── 空行规则 ──
             # 规则 1: block 内部（block_begin/end 与其中内容）不空行
-            if in_block:
+            if in_block or in_fence:
                 need_blank = False
             # 规则 2: drawer 内部（属性行与 :END:）不空行
             elif in_drawer:
@@ -977,38 +1351,14 @@ def _normalize_blank_lines(text: str) -> tuple[str, list[str]]:
             else:
                 need_blank = True
 
-            # 在评估完后，更新状态（用于下一次循环判断 in_list/in_table）
-            if kind == "block_begin":
-                in_block = True
-                in_list = False
-                in_table = False
-            elif kind == "block_end":
-                in_block = False
-                in_list = False
-                in_table = False
-            elif kind == "drawer_begin":
-                in_drawer = True
-                in_list = False
-                in_table = False
-            elif kind == "drawer_end":
-                in_drawer = False
-                in_list = False
-                in_table = False
-            elif kind == "list_item":
-                # 新列表项 run 开始
-                in_list = True
-                in_table = False
-            elif kind == "list_continuation":
-                # 延续段落：不重置 in_list（仍属于上一个列表项的内容）
-                pass  # 保持 in_list 状态
-            elif kind == "table":
-                in_table = True
-                in_list = False
-            else:
-                # 普通段落 / heading / hash_directive / comment 等：重置 list/table run 状态
-                # comment 不打断 list run——但 SPDX header 紧贴规则由规则 8 处理
-                in_list = False
-                in_table = False
+        # 状态更新必须在 if out: 之外：文件首行也要进入状态机，
+        # 否则 :PROPERTIES: 位于首行时 in_drawer 永不置位，
+        # 后续属性行与 :END: 之间会被插入空行。
+        in_block, in_drawer, in_list, in_table = _advance_blank_state(
+            kind, in_block, in_drawer, in_list, in_table
+        )
+        if kind == "md_fence":
+            in_fence = not in_fence
 
         if need_blank:
             out.append("")
