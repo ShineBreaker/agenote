@@ -55,7 +55,7 @@ export const COMPLETION_SIGNALS = [
   "ship it",
 ];
 
-/** 显式完成信号触发的防抖冷却期：同一信号在冷却期内不重复触发。 */
+/** 显式完成信号触发的防抖冷却期：冷却期内的后续信号不再触发。 */
 const DEBOUNCE_MS = 5 * 60 * 1000;
 /** 空闲兜底：turn 结束后静置超过此时长且本会话从未触发过 → 触发一次（覆盖无人值守）。 */
 const IDLE_FALLBACK_MS = 5 * 60 * 1000;
@@ -127,27 +127,21 @@ function normalize(cfg = {}) {
   };
 }
 
+/** 本插件投递的消息统一带这个 source（durable log 里以此识别自注入）。 */
+function ownMessage(text) {
+  return createUserMessage({
+    content: [{ type: "text", text }],
+    // 会话格式 v4：producer-owned source kind，第三方插件写 `plugin:<名>`
+    source: { kind: `plugin:${PLUGIN_SOURCE}` },
+  });
+}
+
 /**
- * 把提示投递到会话。
- *
- * 用 createUserMessage + agent.followup()：followup 把消息排成独立的后续 turn
- * 并唤醒 driver（"an idle driver starts a turn"），语义等同 pi 的
- * sendUserMessage({deliverAs:'followUp'})。
- *
- * 这里刻意不用 agent.steer()：steer 只作用于"最近的 step"，而本模块的投递点
- * （turn-stopping 时 turn 已收尾）都没有待执行的 step，用 steer 会把消息停在
- * inbox 里等下一次唤醒。agent.inject() 同理不适用——它不唤醒 driver。
- *
- * 消息 source 标为 plugin：既便于用户分辨"这不是我说的话"，也让
- * 'agent/inbox/inserted' 侧能干净地区分自注入。
+ * 把「要 agent 执行任务」的提示投递到会话（followup 排独立后续 turn 并唤醒
+ * driver）。只用于 review/curate 这类任务提示；纯背景知识走 system prompt。
  */
-function deliver(agent, text, plugin = PLUGIN_SOURCE) {
-  agent.followup(
-    createUserMessage({
-      content: [{ type: "text", text }],
-      source: { kind: "plugin", plugin },
-    }),
-  );
+function deliver(agent, text) {
+  agent.followup(ownMessage(text));
 }
 
 /**
@@ -218,19 +212,14 @@ export function apply(ctx, config = {}) {
 
   // ── 每会话触发状态 ──
   // 只存「驱动 timer 所需的最小瞬态」；防抖与"已触发过"从 durable log 推导。
-  /** @type {Map<string, {timer:any, toolActivity:boolean, lastUserText:string, selfInjected:boolean}>} */
+  /** @type {Map<string, {timer:any, toolActivity:boolean, lastUserText:string}>} */
   const sessions = new Map();
 
   function stateOf(agent) {
     const id = String(agent?.id ?? "unknown");
     let state = sessions.get(id);
     if (!state) {
-      state = {
-        timer: undefined,
-        toolActivity: false,
-        lastUserText: "",
-        selfInjected: false,
-      };
+      state = { timer: undefined, toolActivity: false, lastUserText: "" };
       sessions.set(id, state);
     }
     return state;
@@ -250,24 +239,15 @@ export function apply(ctx, config = {}) {
     clearIdle(state);
     state.toolActivity = false;
     state.lastUserText = "";
-    state.selfInjected = false;
   });
 
   // ── 'agent/inbox/inserted'：记住最近一条用户消息 ──
-  // 只认真正的用户发言（source.kind === 'user'），排除插件注入与本插件自注入，
-  // 断开"提示词自己含完成词 → 下轮又匹配到自己"的反馈环。
+  // 只认真正的用户发言（source.kind === 'user'）。本插件的自注入 source.kind
+  // 是 'plugin'，天然被排除——反馈环在这里就断开，无需文本标记判断。
   ctx.on("agent/inbox/inserted", ({ agent, message }) => {
     if (isSubagent(agent)) return;
-    const state = stateOf(agent);
-    const kind = message?.source?.kind;
-    if (kind !== "user") return;
-    const text = extractText(message.content);
-    if (text.includes(HOOK_MARKER)) {
-      state.selfInjected = true;
-      return;
-    }
-    state.selfInjected = false;
-    state.lastUserText = text;
+    if (message?.source?.kind !== "user") return;
+    stateOf(agent).lastUserText = extractText(message.content);
   });
 
   // ── 'agent/status'：新一轮开始即作废空闲计时 ──
@@ -305,7 +285,7 @@ export function apply(ctx, config = {}) {
     const everFired = own.length > 0;
 
     // 显式完成信号
-    if (cfg.completionSignals && !state.selfInjected) {
+    if (cfg.completionSignals) {
       const text = state.lastUserText.toLowerCase();
       if (text.length > 0) {
         const now = Date.now();

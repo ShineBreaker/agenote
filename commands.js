@@ -19,7 +19,8 @@ function deliver(agent, text, plugin) {
   agent.followup(
     createUserMessage({
       content: [{ type: "text", text }],
-      source: { kind: "plugin", plugin },
+      // 会话格式 v4：producer-owned source kind，第三方插件写 `plugin:<名>`
+      source: { kind: `plugin:${plugin}` },
     }),
   );
 }
