@@ -333,13 +333,23 @@ def _sync_pointer(index_path: Path, aggregate: str = AGGREGATE_NAME) -> bool:
 
 
 def cmd_export(args, ctx=None) -> None:
-    """`memory --export`：幂等投影 + 漂移检测 + 双道闸。MUTATING 但不持 kb_lock。"""
+    """`memory --export`：幂等投影 + 漂移检测 + 双道闸。MUTATING 但不持 CLI 全局锁。
+
+    状态文件 .memory-export.json 在 KB 内，读改写自持 kb_lock（同 dream 游标
+    口径）——并发 export 整 dict 覆盖会互丢 target 记录（设计 P2）。
+    """
     from agenote import memory as _mem  # lazy：memory 侧同样 lazy，避免成环
+    from agenote.safeio import kb_lock
 
     ctx = ctx or _mem.default_context()
     if not ctx.memory_org.exists():
         print("(记忆文件不存在)")
         return
+    with kb_lock(state_path(ctx).parent / ".agenote.lock"):
+        _export_locked(args, ctx, _mem)
+
+
+def _export_locked(args, ctx, _mem) -> None:
     entries = _select_entries(args, _mem._iter_memory_entries(
         _mem._read_memory_org_text(ctx)))
     profile = build_profile(entries)
