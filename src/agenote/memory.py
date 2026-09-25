@@ -757,6 +757,26 @@ def resolve_machine_key() -> str:
     return configured or socket.gethostname()
 
 
+def expires_days(props: dict) -> tuple[int | None, str]:
+    """:EXPIRES_AFTER: 解析（设计语义 = 天数，自 UPDATED/CREATED 起算）。
+
+    返回 (天数, 遗留日期形态原文)。无该属性/无法解析返回 (None, "")；
+    日期形态（旧版实现的绝对日期）换算为等价天数并回传原文，
+    供调用方按兼容口径判定、输出迁移警告。
+    """
+    raw = (props.get("EXPIRES_AFTER") or "").strip().strip("[]").strip()
+    if not raw:
+        return None, ""
+    if re.fullmatch(r"-?\d+", raw):
+        return int(raw), ""
+    legacy = parse_memory_date(raw)
+    if legacy is None:
+        return None, ""
+    base = parse_memory_date(
+        (props.get("UPDATED") or props.get("CREATED") or "").strip("[] "))
+    return ((legacy - base).days if base is not None else 0), raw
+
+
 def _memory_revalidate(ctx=None) -> None:
     """只读列出待重验条目（不写盘，不动 --stale 输出）。
 
@@ -772,6 +792,7 @@ def _memory_revalidate(ctx=None) -> None:
     key = resolve_machine_key()
     entries = _iter_memory_entries(_read_memory_org_text(ctx))
     hits: list[tuple[str, str, str]] = []
+    legacy_notes: list[tuple[str, str]] = []
     for e in entries:
         if e["section"].lower() == "deprecated":
             continue
@@ -781,9 +802,15 @@ def _memory_revalidate(ctx=None) -> None:
         if e["type"] == "E" and scope == "machine" and machine and machine != key:
             hits.append((e["id"], e["title"], "machine-changed"))
             continue
-        exp = parse_memory_date((props.get("EXPIRES_AFTER") or "").strip("[] "))
-        if exp is not None and (datetime.now().date() - exp).days >= 0:
-            hits.append((e["id"], e["title"], "expired"))
+        # EXPIRES_AFTER：天数语义（自 UPDATED/CREATED 起算）；无基准日期视为已过期
+        exp_days, legacy_raw = expires_days(props)
+        if exp_days is not None:
+            if legacy_raw:
+                legacy_notes.append((e["id"], legacy_raw))
+            base = parse_memory_date(
+                (props.get("UPDATED") or props.get("CREATED") or "").strip("[] "))
+            if base is None or (datetime.now().date() - base).days >= exp_days:
+                hits.append((e["id"], e["title"], "expired"))
             continue
         # 孤儿：import 条目查 ORIGIN_PATH（_entry_orphan 单一口径），
         # project 索引行查 PATH/FILE——两形态互补，接通 N4 对 import 产物的检测
@@ -795,9 +822,12 @@ def _memory_revalidate(ctx=None) -> None:
             if target and not Path(target).expanduser().exists():
                 hits.append((e["id"], e["title"], "orphan"))
 
-    if not hits:
+    if not hits and not legacy_notes:
         print("无待重验记忆")
         return
+    for wid, raw in legacy_notes:
+        print(f"[!] {wid} :EXPIRES_AFTER: 为日期形态（{raw}，遗留语义），"
+              f"建议 `agenote memory --migrate` 转为天数")
     for entry_id, title, reason in hits:
         print(f"  ** {entry_id} {title} ({reason})")
     print(f"\n共 {len(hits)} 条待重验（memory --validate <id> 刷新）")
@@ -1110,14 +1140,20 @@ def _memory_conflicts(ctx=None) -> None:
 
 
 def _set_prop_in_block(block: list[str], key: str, value: str, bracket: bool = False) -> list[str]:
-    """条目块内置/改属性：已存在改值（orgserde 层保留缩进），否则 :END: 前插入。"""
+    """条目块内置/改属性：已存在改值（orgserde 层保留缩进），否则 :END: 前插入。
+
+    bracket=True（日期型值）走 orgserde 就地改写，值裹 []；
+    bracket=False（ID/天数等裸值）改写时不裹 []——set_memory_prop_line
+    恒加 []，直接用属性正则改行。
+    """
     out = list(block)
     val = f"[{value}]" if bracket else value
     for i, ln in enumerate(out):
-        new_line = set_memory_prop_line(ln, key, value)
-        if new_line is not None:
-            out[i] = new_line
-            return out
+        if bracket:
+            new_line = set_memory_prop_line(ln, key, value)
+            if new_line is not None:
+                out[i] = new_line
+                return out
         pm = MEMORY_PROP_RE.match(ln)
         if pm and pm.group(1).upper() == key.upper():
             indent = ln[: len(ln) - len(ln.lstrip())]
@@ -1241,7 +1277,7 @@ def _migrated_origin_id(agent: str, opath: str, old_id: str, title: str) -> tupl
 
 
 def _memory_migrate(ctx=None) -> None:
-    """一次性迁移（C7）：存量条目 ORIGIN_ID 重算为相对源根派生。
+    """一次性迁移（C7）：存量 ORIGIN_ID 重算 + EXPIRES_AFTER 日期形态转天数。
 
     单次 atomic_write；逐条报告改动与跳过原因，宁可少迁不误迁——
     无法验证出处的条目保持原 ID（读取侧双算兼容仍幂等）。
@@ -1253,25 +1289,33 @@ def _memory_migrate(ctx=None) -> None:
     text = _read_memory_org_text(ctx)
     entries = _iter_memory_entries(text)
     lines = text.split("\n")
-    migrated = skipped = 0
+    migrated = migrated_exp = skipped = 0
     dirty = False
     for e in entries:
         props = e["props"]
         agent = (props.get("ORIGIN_AGENT") or "").strip()
         opath = (props.get("ORIGIN_PATH") or "").strip()
         old_id = (props.get("ORIGIN_ID") or "").strip()
-        if not (agent and opath and old_id):
-            continue
-        new_id, why = _migrated_origin_id(agent, opath, old_id, e["title"])
-        if not new_id:
-            skipped += 1
-            print(f"[skip] {e['id']}: {why}")
-            continue
-        if new_id != old_id and _rewrite_entry_prop(lines, e["id"], "ORIGIN_ID", new_id):
-            migrated += 1
-            dirty = True
-            print(f"[migrate] {e['id']}: ORIGIN_ID {old_id} → {new_id}")
+        if agent and opath and old_id:
+            new_id, why = _migrated_origin_id(agent, opath, old_id, e["title"])
+            if not new_id:
+                skipped += 1
+                print(f"[skip] {e['id']}: {why}")
+            elif new_id != old_id and _rewrite_entry_prop(lines, e["id"], "ORIGIN_ID", new_id):
+                migrated += 1
+                dirty = True
+                print(f"[migrate] {e['id']}: ORIGIN_ID {old_id} → {new_id}")
+        # EXPIRES_AFTER：遗留日期形态 → 等价天数（自 UPDATED/CREATED 起算）
+        raw = (props.get("EXPIRES_AFTER") or "").strip()
+        if raw:
+            days, legacy_raw = expires_days(props)
+            if legacy_raw:
+                _rewrite_entry_prop(lines, e["id"], "EXPIRES_AFTER", str(days))
+                migrated_exp += 1
+                dirty = True
+                print(f"[migrate] {e['id']}: EXPIRES_AFTER {legacy_raw} → {days}"
+                      "（自 UPDATED/CREATED 起算）")
     if dirty:
         atomic_write(ctx.memory_org, "\n".join(lines))
-    print(f"迁移完成：ORIGIN_ID 重算 {migrated} 条，跳过 {skipped} 条"
-          + ("" if skipped else "（全部迁移）"))
+    print(f"迁移完成：ORIGIN_ID 重算 {migrated} 条，EXPIRES_AFTER 转天数 {migrated_exp} 条，"
+          f"跳过 {skipped} 条")

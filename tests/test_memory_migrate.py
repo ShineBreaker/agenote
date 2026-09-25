@@ -67,6 +67,32 @@ def test_migrate_idempotent_and_skips_unverified(tmp_path, monkeypatch, capsys):
     assert ctx2.memory_org.read_text(encoding="utf-8") == before2
 
 
+def test_migrate_converts_legacy_expires_after(tmp_path, monkeypatch, capsys):
+    """EXPIRES_AFTER 遗留日期形态 → 等价天数（自 UPDATED 起算）；纯天数不动。"""
+    import agenote.core as core
+
+    monkeypatch.setattr(core, "KB_ROOT", tmp_path)
+    text = (
+        "#+title: MEMORY-test\n\n* feedback\n"
+        "** F001 遗留日期形态\n   :PROPERTIES:\n   :CREATED:  [2026-09-01]\n"
+        "   :UPDATED:  [2026-09-10]\n   :EXPIRES_AFTER:  [2026-01-01]\n   :END:\n"
+        "** F002 纯天数形态\n   :PROPERTIES:\n   :UPDATED:  [2026-09-10]\n"
+        "   :EXPIRES_AFTER:  30\n   :END:\n")
+    org = tmp_path / "MEMORY.org"
+    org.write_text(text, encoding="utf-8")
+    ctx = types.SimpleNamespace(memory_org=org, root=tmp_path)
+
+    memory_mod._memory_migrate(ctx)
+    out = capsys.readouterr().out
+    from datetime import date
+
+    want = str((date(2026, 1, 1) - date(2026, 9, 10)).days)
+    assert f"EXPIRES_AFTER 2026-01-01 → {want}" in out
+    after = org.read_text(encoding="utf-8")
+    assert re.search(rf":EXPIRES_AFTER:\s+{want}", after)
+    assert re.search(r":EXPIRES_AFTER:\s+30\b", after.split("** F002")[1])  # 天数形态原样
+
+
 def test_migrate_via_cli_dispatch(tmp_path, monkeypatch, capsys):
     """--migrate 经 cmd_memory 分发（MUTATING 面内），写盘走 atomic_write。"""
     import agenote.core as core

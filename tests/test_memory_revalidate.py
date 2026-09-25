@@ -16,7 +16,6 @@ from agenote import core as core_mod
 from agenote.core import today
 
 OLD = (datetime.now() - timedelta(days=200)).strftime("%Y-%m-%d")
-PAST = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
 FUTURE = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
 
 TEXT = (
@@ -39,22 +38,28 @@ TEXT = (
     "   :END:\n"
     "\n"
     "* feedback\n"
-    f"** F001 手填已过期\n"
+    "** F001 手填已过期\n"
     "   :PROPERTIES:\n"
     "   :CREATED:  [2026-09-01]\n"
     "   :UPDATED:  [2026-09-10]\n"
-    f"   :EXPIRES_AFTER:  [{PAST}]\n"
+    "   :EXPIRES_AFTER:  3\n"
     "   :END:\n"
     "** F002 手填未过期\n"
     "   :PROPERTIES:\n"
     "   :CREATED:  [2026-09-01]\n"
     "   :UPDATED:  [2026-09-10]\n"
-    f"   :EXPIRES_AFTER:  [{FUTURE}]\n"
+    "   :EXPIRES_AFTER:  36500\n"
     "   :END:\n"
     "** F003 无过期字段\n"
     "   :PROPERTIES:\n"
     "   :CREATED:  [2026-09-01]\n"
     "   :UPDATED:  [2026-09-10]\n"
+    "   :END:\n"
+    "** F004 遗留日期形态未过期\n"
+    "   :PROPERTIES:\n"
+    "   :CREATED:  [2026-09-01]\n"
+    "   :UPDATED:  [2026-09-10]\n"
+    f"   :EXPIRES_AFTER:  [{FUTURE}]\n"
     "   :END:\n"
     "\n"
     "* project\n"
@@ -83,13 +88,37 @@ def test_machine_change_lists_batch(monkeypatch, tmp_path, capsys):
 
 
 def test_handfilled_expiry(monkeypatch, tmp_path, capsys):
-    """手填 EXPIRES_AFTER 已过 → expired；未过/缺失 → 不报。"""
+    """EXPIRES_AFTER 天数语义（自 UPDATED 起算）：已过 → expired；未过/缺失 → 不报。"""
     monkeypatch.setenv("AGENOTE_MACHINE_KEY", "host-a")  # E 条目全部同机，不干扰
     memory_mod._memory_revalidate(ctx=_ctx(tmp_path))
     out = capsys.readouterr().out
     assert "F001" in out and "expired" in out
     assert "F002" not in out
     assert "F003" not in out
+
+
+def test_expires_after_days_from_updated_base(tmp_path, capsys):
+    """天数以 UPDATED 为基准：3 天早过期（F001），基准缺失视为已过期。"""
+    text = (
+        "* feedback\n"
+        "** F101 天数基准缺失\n"
+        "   :PROPERTIES:\n"
+        "   :EXPIRES_AFTER:  30\n"
+        "   :END:\n")
+    path = tmp_path / "MEMORY.org"
+    path.write_text(text, encoding="utf-8")
+    memory_mod._memory_revalidate(ctx=types.SimpleNamespace(memory_org=path))
+    out = capsys.readouterr().out
+    assert "F101" in out and "expired" in out  # 无 CREATED/UPDATED 可起算 → 保守视为过期
+
+
+def test_legacy_date_form_warns_but_still_honored(monkeypatch, tmp_path, capsys):
+    """遗留日期形态：按绝对日期兼容判定（未过期不列），同时输出迁移警告。"""
+    monkeypatch.setenv("AGENOTE_MACHINE_KEY", "host-a")
+    memory_mod._memory_revalidate(ctx=_ctx(tmp_path))
+    out = capsys.readouterr().out
+    assert "F004" in out and "日期形态" in out and "--migrate" in out
+    assert "共 3 条待重验" in out  # E001 + F001 + ghost-proj；F004 未过期不列
 
 
 def test_validate_refreshes_time(monkeypatch, tmp_path, capsys):
