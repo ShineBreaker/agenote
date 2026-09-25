@@ -83,6 +83,44 @@ def test_reasonix_entry_lands(q4_ctx):
     assert "seed" in (memdir / "seed.md").read_text(encoding="utf-8")  # 宿主文件不动
 
 
+def test_reasonix_host_drift_not_overwritten(q4_ctx, capsys):
+    """宿主改写投影（保留尾注）→ marker hash 失配 → 漂移报告，不静默覆写（T6）。"""
+    projector.cmd_export(_export_args(project="myproj"), q4_ctx)
+    memdir = q4_ctx.root / "rx" / "projects" / "myproj" / "memory"
+    f = memdir / "agenote-U001.md"
+    f.write_text(f.read_text(encoding="utf-8").replace("回复用中文", "回复用中文（宿主改）"),
+                 encoding="utf-8")
+    projector.cmd_export(_export_args(project="myproj"), q4_ctx)
+    out = capsys.readouterr().out
+    assert "漂移" in out
+    assert "宿主改" in f.read_text(encoding="utf-8")  # 宿主内容幸存
+
+
+def test_reasonix_stale_projection_cleaned(q4_ctx, capsys):
+    """条目入 deprecated 后：自洽陈旧投影被清理；宿主动过的不删；宿主文件永不动。"""
+    projector.cmd_export(_export_args(project="myproj"), q4_ctx)
+    capsys.readouterr()
+    memdir = q4_ctx.root / "rx" / "projects" / "myproj" / "memory"
+    assert (memdir / "agenote-U001.md").exists()
+
+    # 宿主改写 F001 投影（保留尾注）→ 漂移；U001 无人动 → 自洽
+    f001 = memdir / "agenote-F001.md"
+    f001.write_text(f001.read_text(encoding="utf-8").replace("不要用 cat", "不要用 cat（宿主改）"),
+                    encoding="utf-8")
+
+    mem = q4_ctx.memory_org
+    text = mem.read_text(encoding="utf-8")
+    mem.write_text(text.replace("* user\n", "* deprecated\n")
+                       .replace("* feedback\n", "* deprecated\n"), encoding="utf-8")
+    projector.cmd_export(_export_args(project="myproj"), q4_ctx)
+    out = capsys.readouterr().out
+    assert not (memdir / "agenote-U001.md").exists()  # 自洽陈旧投影被清理
+    assert "移除陈旧投影 agenote-U001.md" in out
+    assert (memdir / "agenote-F001.md").exists()  # 漂移的陈旧投影不自动删
+    assert "不自动清理" in out
+    assert "seed" in (memdir / "seed.md").read_text(encoding="utf-8")
+
+
 def test_pi_suggest_list(q4_ctx):
     projector.cmd_export(_export_args(project="myproj"), q4_ctx)
     suggest = q4_ctx.root / "pi" / projector.SUGGEST_NAME

@@ -279,6 +279,25 @@ def build_reasonix_entry(e: dict) -> str:
     return head + body + tail
 
 
+def _reasonix_drift(path: Path, entry_id: str) -> str:
+    """reasonix 投影自证漂移检测（§4.2 T6：宿主对投影的修改只触发漂移报告）。
+
+    marker 记录投影时的 content_hash(id+body)：现存文件正文与自身 marker
+    不符即宿主动过（设计 P2：此前 marker 只当布尔用，宿主改写被静默覆写）。
+    返回 ""（自洽，可安全覆写/清理）、「非投影文件」或漂移说明。
+    """
+    cur = _read_target(path)
+    if cur is None:
+        return ""
+    stored = _marker_of(cur)
+    if not stored:
+        return "非投影文件"
+    m = re.search(r"\n---\n", cur)
+    body = cur[m.end():] if m else cur
+    body = re.sub(rf"<!-- {re.escape(MARKER_KEY)}:.*?-->\s*$", "", body, flags=re.DOTALL)
+    return "" if content_hash(entry_id + body.rstrip("\n")) == stored else "宿主已修改投影内容"
+
+
 def _reasonix_slugs(root: Path) -> list[str]:
     """枚举 reasonix 根下既有 project slug（只读既有目录，绝不新建）。"""
     proot = root / "projects"
@@ -363,16 +382,36 @@ def cmd_export(args, ctx=None) -> None:
                 _mem.die(f"reasonix 直写需 --project 指定既有 slug"
                          f"（既有：{', '.join(slugs) if slugs else '无'}）")
             memdir = root / "projects" / slug / "memory"
-            n = 0
+            n = removed = 0
+            current: set[str] = set()
             for e in entries:
                 path = memdir / f"agenote-{e['id']}.md"
+                current.add(path.name)
                 text = build_reasonix_entry(e)
-                if path.exists() and not _marker_of(_read_target(path) or ""):
-                    print(f"[!] reasonix → {path} 存在非投影文件，本次不覆盖")
-                    continue
+                if path.exists():
+                    drift = _reasonix_drift(path, e["id"])
+                    if drift == "非投影文件":
+                        print(f"[!] reasonix → {path} 存在非投影文件，本次不覆盖")
+                        continue
+                    if drift:
+                        print(f"[!] reasonix → {path} 漂移：{drift}，"
+                              f"本次不覆盖（走 import 重新裁决）")
+                        continue
                 if _write_if_changed(path, text):
                     n += 1
-            print(f"reasonix → {memdir}（{n} 个条目更新）")
+            # 陈旧投影清理：条目已离开投影集的自洽投影从宿主目录移除，
+            # 不再让宿主继续读到已被裁决取代的事实；宿主动过的不自动删。
+            for path in sorted(memdir.glob("agenote-*.md")):
+                if path.name in current:
+                    continue
+                drift = _reasonix_drift(path, path.stem[len("agenote-"):])
+                if drift == "":
+                    path.unlink()
+                    removed += 1
+                    print(f"[clean] 移除陈旧投影 {path.name}（条目已不在投影集）")
+                elif drift != "非投影文件":
+                    print(f"[!] reasonix → {path} 漂移，不自动清理（走 import 重新裁决）")
+            print(f"reasonix → {memdir}（{n} 个条目更新，{removed} 个陈旧投影清理）")
             rec_targets[name] = {"path": str(memdir), "content_hash": content_hash(profile)}
             continue
         path = root / AGGREGATE_NAME
