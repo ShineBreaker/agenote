@@ -4,6 +4,38 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.0] - 2026-09-25
+
+跨 agent 记忆注入架构（C 线）落地：agenote 保持纯粹 CLI，各宿主插件/hook 实时调 CLI 注入记忆简报，替代宿主自带记忆系统；含上一轮实现审查的 22 项修复闭环。
+
+### Added
+
+- **`agenote context` 注入简报命令**（`context.py`）：`--mode session` 会话简报（U/E/P/F/R 保头降级选集、预算硬上限恒字符、末尾固定「如何查更多」指引）与 `--mode recall` 召回（BM25 + 分数下限 8.0（真实语料 600 样本标定）+ topk + 最短 query 门槛）；三态语义——ok 首行 marker `<!-- agenote-context v1 ... -->`（无时间戳，幂等可识别），empty/disabled 输出零字节；`--project` 确定性三步匹配（精确路径 → git root basename → 不猜）；只读免锁、不进 `MUTATING_COMMANDS`、全新 KB 不写骨架。
+- **`[injection]` / `[injection.hosts]` 配置节**（`config.py`）：总开关 `enabled`、默认预算、会话累计预算、召回参数与 per-host 平铺开关键；`AGENOTE_INJECTION_ENABLED=false` 一键全关，任何注入器随之静默熄火——开关的单一真相源在 agenote 侧。
+- **doctor 宿主记忆六项检测**（`doctor.py`）：zcode/claude/codex/omp/hermes 五宿主自带记忆开关只读探测（未安装跳过）+「投影 targets 非空且注入开启」双通道并存警告（附退役指引）；既有 8 项检测措辞不变。
+- **`injectors/` 注入器包**：zcode/claude 成品（SessionStart 简报 + UserPromptSubmit 每轮 recall；追加型三件套——指纹未变不注、recall 门槛、单会话累计预算；状态文件 `~/.cache/agenote/injectors/<host>-<sid>.json`）、codex/opencode recipe 模板（experimental/待信任确认项如实标注）、共享库 `lib.sh` 与 `selftest.sh`（30 项断言）。
+- **shim `context` 子命令透传**（`shim.py`）：pi 侧 `agenote-cli` 入口支持 context（参数与主 CLI 对齐），pi 注入链路打通。
+- **import 条目元数据闭环**（`memory_import.py` / `memscan.py`）：条目落盘 `:ORIGIN_PATH:`、E 类落 `:MACHINE:`（切机重验对自家产物生效）、`:NEEDS_REVIEW:` 落盘；新增 `memory --migrate` 一次性迁移命令（ORIGIN_ID 相对化 + EXPIRES_AFTER 天数化）。
+- 测试 329 → 404（context 三态/预算裁剪/doctor 探测/orgserde 与 safeio 等）。
+
+### Changed
+
+- **注入主通道裁决**：宿主插件/hook 实时调 `agenote context` 注入为主通道（五宿主有一等挂接点），`[memories.targets]` 文件投影降级为遗留通道——宿主记忆目录是共享读写沙箱，投影会被宿主抽取代理改写（结构性双写冲突）。
+- ORIGIN_ID 改为相对源根路径派生（`sha256(AGENT:相对路径:标题)[:16]`），源根改名/换机不再全量碎裂；读取侧双算兼容旧绝对路径 ID（保留一个版本）。
+- EXPIRES_AFTER 改天数语义（自 UPDATED/CREATED 起算）；旧日期形态兼容判定 + 迁移警告。
+- dream snapshot 未变化时清空 candidates 并指回游标（`unchanged` 与「无候选」可区分，消费方不再重复复核）。
+- `memory --add --type P` 合一到 MEMORY.org 单一写路径（侧文件路径退役）；secret 扫描清单合一到 `core.SECRET_PATTERNS`；聚合投影文件去日期戳（跨天字节级幂等）；时效口径统一（VALIDATED_AT → UPDATED → CREATED）。
+- KB 标题收集合一到 `orgserde.collect_card_titles`（BOM 剥离）。
+
+### Fixed
+
+- **回声防护闭环（P0）**：import 侧消费投影 marker（`x-agenote-projected` / `x-agenote-pointer`）拒收自身投影，targets 前缀排除改 realpath 归一化（symlink/大小写免疫）——清空 targets 配置后投影副本不再被读回 MEMORY.org 造成递归污染。
+- import 的 BOM/CRLF 归一化：CRLF 源文件不再把 `\r` 字节写入 MEMORY.org、frontmatter 不再整段退化。
+- E 类切机重验失效（import 产物缺 `:MACHINE:` 导致 `--revalidate` 恒空）；孤儿检测接通（ORIGIN_PATH 落盘后 supersede 孤儿与源消失可检出）。
+- reasonix 投影漂移改 marker-hash 比对（宿主改写只报告不覆盖）；陈旧投影自洽才清理。
+- dedupe 候选排除 deprecated 终态条目；`memory_import` 读取收口 `safe_read`（lstat/fstat 统一防护）；safeio 读侧补 lstat↔fd 身份比对。
+- el 契约测试锁定 `list --json` 完整旧 12 字段集；S5 errors>0 拒绝落盘补回归；sweep `--apply` 候选缺失路径先备后写锁。
+
 ## [0.1.12] - 2026-09-25
 
 ### Added
