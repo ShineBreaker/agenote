@@ -5,7 +5,8 @@
  * agenote-hooks extension
  *
  * agent 专属记事本（agenote）集成钩子：
- * - session_start: 注入 agenote 健康度摘要
+ * - session_start: 重置触发状态（健康度摘要由 pi-ui 扩展在欢迎框中显示，不经本插件注入）
+ * - context:       每 LLM 调用前注入 agenote 记忆简报（指纹缓存幂等重写，先剥旧块再注新块）
  * - agent_end:     检测"任务完成信号"，命中时注入 agenote-review 评估提示（含留痕）
  * - /agenote-summarize: 在当前会话触发经验总结 + 留痕
  * - /agenote-curate:    注入策展任务提示（agent 按 agenote-curator skill 主导执行）
@@ -15,14 +16,20 @@
  * 本插件只做"事件触发 + 命令快捷入口"，避免与 skill 重复维护。
  *
  * 调用路径：agent 主循环通过 bash 调用 agenote CLI。本插件注入的提示词由
- * agent 执行；唯一 execSync 的场景是只读的健康度查询（/agenote-health 与
- * session_start 状态注入），走轻量 CLI shim（agenote-cli health）。
+ * agent 执行；execSync 仅限只读 CLI 查询（/agenote-health 与 context 简报），
+ * 走轻量 CLI shim（agenote-cli）。
  */
 
 import { execSync } from "node:child_process";
-import { appendFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 const KB_SCRIPT = "agenote-cli";
 
@@ -208,6 +215,211 @@ function isSubagentProcess(): boolean {
   return false;
 }
 
+// ═══ C5: context 事件记忆简报注入（AGENOTE_INJECTION_DESIGN.md §3 C5）══════════
+//
+// 每 LLM 调用前把 `agenote context --mode session --host pi` 的输出以固定标签
+// 包裹后重写进 messages（重写型：先剥旧块再注新块，幂等防累积）。
+//
+// 双层开关（改行为优先改 agenote SCHEMA，本开关只是快速物理断开）：
+//   - 语义开关：agenote 配置 [injection].enabled / [injection.hosts].pi_enabled
+//     ——CLI 自身遵守，关闭时输出零字节，本扩展剥掉旧块后不注新块；
+//   - 物理开关：~/.config/omp/agenote-pi.json 的 injectEnabled ——false 时本扩展
+//     完全不参与 context 事件（不 spawn CLI，已注入的历史块不再剥离）。
+//
+// 缓存（D8）：按 KB 侧 MEMORY.org + memories/ 的 mtime+size 指纹缓存 CLI 输出，
+// 指纹未变直接重放、零 spawn；CLI 失败按空正文处理并记加载日志（失败同样进
+// 缓存，避免每次 LLM 调用都重试炸出一个 spawn 风暴；KB 变更后指纹失效自然重试）。
+
+/** 注入块的固定标签（剥离与注入共用；改动会导致旧块无法剥离，勿轻动） */
+export const INJECT_START = "<!-- agenote-inject:start -->";
+export const INJECT_END = "<!-- agenote-inject:end -->";
+/** 完整块 + 紧随的一个空行分隔（与 wrapInjectionBlock 的拼接格式严格对应；
+ *  标签由常量构造保证单一真相源——标签字符不含正则元字符，可直接内插） */
+const INJECT_BLOCK_RE = new RegExp(
+  `${INJECT_START}[\\s\\S]*?${INJECT_END}(?:\\n\\n)?`,
+  "g",
+);
+
+/** 用固定标签包裹注入正文（供 stripInjectionBlock 对称剥离） */
+export function wrapInjectionBlock(text: string): string {
+  return `${INJECT_START}\n${text}\n${INJECT_END}`;
+}
+
+/** 剥离文本中的既有注入块（含紧随的空行分隔）；未闭合块自 START 起整段切除 */
+export function stripInjectionBlock(text: string): string {
+  let out = text.replace(INJECT_BLOCK_RE, "");
+  const start = out.indexOf(INJECT_START);
+  if (start !== -1) out = out.slice(0, start);
+  return out;
+}
+
+/**
+ * 重写 messages：先全量剥离旧注入块（任何 role、string 或 blocks 形态），
+ * 再把非空简报注入第一条 user 消息头部（位置稳定、语义接近系统上下文）。
+ * 空简报只剥不注——会话中记忆被清空时旧简报自动撤下。
+ * event.messages 是宿主给的深拷贝，原地修改后随返回值交回。
+ */
+export function applyInjectionToMessages(
+  messages: any[],
+  briefing: string,
+): any[] {
+  for (const m of messages) {
+    if (!m || typeof m !== "object") continue;
+    if (typeof m.content === "string") {
+      m.content = stripInjectionBlock(m.content);
+    } else if (Array.isArray(m.content)) {
+      for (const b of m.content) {
+        if (
+          b &&
+          typeof b === "object" &&
+          b.type === "text" &&
+          typeof b.text === "string"
+        ) {
+          b.text = stripInjectionBlock(b.text);
+        }
+      }
+    }
+  }
+  if (!briefing) return messages;
+
+  const target = messages.find((m) => m && m.role === "user");
+  if (!target) return messages; // 无 user 消息可挂载，放弃本轮注入
+  const block = wrapInjectionBlock(briefing);
+  if (typeof target.content === "string") {
+    target.content = `${block}\n\n${target.content}`;
+  } else if (Array.isArray(target.content)) {
+    const tb = target.content.find(
+      (b: any) => b && b.type === "text" && typeof b.text === "string",
+    );
+    if (tb) {
+      tb.text = `${block}\n\n${tb.text}`;
+    } else {
+      target.content.unshift({ type: "text", text: block });
+    }
+  }
+  return messages;
+}
+
+/** KB 侧记忆文件指纹（agenote 域 = $KB_ROOT|~/Documents/Org 下的 agenote/）。
+ *
+ * 覆盖 MEMORY.org 与 memories/ 目录树（context 命令当前只读 MEMORY.org，
+ * memories/ 一并纳入是前向兼容——新增数据源时指纹自动失效）。指纹未变
+ * ⇒ KB 未变 ⇒ 简报未变，这是零 spawn 重放的依据（R1：键含 mtime+size 双值）。
+ */
+export function computeMemoryFingerprint(): string {
+  const kbRoot = process.env.KB_ROOT || join(homedir(), "Documents", "Org");
+  const domainRoot = join(kbRoot, "agenote");
+  const parts: string[] = ["v1"];
+  try {
+    const st = statSync(join(domainRoot, "MEMORY.org"));
+    parts.push(`mem:${st.mtimeMs}:${st.size}`);
+  } catch {
+    parts.push("mem:missing");
+  }
+  try {
+    const dirents = readdirSync(join(domainRoot, "memories"), {
+      withFileTypes: true,
+      recursive: true,
+    });
+    const files: string[] = [];
+    for (const d of dirents) {
+      if (!d.isFile()) continue;
+      try {
+        // parentPath 在旧 node typings 里叫 path，运行时取 parentPath 兜底
+        const dir: string = (d as any).parentPath ?? "";
+        const st = statSync(join(dir, d.name));
+        files.push(`${join(dir, d.name)}:${st.mtimeMs}:${st.size}`);
+      } catch {
+        files.push(`${d.name}:err`);
+      }
+    }
+    files.sort();
+    // 上限截断只为封顶开销；记忆树超过 256 个文件时尾部变更不触发刷新（可接受）
+    parts.push(`tree:${files.slice(0, 256).join(",")}`);
+  } catch {
+    parts.push("tree:missing");
+  }
+  return parts.join("|");
+}
+
+// ─── C5 配置（扩展自管——omp ExtensionAPI 无配置读取接口）────────────────────
+
+interface InjectConfig {
+  injectEnabled: boolean;
+  budget: number;
+}
+const DEFAULT_INJECT_CONFIG: InjectConfig = { injectEnabled: true, budget: 8000 };
+
+/** 读 <omp 配置根>/agenote-pi.json；缺文件 = 默认开；解析失败容错回退默认 + 日志 */
+function loadInjectConfig(): InjectConfig {
+  // resolve 而非 join：PI_CONFIG_DIR 是「home 下相对目录名」，但若被设为绝对路径，
+  // join(homedir(), "/abs") 会错误拼成 home 下的嵌套路径（global-context 同款坑，
+  // 其 getOmpConfigDir 注释有档）。resolve 对两种形态都正确。
+  const configRoot = resolve(
+    homedir(),
+    process.env.PI_CONFIG_DIR || join(".config", "omp"),
+  );
+  const path = join(configRoot, "agenote-pi.json");
+  if (!existsSync(path)) return { ...DEFAULT_INJECT_CONFIG };
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8"));
+    const cfg = { ...DEFAULT_INJECT_CONFIG };
+    if (typeof raw.injectEnabled === "boolean") cfg.injectEnabled = raw.injectEnabled;
+    if (
+      typeof raw.budget === "number" &&
+      Number.isInteger(raw.budget) &&
+      raw.budget > 0
+    ) {
+      cfg.budget = raw.budget;
+    }
+    return cfg;
+  } catch (err) {
+    logLoadError("agenote-hooks", "load agenote-pi.json", err);
+    return { ...DEFAULT_INJECT_CONFIG };
+  }
+}
+
+/**
+ * 跑 `agenote-cli context --mode session --host pi --budget N` 取简报正文。
+ * 返回 null 表示 CLI 缺失/失败/超时（记加载日志，本轮按空正文跳过注入）。
+ * 与 runKb 不同：失败绝不能把错误文本当正文注入，故单独成函数、独立 5s 超时。
+ */
+const BRIEFING_TIMEOUT_MS = 5000;
+function fetchBriefing(budget: number): string | null {
+  try {
+    const stdout = execSync(
+      `${KB_SCRIPT} context --mode session --host pi --budget ${budget}`,
+      {
+        encoding: "utf-8",
+        timeout: BRIEFING_TIMEOUT_MS,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, AGENOTE_AGENT: "pi" },
+      },
+    );
+    return stdout.trim();
+  } catch (err: any) {
+    logLoadError("agenote-hooks", "context-brief", err);
+    return null;
+  }
+}
+
+/** 简报缓存：单槽指纹 → 正文。指纹未变直接重放（零 spawn，D8）。 */
+let briefingCache: { fingerprint: string; text: string } | undefined;
+
+/** 依据指纹取简报：命中缓存重放，失效才重跑 CLI（fetchFn 参数化供测试注入） */
+export function resolveBriefing(
+  fingerprint: string,
+  fetchFn: (budget: number) => string | null,
+  budget: number,
+): string {
+  if (briefingCache && briefingCache.fingerprint === fingerprint) {
+    return briefingCache.text;
+  }
+  const text = fetchFn(budget) ?? "";
+  briefingCache = { fingerprint, text };
+  return text;
+}
+
 export default function init(pi: any): void {
   try {
     initBody(pi);
@@ -218,6 +430,36 @@ export default function init(pi: any): void {
 }
 
 function initBody(pi: ExtensionAPI): void {
+  // 扩展自管配置只在 init 时读一次（与 global-context 同法）：改 injectEnabled
+  // 需重启 omp 会话生效；语义开关（agenote SCHEMA）则是每轮 CLI 生效、无需重启。
+  const injectConfig = loadInjectConfig();
+
+  // ── context：每 LLM 调用前注入记忆简报（重写型，幂等）──────────────────────
+  // 先剥离旧注入块再注新块——即便宿主把注入过的消息持久化进会话历史，
+  // 重复处理也不会累积；CLI 零字节（disabled/empty）时只剥不注，旧简报自动撤下。
+  pi.on("context", async (event, _ctx) => {
+    // 子代理进程不参与注入（延续 agent_end 同款守卫）
+    if (isSubagentProcess()) return;
+    // 物理开关：false 时本扩展对 context 事件完全透明
+    if (!injectConfig.injectEnabled) return;
+    try {
+      const messages = (event as any).messages;
+      if (!Array.isArray(messages)) return;
+      const fingerprint = computeMemoryFingerprint();
+      const briefing = resolveBriefing(
+        fingerprint,
+        fetchBriefing,
+        injectConfig.budget,
+      );
+      applyInjectionToMessages(messages, briefing);
+      return { messages };
+    } catch (err) {
+      // 注入是纯增益路径，任何异常都不允许炸宿主会话
+      logLoadError("agenote-hooks", "context-inject", err);
+      return;
+    }
+  });
+
   // session_start：状态显示已交给 pi-ui 扩展（欢迎框中显示）。
   // 原逻辑在这里 console.log 会导致 stdout 在 TUI 之前打印多行文本，
   // 且与 pi-ui 欢迎框重复。pi-ui 已调用 kb agenote health 解析后
