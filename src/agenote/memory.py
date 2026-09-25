@@ -145,6 +145,13 @@ SECTION_TO_TYPE = {
     "user": "U", "feedback": "F", "project": "P",
     "environment": "E", "reference": "R",
 }
+# SCOPE 单一口径：import（normalize）与 --add 共用，两侧写出的 P/E 条目同构
+SCOPE_FOR_TYPE = {"E": "machine", "P": "project"}
+
+
+def scope_for_type(mem_type: str) -> str:
+    """类型 → 默认 SCOPE（E=machine，P=project，其余 user）。"""
+    return SCOPE_FOR_TYPE.get(mem_type, "user")
 
 
 def origin_id(agent: str, relpath: str, title: str) -> str:
@@ -514,10 +521,6 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
         else:
             die("添加记忆需要 --title")
 
-    if mem_type == "P":
-        _memory_add_project(title, body, project_name, ctx)
-        return
-
     if not ctx.memory_org.exists():
         _init_memory_template_for_ctx(ctx)
 
@@ -525,7 +528,9 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
     lines = text.split("\n")
     sections = _parse_memory_sections(text)
 
-    type_to_section = {t: s for s, t in SECTION_TO_TYPE.items() if t != "P"}
+    # P 类与其它类型同一写路径（C7 P2 合一）：写 MEMORY.org project 节条目，
+    # 不再走 memories/projects/ 侧文件——侧文件投影器不读，手工 P 类永不投影
+    type_to_section = {t: s for s, t in SECTION_TO_TYPE.items()}
     section_name = type_to_section.get(mem_type)
     if not section_name:
         die(f"未知记忆类型: {mem_type}")
@@ -559,10 +564,13 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
     entry_lines.append(f"   :CREATED:  [{today()}]")
     entry_lines.append(f"   :UPDATED:  [{today()}]")
     entry_lines.append(f"   :TYPE:     {mem_type}")
-    entry_lines.append(f"   :SCOPE:    {'machine' if mem_type == 'E' else 'user'}")
+    entry_lines.append(f"   :SCOPE:    {scope_for_type(mem_type)}")
     if mem_type == "E":
         # N5：E 条目记录所属机器键（切机检测用）；EXPIRES_AFTER 默认不写（空）
         entry_lines.append(f"   :MACHINE:  {resolve_machine_key()}")
+    if mem_type == "P" and project_name:
+        # 投影器 --project 按此属性命中（projector._select_entries）
+        entry_lines.append(f"   :PROJECT:  {project_name}")
     if mem_type == "F" and getattr(args, "ref", None):
         entry_lines.append(f"   :REF:      {args.ref}")
     entry_lines.append("   :END:")
@@ -575,87 +583,6 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
 
     atomic_write(ctx.memory_org, "\n".join(lines))
     print(f"已添加 {mem_type} 记忆: {new_id} {title}")
-
-
-def _memory_add_project(
-    title: str, body: str, project_name: str | None, ctx=None
-) -> None:
-    """添加 project 记忆到 memories/projects/<name>.org。"""
-    ctx = ctx or default_context()
-    if not project_name:
-        die("添加 project 记忆需要 --project <项目名>")
-
-    ctx.projects.mkdir(parents=True, exist_ok=True)
-    proj_file = ctx.projects / f"{project_name}.org"
-
-    if not proj_file.exists():
-        atomic_write(
-            proj_file, f"#+title: {project_name}\n#+date: [{today()}]\n\n"
-        )
-
-    # 追加条目到项目文件
-    proj_text = proj_file.read_text(encoding="utf-8")
-    proj_lines = proj_text.split("\n")
-
-    entry_lines = [f"\n** {title}"]
-    entry_lines.append("   :PROPERTIES:")
-    entry_lines.append(f"   :CREATED:  [{today()}]")
-    entry_lines.append(f"   :UPDATED:  [{today()}]")
-    entry_lines.append("   :END:")
-    if body.strip():
-        entry_lines.append(f"   {body.strip()}")
-    entry_lines.append("")
-
-    proj_lines.extend(entry_lines)
-    atomic_write(proj_file, "\n".join(proj_lines))
-
-    # 同步更新 MEMORY.org 索引
-    _memory_sync_project_index(project_name, proj_file, ctx)
-
-    print(f"已添加 project 记忆: {title} → {project_name}")
-
-
-def _memory_sync_project_index(name: str, proj_file: Path, ctx=None) -> None:
-    """同步项目到 MEMORY.org 的 * project 节索引。"""
-    ctx = ctx or default_context()
-    if not ctx.memory_org.exists():
-        _init_memory_template_for_ctx(ctx)
-
-    text = _read_memory_org_text(ctx)
-
-    # 检查是否已存在索引
-    if f"** {name}" in text:
-        return
-
-    lines = text.split("\n")
-    sections = _parse_memory_sections(text)
-
-    # 找到或创建 * project 节
-    proj_section = None
-    for sec_name, entries in sections.items():
-        if "project" in sec_name.lower():
-            proj_section = entries[0]
-            break
-
-    if proj_section:
-        insert_line = _find_section_end(lines, proj_section[0])
-    else:
-        # 追加新节
-        insert_line = len(lines)
-        lines.append("")
-        lines.append("* project")
-        insert_line = len(lines)
-
-    index_entry = (
-        f"\n** {name}\n"
-        f"   :PROPERTIES:\n"
-        f"   :PATH:     {proj_file}\n"
-        f"   :FILE:     {proj_file}\n"
-        f"   :UPDATED:  [{today()}]\n"
-        f"   :END:\n"
-    )
-    lines.insert(insert_line, index_entry)
-    atomic_write(ctx.memory_org, "\n".join(lines))
 
 
 def _memory_touch(entry_id: str, ctx=None) -> None:

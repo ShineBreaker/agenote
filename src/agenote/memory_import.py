@@ -35,7 +35,7 @@ _TYPE_WORDS = {
     "r": "R", "reference": "R",
 }
 TYPE_TO_SECTION = {"U": "user", "F": "feedback", "P": "project", "E": "environment", "R": "reference"}
-SCOPE_FOR_TYPE = {"E": "machine", "P": "project"}
+# SCOPE 口径单一来源 memory.SCOPE_FOR_TYPE（--add 与 import 同构）
 
 # ponytail: 固定 body 相似阈值 0.5，配 SCHEMA 阈值调参若不够再进配置
 _BODY_SIM_THRESHOLD = 0.5
@@ -105,9 +105,10 @@ def normalize(entry: dict) -> dict:
         mem_type, review = _TYPE_WORDS[raw], False
     else:
         mem_type, review = _heuristic_type(entry.get("name", ""), entry.get("body", ""))
-    scope = SCOPE_FOR_TYPE.get(mem_type, "user")
     # lazy：memory 薄转发循环依赖，helpers 在调用时导入
-    from agenote.memory import origin_id
+    from agenote.memory import origin_id, scope_for_type
+
+    scope = scope_for_type(mem_type)
 
     # 幂等键用相对源根路径派生（C7 P1）：源根改名/搬家不再碎裂全部 ID
     rel = entry.get("rel") or entry.get("path", "")

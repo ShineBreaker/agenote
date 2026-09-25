@@ -77,6 +77,28 @@ def _ctx(tmp_path, text=TEXT):
     return types.SimpleNamespace(memory_org=path)
 
 
+def test_add_project_type_writes_memory_org_entry(tmp_path, monkeypatch):
+    """--add --type P 与 import 同一写路径：MEMORY.org project 节 + PROJECT 属性，可被投影。"""
+    import agenote.core as core
+    from agenote import projector
+
+    monkeypatch.setattr(core, "KB_ROOT", tmp_path)
+    org = tmp_path / "MEMORY.org"
+    ctx = types.SimpleNamespace(memory_org=org, root=tmp_path, name="test", is_human=True)
+    args = argparse.Namespace(add=True, type="P", stdin=False, ref=None,
+                              title="agenote 提交前要跑全量测试",
+                              project="agenote", freshness=False)
+    memory_mod._memory_add(args, ctx)
+    text = org.read_text(encoding="utf-8")
+    assert "** P001 agenote 提交前要跑全量测试" in text
+    assert ":SCOPE:    project" in text and ":PROJECT:  agenote" in text
+    # 投影器 --project agenote 能选中该条目（旧侧文件路径下这不可能）
+    sel = projector._select_entries(
+        argparse.Namespace(type=None, scope=None, project="agenote"),
+        memory_mod._iter_memory_entries(text))
+    assert [e["id"] for e in sel] == ["P001"]
+
+
 def _args(**kw):
     base = {"type": None, "scope": None, "json": False, "list": True}
     base.update(kw)
