@@ -216,6 +216,67 @@ SCHEMA: dict[str, dict[str, Key]] = {
             "", env="AGENOTE_HERMES_SUGGEST_DIR", comment="hermes 待录入清单目录（§切分，需手动调 memory 工具录入）"
         ),
     },
+    "injection": {
+        # C 线注入架构（AGENOTE_INJECTION_DESIGN.md §3 C2）：宿主插件/hook 实时调
+        # `agenote context` 取记忆注入会话；开关真相源在本节，任一粒度关闭时
+        # context 命令 text 输出零字节（空 additionalContext 天然不注入）。
+        "enabled": Key(
+            True, env="AGENOTE_INJECTION_ENABLED",
+            comment="注入总开关（false 时 context 输出零字节；json status=disabled）",
+        ),
+        "default_budget": Key(
+            4000, env="AGENOTE_INJECTION_DEFAULT_BUDGET",
+            comment="context 默认输出预算（恒为字符，非 token；codex 等按宿主折算在注入器侧）",
+        ),
+        "session_cumulative_budget": Key(
+            24000, env="AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET",
+            comment="追加型注入器单会话累计注入预算（超限停 recall；SessionStart/compact 重置）",
+        ),
+        "recall_topk": Key(
+            5, env="AGENOTE_INJECTION_RECALL_TOPK",
+            comment="recall 模式返回条数上限",
+        ),
+        "recall_min_score": Key(
+            1.0, env="AGENOTE_INJECTION_RECALL_MIN_SCORE",
+            comment="BM25 分数下限（低于不输出）。初值占位：W1 验收对真实语料抽样标定后更新"
+            "（CJK n-gram 语料 BM25 可到数十，过低形同虚设）",
+        ),
+        "recall_min_query": Key(
+            6, env="AGENOTE_INJECTION_RECALL_MIN_QUERY",
+            comment="recall 有效 query 最短字符数（「继续/ok」类短 prompt 不注入；注入器预检同款）",
+        ),
+        "session_f_topk": Key(
+            8, env="AGENOTE_INJECTION_SESSION_F_TOPK",
+            comment="session 模式 F 类初始候选数（超预算仍按 R→F→P→E→U 裁剪）",
+        ),
+        "types_default": Key(
+            "U,F,P,E,R", env="AGENOTE_INJECTION_TYPES_DEFAULT",
+            comment="context 默认类型集（逗号分隔；U 画像/F 反馈/P 项目/E 环境/R 参考）",
+        ),
+    },
+    "injection.hosts": {
+        # per-host 平铺语义开关（预算不在此节：单次预算由注入器显式传参，
+        # 会话累计预算是全局键——三个数字三种语义各自唯一落点）。
+        # generic 宿主无专属键，恒走默认值。
+        "zcode_enabled": Key(
+            True, env="AGENOTE_INJECTION_HOSTS_ZCODE_ENABLED", comment="zcode 注入开关",
+        ),
+        "claude_enabled": Key(
+            True, env="AGENOTE_INJECTION_HOSTS_CLAUDE_ENABLED", comment="claude-code 注入开关",
+        ),
+        "codex_enabled": Key(
+            True, env="AGENOTE_INJECTION_HOSTS_CODEX_ENABLED", comment="codex 注入开关",
+        ),
+        "pi_enabled": Key(
+            True, env="AGENOTE_INJECTION_HOSTS_PI_ENABLED", comment="pi/omp 注入开关",
+        ),
+        "opencode_enabled": Key(
+            True, env="AGENOTE_INJECTION_HOSTS_OPENCODE_ENABLED", comment="opencode 注入开关",
+        ),
+        "hermes_enabled": Key(
+            True, env="AGENOTE_INJECTION_HOSTS_HERMES_ENABLED", comment="hermes 注入开关",
+        ),
+    },
     "reconcile": {
         "min_fact_len": Key(15, comment="事实最短长度（更短视为噪声，dream 同用）"),
         "noise_scan_chars": Key(250, comment="噪声标记扫描窗口（USER 提问区字符数）"),
