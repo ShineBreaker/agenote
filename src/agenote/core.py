@@ -443,7 +443,7 @@ def _init_memory_template_for_ctx(ctx: "KBContext") -> None:
         sections.append("2. feedback 记录用户的行为偏好和工作癖好")
     else:
         sections.append("2. feedback 记录用户对 agent 工作方式的偏好")
-    sections.append("3. project 记忆按项目拆分为独立文件，通过路径/名称检索")
+    sections.append("3. project 节索引行登记项目（PATH/FILE），条目以 :PROJECT: 分区键按工作区隔离")
     sections.append("4. 记忆是时间点观察，不是实时状态——引用前先验证")
     sections.append("#+END_COMMENT")
     for sec in MEMORY_SECTIONS:
@@ -526,7 +526,7 @@ VALID_STATUSES = {"done", "stable", "stale", "archived"}
 
 def touch_card(
     filepath: Path, field: str = "LAST_USED", ctx: "KBContext | None" = None,
-    session: str | None = None,
+    session: str | None = None, count: bool = True,
 ) -> None:
     """更新卡片 PROPERTIES 中的指定时间戳字段，同步更新 index.json。
 
@@ -536,6 +536,9 @@ def touch_card(
         ctx: 知识库上下文（None 时用 default_context）
         session: 会话幂等键（S3）。同卡同 session 首次 USAGE_COUNT+1，
             重复调用只刷时间戳；None 时保持旧语义（每次调用 +1）。
+        count: 是否递增 USAGE_COUNT。cmd_touch 默认路径连续调两次
+            （LAST_USED + LAST_VERIFIED），第二次必须 count=False，
+            否则单次 touch 无 session 时 +2。
     """
     ctx = ctx or default_context()
     if not filepath.exists():
@@ -551,13 +554,13 @@ def touch_card(
     counted = _touch_session_counted(ctx, filepath.name, session) if session else False
     ts = f"[{now()}]"
     content = set_org_prop(content, field, ts)
-    if not counted:
+    if count and not counted:
         # 递增 USAGE_COUNT（留痕核心：每次 touch 表示该卡片被实际使用）
         try:
-            count = int(parse_org_prop(content, "USAGE_COUNT") or 0) + 1
+            new_count = int(parse_org_prop(content, "USAGE_COUNT") or 0) + 1
         except ValueError:
-            count = 1
-        content = set_org_prop(content, "USAGE_COUNT", str(count))
+            new_count = 1
+        content = set_org_prop(content, "USAGE_COUNT", str(new_count))
     original = filepath.read_bytes()
     original_index = ctx.index.read_bytes() if ctx.index.exists() else None
     try:
@@ -575,7 +578,7 @@ def touch_card(
                 f"touch 回滚失败（{', '.join(failures)}）"
             ) from exc
         raise
-    if session and not counted:
+    if session and count and not counted:
         _touch_session_record(ctx, filepath.name, session)
 
 

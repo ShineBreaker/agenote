@@ -793,7 +793,8 @@ def cmd_touch(args: argparse.Namespace, ctx=None) -> None:
             touch_card(card, "LAST_USED", ctx, session=session)
         else:
             touch_card(card, "LAST_USED", ctx, session=session)
-            touch_card(card, "LAST_VERIFIED", ctx, session=session)
+            # 第二次只刷时间戳不计数——否则无 session 时单次 touch 计两次使用
+            touch_card(card, "LAST_VERIFIED", ctx, session=session, count=False)
     except BaseException as exc:
         originals[ctx.index] = original_index
         failures = restore_text_files(originals)
