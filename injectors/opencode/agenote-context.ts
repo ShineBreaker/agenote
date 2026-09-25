@@ -83,19 +83,21 @@ function kbFingerprint(): string {
 }
 
 // `agenote context --mode session`（缺失/失败/非 ok 一律空串 = 不注）
+// argv 全静态字面量；预算经 env 传递（AGENOTE_INJECTION_DEFAULT_BUDGET，
+// 值已被上面的正则锁为纯数字），杜绝动态值被 argparse 当额外选项的窗口。
 function contextContent(): string {
   try {
     const out = spawnSync(
       "agenote",
-      [
-        "context", "--mode", "session",
-        "--budget", String(BRIEF_BUDGET),
-        "--host", "opencode", "--format", "json",
-      ],
+      ["context", "--mode", "session", "--host", "opencode", "--format", "json"],
       {
         encoding: "utf-8",
         timeout: CLI_TIMEOUT_MS,
-        env: { ...process.env, AGENOTE_AGENT: "opencode" },
+        env: {
+          ...process.env,
+          AGENOTE_AGENT: "opencode",
+          AGENOTE_INJECTION_DEFAULT_BUDGET: String(BRIEF_BUDGET),
+        },
       },
     );
     const data = JSON.parse((out.stdout || "") || "{}");
