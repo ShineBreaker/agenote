@@ -10,12 +10,21 @@
 //
 // 本模块只做「事件触发」——检测到信号就往会话里投一条提示，具体怎么做由
 // agent 按 agenote-review / agenote-curator skill 决定。行为规范不在代码里重复。
+//
+// 投递语义（DSH 三条通道，见 README「设计要点」）：
+//   - 健康度摘要 → system-prompt section：静态背景知识，随请求进入 system prompt。
+//     关键区别：它不唤醒 driver、不产生 turn——`agent/created` 时用 followup() 投
+//     会让插件在用户开口前替用户"发言"，driver 被唤醒后模型把摘要当指令处理并
+//     回复，表现为"新会话一打开 agent 就自说自话"（已修）。
+//   - review/curate 提示 → agent.followup()：这才是"要 agent 立即执行任务"的场景，
+//     等价 pi 的 sendUserMessage({deliverAs:'followUp'})。
 
 import { createUserMessage, healthSummary, runKb } from "./lib.js";
 
 export const name = "agenote-hooks";
 
-const INJECT = [];
+/** system-prompt 里的 section 名。 */
+const SECTION_NAME = "agenote-health-summary";
 
 /**
  * 任务完成信号（取自 agenote-review skill references/triggers.md — 单一真相源）。
@@ -48,6 +57,8 @@ export const COMPLETION_SIGNALS = [
 const DEBOUNCE_MS = 5 * 60 * 1000;
 /** 空闲兜底：turn 结束后静置超过此时长且本会话从未触发过 → 触发一次（覆盖无人值守）。 */
 const IDLE_FALLBACK_MS = 5 * 60 * 1000;
+/** 健康度摘要缓存时长：system prompt 每个请求都拼装，摘要无需每步重算。 */
+const STATUS_TTL_MS = 5 * 60 * 1000;
 /** 本插件注入提示的标记——用于排除自注入消息，断开自触发反馈环。 */
 export const HOOK_MARKER = "<agenote-hook>";
 
@@ -93,7 +104,7 @@ export function extractText(content) {
 function normalize(cfg = {}) {
   return {
     enabled: cfg.enabled ?? true,
-    /** 会话开始注入健康度摘要 */
+    /** system prompt 注入健康度摘要 */
     status: cfg.status ?? true,
     /** 完成信号 → 注入 review 提示 */
     completionSignals: cfg.completionSignals ?? true,
@@ -121,10 +132,9 @@ function normalize(cfg = {}) {
  * 并唤醒 driver（"an idle driver starts a turn"），语义等同 pi 的
  * sendUserMessage({deliverAs:'followUp'})。
  *
- * 这里刻意不用 agent.steer()：steer 只作用于"最近的 step"，而本模块的两个触发点
- * 都没有待执行的 step（turn-stopping 时 turn 已收尾、agent/created 时会话刚起），
- * 用 steer 会把消息停在 inbox 里等下一次唤醒。agent.inject() 同理不适用——它不唤醒
- * driver。
+ * 这里刻意不用 agent.steer()：steer 只作用于"最近的 step"，而本模块的投递点
+ * （turn-stopping 时 turn 已收尾）都没有待执行的 step，用 steer 会把消息停在
+ * inbox 里等下一次唤醒。agent.inject() 同理不适用——它不唤醒 driver。
  *
  * 消息 source 标为 plugin：既便于用户分辨"这不是我说的话"，也让
  * 'agent/inbox/inserted' 侧能干净地区分自注入。
@@ -141,6 +151,30 @@ function deliver(agent, text, plugin = "agenote-hooks") {
 export function apply(ctx, config = {}) {
   const cfg = normalize(config);
   if (!cfg.enabled) return;
+
+  // ── 健康度摘要 → system-prompt section ──
+  // system prompt 每个请求都重新拼装，text 回调若每次 spawnSync 会把子进程
+  // 开销叠加到每个 step——加 TTL 缓存，摘要本就是粗粒度状态，无需每步新鲜。
+  if (cfg.status) {
+    let cached = "";
+    let cachedAt = 0;
+    ctx.systemPrompt.section({
+      name: SECTION_NAME,
+      order: 10300,
+      interpolate: false,
+      text: () => {
+        const now = Date.now();
+        if (now - cachedAt < STATUS_TTL_MS) return cached;
+        try {
+          cached = healthSummary(runKb);
+        } catch {
+          cached = "";
+        }
+        cachedAt = now;
+        return cached;
+      },
+    });
+  }
 
   // ── 每会话触发状态 ──
   // 用 Map<sessionId, state> 而非模块级标量：一个进程里可以并存多个会话
@@ -174,7 +208,7 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  // ── 'agent/created'：会话进入 —— 重置状态 + 注入健康度摘要 ──
+  // ── 'agent/created'：会话进入 —— 重置状态 ──
   // 必须重置：agent 可能在 resumed/clear/compact 后复用同一 session id，
   // 上一轮的 timer 与 signalFired 不能带到新会话。
   ctx.on("agent/created", ({ agent }) => {
@@ -187,14 +221,6 @@ export function apply(ctx, config = {}) {
     state.toolActivity = false;
     state.lastUserText = "";
     state.selfInjected = false;
-
-    if (!cfg.status) return;
-    try {
-      const summary = healthSummary(runKb);
-      if (summary.length > 0) deliver(agent, summary, "agenote-status");
-    } catch (error) {
-      ctx.logger.warn(`agenote-hooks: 状态注入失败: ${String(error)}`);
-    }
   });
 
   // ── 'agent/inbox/inserted'：记住最近一条用户消息 ──
@@ -292,5 +318,3 @@ export function apply(ctx, config = {}) {
     sessions.delete(id);
   });
 }
-
-export { INJECT };

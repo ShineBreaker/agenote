@@ -13,9 +13,9 @@ import * as hooks from "./hooks.js";
 
 export const name = "dsh-agenote";
 
-// hooks 半边只用 ctx.on/ctx.logger（框架自带，无需 inject）；
+// hooks 半边需要 systemPrompt 服务（健康度摘要走 system-prompt section）；
 // commands 半边需要 commands 服务。
-export const inject = commands.inject;
+export const inject = ["systemPrompt", "commands"];
 
 export function apply(ctx, config = {}) {
   hooks.apply(ctx, config.hooks ?? {});
