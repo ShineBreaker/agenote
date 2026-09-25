@@ -144,6 +144,23 @@ def test_reconcile_empty_source_keeps_orphans(tmp_path, monkeypatch):
     assert len(reconcile.load_reconcile_facts()) == 2
 
 
+def test_reconcile_errors_block_index_write(tmp_path, monkeypatch):
+    """S5 旧语义回归：extractor 报错 → errors>0 → 索引文件字节不变（拒绝落盘）。"""
+    _redirect(tmp_path, monkeypatch)
+    _write_index(tmp_path, [_fact(0, "host-spawn")])
+    index_path = tmp_path / ".reconcile" / "index.json"
+    before = index_path.read_bytes()
+
+    def boom():
+        raise RuntimeError("RUNTIME_REAL_9a2c")
+
+    with patch.object(reconcile, "_known_extractors", lambda: {"fake": boom}):
+        rep = reconcile.reconcile_source("fake")
+    assert rep.errors == 1
+    assert "RUNTIME_REAL_9a2c" not in "\n".join(rep.error_details)  # 错误边界不泄原文
+    assert index_path.read_bytes() == before
+
+
 def test_reconcile_prune_orphans_clears(tmp_path, monkeypatch):
     """--prune-orphans 显式清理 orphan 旧事实，水位归零。"""
     _redirect(tmp_path, monkeypatch)

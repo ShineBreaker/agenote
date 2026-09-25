@@ -11,6 +11,12 @@ import types
 
 REQUIRED_LIST_KEYS = {"id", "title", "category", "created"}
 
+# S10 完整旧字段集（agenote-el 渲染与用户脚本的事实契约）：只增不改，缺一即破坏
+LEGACY_LIST_KEYS = {
+    "id", "title", "category", "type", "tech", "owner",
+    "created", "status", "last_used", "usage_count", "source_agent", "file",
+}
+
 CARD = """* DONE workflow notes
 :PROPERTIES:
 :ID:       20260101-000001
@@ -59,7 +65,9 @@ def test_list_json_keys_only_grow(monkeypatch, capsys):
     cards.cmd_list(args, ctx=None)
     rows = json.loads(capsys.readouterr().out)
     assert len(rows) == 1
-    assert REQUIRED_LIST_KEYS <= set(rows[0])  # 必需键存在；新增键允许
+    assert REQUIRED_LIST_KEYS <= set(rows[0])  # el 明面契约 4 键
+    assert LEGACY_LIST_KEYS <= set(rows[0])  # 完整旧 12 键（含 tech/owner 等非 el 依赖键）
+    assert "last_verified" in rows[0]  # S10 增补键在位
 
 
 def test_search_json_freshness_opt_in(tmp_path, monkeypatch, capsys):

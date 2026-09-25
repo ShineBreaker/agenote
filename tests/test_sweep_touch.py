@@ -109,6 +109,21 @@ def test_sweep_apply_demotes_and_refreshes_verified(kb, capsys):
     assert parse_org_prop(untouched, "STATUS") == "done"
 
 
+def test_sweep_apply_dies_without_writes_when_candidate_missing(kb, capsys):
+    """候选卡在应用时缺失：die 于准备阶段，任何卡片都不落半更新（先备后写）。"""
+    _sweep_ctx(kb)
+    # 候选 000001 的卡片文件在索引建成后消失（索引仍引用它）
+    (kb.experiences / "general" / "20260101-000001-note-general.org").unlink()
+    with pytest.raises(SystemExit):
+        cards_mod.cmd_sweep(_args(apply=True, json=False), kb)
+    captured = capsys.readouterr()
+    out = captured.out + captured.err
+    assert "20260101-000001" in out  # die 消息指名缺失候选
+    # 另一候选 000003 字节未动（未进入写阶段）
+    content = (kb.experiences / "general" / "20260101-000003-note-general.org").read_text(encoding="utf-8")
+    assert parse_org_prop(content, "STATUS") == "stable"
+
+
 # ── S3 ──
 
 def test_touch_same_session_counts_once(kb, monkeypatch, capsys):
