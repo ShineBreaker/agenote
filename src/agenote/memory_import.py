@@ -268,12 +268,17 @@ def run_import(source: str = "all", dry_run: bool = False, ctx=None) -> dict:
 
 
 def _write_entries(cands: list[dict], ctx) -> None:
-    """候选追加进 MEMORY.org 对应节（复用 N1 id/节定位逻辑）。"""
+    """候选追加进 MEMORY.org 对应节（复用 N1 id/节定位逻辑）。
+
+    属性契约（C7 P1）：ORIGIN_PATH 落盘供 N4 孤儿检测；E 条目补 MACHINE
+    供 N5 切机批量重验——缺了这两项，import 产物在重验面上是盲区。
+    """
     if not cands:
         return
     from agenote.core import _init_memory_template_for_ctx
     from agenote.memory import (
-        _find_section_end, _next_memory_id, _parse_memory_sections, _read_memory_org_text,
+        _find_section_end, _next_memory_id, _parse_memory_sections,
+        _read_memory_org_text, resolve_machine_key,
     )
 
     if not ctx.memory_org.exists():
@@ -291,11 +296,16 @@ def _write_entries(cands: list[dict], ctx) -> None:
             new_id, secs = f"{cand['type']}001", "\n".join(lines)
             lines = (secs + f"\n* {want}\n").split("\n")
             at = len(lines)
+        extra = ""
+        if cand["path"]:
+            extra += f"   :ORIGIN_PATH: {cand['path']}\n"
+        if cand["type"] == "E":
+            extra += f"   :MACHINE:  {resolve_machine_key()}\n"
         block = (f"\n** {new_id} {cand['title']}\n   :PROPERTIES:\n"
                  f"   :CREATED:  [{today()}]\n   :UPDATED:  [{today()}]\n"
                  f"   :TYPE:     {cand['type']}\n   :SCOPE:    {cand['scope']}\n"
                  f"   :ORIGIN_ID: {cand['origin_id']}\n"
-                 f"   :ORIGIN_AGENT: {cand['source']}\n   :END:\n")
+                 f"   :ORIGIN_AGENT: {cand['source']}\n{extra}   :END:\n")
         if cand["body"].strip():
             block += f"   {cand['body'].strip()}\n"
         lines.insert(at, block)

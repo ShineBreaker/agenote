@@ -771,6 +771,11 @@ def _memory_revalidate(ctx=None) -> None:
         if exp is not None and (datetime.now().date() - exp).days >= 0:
             hits.append((e["id"], e["title"], "expired"))
             continue
+        # 孤儿：import 条目查 ORIGIN_PATH（_entry_orphan 单一口径），
+        # project 索引行查 PATH/FILE——两形态互补，接通 N4 对 import 产物的检测
+        if _entry_orphan(e):
+            hits.append((e["id"], e["title"], "orphan"))
+            continue
         if e["kind"] == "index":
             target = (props.get("PATH") or props.get("FILE") or "").strip()
             if target and not Path(target).expanduser().exists():

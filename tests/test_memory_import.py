@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import re
 import types
 
 import agenote.memory_import as mi
@@ -50,6 +51,16 @@ name: {name}
 description: {desc}
 metadata:
   type: feedback
+---
+
+{body}
+"""
+
+FM_E = """---
+name: {name}
+description: {desc}
+metadata:
+  type: environment
 ---
 
 {body}
@@ -150,6 +161,49 @@ def test_import_rejects_projection_marker_reasonix_tail(tmp_path, monkeypatch):
     rep = run_import("zcode", ctx=ctx)
     assert rep["imported"] == []
     assert rep["skipped"][0]["reason"] == "echo"
+
+
+def test_import_writes_origin_path_and_machine(tmp_path, monkeypatch):
+    """import 产物补 N4/N5 属性：ORIGIN_PATH 落盘、E 条目带 MACHINE。"""
+    _src(monkeypatch, tmp_path, {
+        "projects/p/memory/code-review.md": FM.format(
+            name="代码评审要跑完整测试套件",
+            desc="评审流程记忆",
+            body="代码评审的时候必须运行完整的测试套件来验证所有的修改内容没有破坏现有功能。"),
+        "projects/p/memory/env-note.md": FM_E.format(
+            name="本机内核版本与驱动布局说明",
+            desc="环境",
+            body="当前机器的内核版本为定制构建，驱动目录布局与上游发行版默认布局不同，排查硬件问题时要先确认。"),
+    })
+    from agenote.memory import resolve_machine_key
+
+    ctx = _ctx(tmp_path, monkeypatch=monkeypatch)
+    run_import("zcode", ctx=ctx)
+    text = ctx.memory_org.read_text(encoding="utf-8")
+    assert ":ORIGIN_PATH:" in text
+    assert f"{tmp_path / 'srcmem' / 'projects/p/memory/code-review.md'}" in text
+    assert ":MACHINE:" in text
+    m = re.search(r":MACHINE:\s+(\S+)", text)
+    assert m and m.group(1) == resolve_machine_key()
+
+
+def test_import_orphan_detected_after_source_removal(tmp_path, monkeypatch, capsys):
+    """N4 接通：import 条目的源文件消失后，--revalidate 列为 orphan。"""
+    root = _src(monkeypatch, tmp_path, {
+        "projects/p/memory/code-review.md": FM.format(
+            name="代码评审要跑完整测试套件",
+            desc="评审流程记忆",
+            body="代码评审的时候必须运行完整的测试套件来验证所有的修改内容没有破坏现有功能。"),
+    })
+    ctx = _ctx(tmp_path, monkeypatch=monkeypatch)
+    run_import("zcode", ctx=ctx)
+    (root / "projects/p/memory/code-review.md").unlink()
+
+    from agenote.memory import _memory_revalidate
+
+    _memory_revalidate(ctx)
+    out = capsys.readouterr().out
+    assert "orphan" in out and "代码评审要跑完整测试套件" in out
 
 
 def test_import_secret_blocked_no_value_leak(tmp_path, monkeypatch):
