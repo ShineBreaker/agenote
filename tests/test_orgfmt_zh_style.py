@@ -59,6 +59,17 @@ def test_r3_no_space_before_punct():
     assert _zh("使用MySQL。") == "使用 MySQL。"
 
 
+def test_r3_spares_config_key_and_enum():
+    # 与 tools/doc-punct.py 同口径：这些位置的空格由语法/约定决定
+    assert _zh("在 NM [connection]段写默认") == "在 NM [connection]段写默认"
+    assert _zh("2=disable省电 3=enable省电") == "2=disable省电 3=enable省电"
+
+
+def test_r3_spares_leading_markup():
+    # 行首标记/链接语法之后不补空格（半角转全角归 doc-punct，orgfmt 不做）
+    assert _zh("- **桌面**:变体") == "- **桌面**:变体"
+
+
 def test_r3_idempotent():
     once = _zh("这个数据库有不错的MySQL兼容性")
     assert _zh(once) == once
@@ -76,6 +87,16 @@ def test_r4_dash_spacing():
 
 def test_r5_ellipsis():
     assert _zh("使用 so...that... 句型") == "使用 so……that…… 句型"
+
+
+def test_r5_spares_version_numbers():
+    # 版本号/范围：三点两侧是数字，不动
+    assert _zh("版本 v1.2.3 与 v2...v3 范围") == "版本 v1.2.3 与 v2...v3 范围"
+
+
+def test_r5_spares_table_truncation():
+    # 表格截断标记不动
+    assert _zh("| a | b... |") == "| a | b... |"
 
 
 # ── R6 连续感叹号 ──────────────────────────────────────────────────────────

@@ -761,6 +761,8 @@ _ZH_PUNCT = "，。！？；：、（）【】《》〈〉「」『』…—"
 # 不含 U+3000 全角空格本身（它已被 R1 转成半角）。
 _CJK_HAN = "\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff"
 _LATIN_CHAR = re.compile(r"[A-Za-z0-9]")
+_CJK_HAN_RE = re.compile(f"[{_CJK_HAN}]")
+_LATIN = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
 # 单位符号集合：数值后接这些字母时应补空格
 _UNIT_TOKENS = (
@@ -936,15 +938,47 @@ def _fix_zh_latin_spacing(line: str, idx: int) -> tuple[str, list[str]]:
     顿号不作为边界：「3、5、7」是并列数字，顿号两侧不补空格。
     """
     changes: list[str] = []
-    new = line
-    # 汉字 后接 英文/数字：字 → A
-    new2 = re.sub(f"([{_CJK_HAN}])(?=[A-Za-z0-9])", r"\1 ", new)
-    # 英文/数字 后接 汉字：A → 字
-    new2 = re.sub(f"(?<=[A-Za-z0-9])([{_CJK_HAN}])", r" \1", new2)
-    if new2 != new:
-        changes.append(f"  行 {idx + 1}: 中英文之间补空格")
-        new = new2
+    # 逐位扫描而不是整行 regex sub：需要按位置判断是否该跳过
+    # （行首标记后、配置项名后、枚举值后），见 _skip_zh_latin_at。
+    out: list[str] = []
+    n = len(line)
+    for i, ch in enumerate(line):
+        if i + 1 < n and _CJK_HAN_RE.match(ch) and line[i + 1] in _LATIN:
+            if not _skip_zh_latin_at(line, i):
+                out.append(ch)
+                out.append(" ")
+                changes.append(f"  行 {idx + 1}: 中英文之间补空格")
+                continue
+        if i > 0 and _CJK_HAN_RE.match(ch) and line[i - 1] in _LATIN:
+            if not _skip_zh_latin_at(line, i - 1) and not (
+                out and out[-1] == " "
+            ):
+                out.append(" ")
+                out.append(ch)
+                changes.append(f"  行 {idx + 1}: 中英文之间补空格")
+                continue
+        out.append(ch)
+    new = "".join(out)
     return new, changes
+
+
+def _skip_zh_latin_at(line: str, i: int) -> bool:
+    """中英补空格在第 i 位是否该跳过。
+
+    与 tools/doc-punct.py 的同名规则保持同样口径：这些位置的空格由语法、
+    对齐或约定决定，补了反而破坏内容。
+    """
+    head = line[:i]
+    # 行首标记 / 链接语法之后：- **、# 、[ 、= 、~ 、( 、> 等
+    if re.search(r"(\*+|\#+|\[|=|~|\(|（|>|-)$", head):
+        return True
+    # 配置项名之后：[connection]段
+    if re.search(r"\[[\w.\-]+\]$", head):
+        return True
+    # 枚举值之后：0=NM默认 / 2=disable省电
+    if re.search(r"=\s*[A-Za-z0-9._-]+$", head):
+        return True
+    return False
 
 
 # ── R4: 破折号 —— 两侧空格 ─────────────────────────────────────────────────
@@ -968,13 +1002,33 @@ def _fix_ellipsis(line: str, idx: int) -> tuple[str, list[str]]:
 
     上游规范：「中文语境中禁止使用英文省略号，即三个小圆点」。
     同时处理 ASCII 三点「...」与 U+2026 单字符「…」。
+
+    跳过：版本号与版本范围（v1.2.3 / v1...v2）——三点两侧挨着**数字**时是
+    技术内容；`so...that...` 这类英文句型省略两侧是单词，仍要转。
+    表格截断标记（行首 | 时整行不动，见 _zh_style 守卫）。
+    与 tools/doc-punct.py 的同名规则保持同样口径。
     """
     if "..." not in line and "…" not in line:
         return line, []
-    new = re.sub(r"(?:\.{3,}|…+)", "……", line)
-    if new == line:
+    changes: list[str] = []
+    out: list[str] = []
+    pos = 0
+    for m in re.finditer(r"(?:\.{3,}|…+)", line):
+        s, e = m.span()
+        before = line[s - 1] if s > 0 else " "
+        after = line[e] if e < len(line) else " "
+        if before.isdigit() or after.isdigit():
+            out.append(line[pos:e])  # 版本号/范围：原样
+        else:
+            out.append(line[pos:s])
+            out.append("……")
+            changes.append(f"  行 {idx + 1}: 英文省略号 → 中文省略号")
+        pos = e
+    out.append(line[pos:])
+    new = "".join(out)
+    if not changes:
         return line, []
-    return new, [f"  行 {idx + 1}: 英文省略号 → 中文省略号"]
+    return new, changes
 
 
 # ── R6: 连续感叹号 → 单个 ──────────────────────────────────────────────────

@@ -15,6 +15,10 @@
 
 - `_normalize_blank_lines` 状态机漏掉文件首行：状态更新整块在 `if out:` 内，导致以 `:PROPERTIES:` 或 `#+begin_src` 开头的文件状态永不置位，drawer 内被插入空行。状态推进抽为 `_advance_blank_state()` 纯函数，首行走同一路径。
 - `_classify_line` 不识别 markdown ``` 围栏：非 strict 模式下围栏内容被当 normal 段落，行间被插入空行。新增 `md_fence` 行类型与 `in_fence` 状态跟踪。
+- orgfmt 与 Guix-configs `tools/doc-punct.py` 的重叠规则口径不一致（两工具交替使用时结果不同）：
+  - 省略号原先一刀切转，会把 `v1.2.3`、`v2...v3` 版本号/范围误转；改为三点两侧挨数字时跳过（`so...that...` 这类句型省略两侧是单词，仍转）。
+  - 中英补空格原先只跳表格行，会在 `[connection]段`、`0=disable省电`、行首标记后误插空格；逐位扫描 + `_skip_zh_latin_at()` 位置判断，与 doc-punct 同口径。
+- 注：`tools/doc-punct.py`（Guix-configs）另有一批 orgfmt 未覆盖的规则——半角 `,;:?!` 转全角、括号按内容判全半角、行内代码/URL/`{{}}` 保护、`主:次` 字段不转、单个一字线连接号不碰。两者职责不同（doc-punct 服务仓库文档的半角→全角，orgfmt 服务 org 结构化格式化），不合并。
 
 ## [0.2.0.1] - 2026-09-25
 
