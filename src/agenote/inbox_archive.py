@@ -217,12 +217,26 @@ def cmd_inbox_archive(args: argparse.Namespace, ctx: "KBContext | None" = None) 
     reserved: set[Path] = set()
 
     # 先解析并准备整批；写阶段不再解析输入或输出成功路径。
+    from agenote.core import _secret_scan_enabled, scan_secret_categories
+
+    allow_secret = getattr(args, "allow_secret", False)
+    scan_on = _secret_scan_enabled() and not allow_secret
     for entry in entries:
         if not isinstance(entry, dict):
             print(f"跳过非对象条目: {entry!r}", file=sys.stderr)
             continue
         heading = entry.get("heading") or ""
         body = entry.get("body") or ""
+        # 写入侧 secret 门禁（同 add/memory --add 清单）：归档进 SSOT 的卡片
+        # 会被检索/注入通道带出。单条命中只跳过该条，不阻断整批。
+        cats = scan_secret_categories(f"{heading}\n{body}") if scan_on else []
+        if cats:
+            print(
+                f"跳过命中 secret 类别 {', '.join(cats)} 的条目: "
+                f"{heading[:60]}（不回显值；如需保留请加 --allow-secret）",
+                file=sys.stderr,
+            )
+            continue
         ts_id = timestamp_id()
         slug = slugify_heading(heading)
         filename = f"{ts_id}-{slug}.org"

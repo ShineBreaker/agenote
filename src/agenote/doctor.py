@@ -142,11 +142,60 @@ def _check_kb(ctx) -> dict:
     }
 
 
+def _check_kb_secrets() -> dict:
+    """事后审计：SSOT 高流量面上是否已混入密钥形态内容。
+
+    写侧门禁（add/memory --add/inbox-archive/update）只拦新增；存量文件
+    （门禁前写入/手工编辑）靠本项兜底发现——MEMORY.org 经 context 注入
+    每轮外发、卡片经 git 随库同步，泄漏面都不小。只报类别与文件名，
+    不回显值。
+    """
+    from agenote.core import scan_secret_categories
+
+    hits: list[str] = []
+    cats_seen: set[str] = set()
+    scanned = 0
+    for ctx in (default_context(), agenote_context()):
+        targets = [ctx.memory_org, ctx.memory_archive, ctx.inbox]
+        if ctx.experiences.exists():
+            targets.extend(
+                p for p in sorted(ctx.experiences.rglob("*.org"))
+                if not p.is_symlink()
+            )
+        for p in targets:
+            if not p.exists() or p.is_symlink():
+                continue
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            scanned += 1
+            cats = scan_secret_categories(text)
+            if cats:
+                cats_seen.update(cats)
+                hits.append(f"{ctx.name}/{p.name}")
+    if not hits:
+        return {
+            "name": "kb-secrets",
+            "status": "ok",
+            "detail": f"KB 高流量面无密钥形态内容（扫描 {scanned} 个文件）",
+        }
+    preview = "、".join(hits[:5]) + ("…" if len(hits) > 5 else "")
+    return {
+        "name": "kb-secrets",
+        "status": "warn",
+        "detail": f"{len(hits)} 个文件命中 secret 类别 "
+                  f"（{', '.join(sorted(cats_seen))}）: {preview}",
+        "affects": "密钥可经 context 注入/export 投影外发；逐条人工裁决清理",
+    }
+
+
 def run_checks() -> list[dict]:
     checks = [_check_python(), _check_sqlite(), _check_config()]
     checks.extend(_check_external_tools())
     checks.append(_check_kb(default_context()))
     checks.append(_check_kb(agenote_context()))
+    checks.append(_check_kb_secrets())
     checks.extend(_host_memory_checks())
     return checks
 

@@ -38,9 +38,11 @@ from agenote.core import (
     timestamp_id,
     _build_template,
     ensure_dirs,
+    gate_secret_write,
     touch_card,
     safe_error_message,
     validate_category,
+    warn_secret_write,
     _resolve_card,
     default_context,
     agenote_context,
@@ -182,6 +184,13 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
     body = ""
     if use_stdin:
         body = sys.stdin.read()
+
+    # 写入侧 secret 门禁（与 import/export 同一清单）：卡片入 git 且可被
+    # 检索/注入通道带出，密钥落入 SSOT 后每轮上下文都有外发风险。
+    gate_secret_write(
+        f"{title}\n{summary}\n{body}", "卡片写入",
+        allow=getattr(args, "allow_secret", False),
+    )
 
     # ── 组装 Org 内容 ──────────────────────────────────────────────────────
     lines = []
@@ -476,6 +485,8 @@ def cmd_inbox(args: argparse.Namespace, ctx=None) -> None:
     if not content.strip():
         die("必须指定内容或通过 stdin 管道输入")
 
+    warn_secret_write(content, "捕获内容")
+
     ensure_dirs(ctx)
     ts = now()
     entry = f"\n** [{ts}] {content.strip()}\n"
@@ -705,8 +716,12 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
     if reclassify:
         content = _rebuild_fingerprint_line(content)
 
-    # 追加内容到指定章节
+    # 追加内容到指定章节（写入侧 secret 门禁与 add 同口径）
     if args.append_to and args.append_text:
+        gate_secret_write(
+            args.append_text, "卡片追加",
+            allow=getattr(args, "allow_secret", False),
+        )
         section = f"** {args.append_to}"
         if section in content:
             content = content.replace(
@@ -721,6 +736,10 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
     if args.stdin:
         extra = sys.stdin.read()
         if extra.strip():
+            gate_secret_write(
+                extra, "卡片追加",
+                allow=getattr(args, "allow_secret", False),
+            )
             content = content.rstrip("\n") + f"\n\n{extra.strip()}\n"
 
     original_index = ctx.index.read_bytes() if ctx.index.exists() else None

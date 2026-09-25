@@ -157,7 +157,12 @@ def _select_entries(args, entries: list[dict]) -> list[dict]:
 
     kind=index 的行（项目索引/PATH 指针）不投影：指针不是事实，
     投出去会被宿主当记忆事实读（设计 P2：索引行当事实投影）。
+    :SENSITIVITY: 非空的条目不离开 SSOT（与 context._load_entries 同口径）；
+    任意类型带 :PROJECT: 分区键的条目仅在 --project 命中其键时投影——
+    分区隔离不按类型豁免（import 会把源侧 projects/<slug> 落到非 P 条目）。
     """
+    from agenote.memory import project_key_matches  # lazy：与 memory 互引同因
+
     want_type = getattr(args, "type", None)
     want_scope = getattr(args, "scope", None)
     want_project = getattr(args, "project", None)
@@ -170,18 +175,25 @@ def _select_entries(args, entries: list[dict]) -> list[dict]:
             continue
         if e["kind"] == "index":
             continue
+        if (e["props"].get("SENSITIVITY") or "").strip():
+            continue
         if want_type and e["type"] != want_type:
             continue
         scope = (e["props"].get("SCOPE") or "").strip().lower()
         if want_scope and scope != str(want_scope).lower():
             continue
+        proj_key = (e["props"].get("PROJECT") or "").strip()
         if e["type"] == "P":
             if not want_project:
                 continue
-            props = e["props"]
-            hit = (props.get("PROJECT") == want_project or e["id"] == want_project
+            hit = (project_key_matches(proj_key, want_project)
+                   or e["id"] == want_project
                    or str(want_project) in e["title"])
             if not hit:
+                continue
+        elif proj_key:
+            # 非 P 的分区键条目：只在显式命中时投影（无 --project 一律不出）
+            if not want_project or not project_key_matches(proj_key, want_project):
                 continue
         rows.append(e)
     return rows

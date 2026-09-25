@@ -18,6 +18,7 @@ from agenote.core import (
     STALE_DAYS,
     die,
     ensure_dirs,
+    gate_secret_write,
     today,
     now,
     _init_memory_template_for_ctx,
@@ -154,6 +155,42 @@ ENTRY_BODY_SNIPPET_CHARS = 400
 def scope_for_type(mem_type: str) -> str:
     """类型 → 默认 SCOPE（E=machine，P=project，其余 user）。"""
     return SCOPE_FOR_TYPE.get(mem_type, "user")
+
+
+# zcode/reasonix 项目 slug 的「-<16hex>」工作区哈希后缀（projects/<slug>/memory）
+_PROJECT_HASH_SUFFIX = re.compile(r"-[0-9a-fA-F]{16}$")
+
+
+def project_key_matches(key: str, name: str) -> bool:
+    """``:PROJECT:`` 键（手写名或源 slug）与项目名的匹配判定。
+
+    slug 三形态（memscan 从 ``projects/<slug>/memory`` 提取）：
+
+    - 手写/扁平名 ``"agenote"`` → 精确等值；
+    - zcode/reasonix ``"agenote-<16hex>"`` → 去哈希后缀等值；
+    - claude ``"-home-u-proj"``（消毒绝对路径，非字母数字→-）→ 尾段链后缀
+      匹配（连字符项目名按段比，如 ``-home-u-agenote-pi`` 对 ``agenote-pi``
+      仍命中）。cwd 级别的精确判定另有 context 侧 sanitized-path 全等互补。
+    """
+    if not key or not name:
+        return False
+    if key == name:
+        return True
+    dehex = _PROJECT_HASH_SUFFIX.sub("", key)
+    if dehex != key and dehex == name:
+        return True
+    if key.startswith("-") and key.endswith("-" + name):
+        return True
+    return False
+
+
+def project_slug_of(entry: dict) -> str:
+    """规范化 memscan 条目携带的项目 slug；空值（扁平源/全局记忆）返回 ""。
+
+    slug 原样保留作 :PROJECT: 值——它是 workspace_identity 而非路径，
+    规范化（去哈希/解消毒路径）归匹配侧 project_key_matches，写入侧不改写。
+    """
+    return (entry.get("project") or "").strip()
 
 
 def origin_id(agent: str, relpath: str, title: str) -> str:
@@ -421,6 +458,7 @@ def _memory_list(args: argparse.Namespace, ctx=None) -> None:
              "kind": e["kind"], "section": e["section"], "scope": e["scope"],
              "hook": e["hook"], "validated_at": e["validated_at"],
              "orphan": e["orphan"],
+             "sensitive": bool((e["props"].get("SENSITIVITY") or "").strip()),
              "deprecated": e.get("section", "").lower() == "deprecated",
              **({"freshness": e.get("freshness", "")} if fresh_on else {})}
             for e in rows
@@ -437,6 +475,8 @@ def _memory_list(args: argparse.Namespace, ctx=None) -> None:
             details.append(f"scope={e['scope']}")
         if e["validated_at"]:
             details.append(f"validated={e['validated_at']}")
+        if (e["props"].get("SENSITIVITY") or "").strip():
+            details.append("sensitive")
         if e["orphan"]:
             details.append("orphan")
         if e.get("section", "").lower() == "deprecated":
@@ -531,6 +571,13 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
         else:
             die("添加记忆需要 --title")
 
+    # 写入侧 secret 门禁：MEMORY.org 经 context 注入每轮外发、经 export 投影
+    # 进宿主——直入 SSOT 绕过 import 门禁等于留缺口（与 add 同口径）。
+    gate_secret_write(
+        f"{title}\n{body}", "记忆条目写入",
+        allow=getattr(args, "allow_secret", False),
+    )
+
     if not ctx.memory_org.exists():
         _init_memory_template_for_ctx(ctx)
 
@@ -578,9 +625,14 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
     if mem_type == "E":
         # N5：E 条目记录所属机器键（切机检测用）；EXPIRES_AFTER 默认不写（空）
         entry_lines.append(f"   :MACHINE:  {resolve_machine_key()}")
-    if mem_type == "P" and project_name:
-        # 投影器 --project 按此属性命中（projector._select_entries）
+    if project_name:
+        # :PROJECT: 是作用域分区键，不限于 P 类——项目定向的 U/F/R 条目同样
+        # 只在对应项目上下文注入/投影（context/projector 统一门禁）。
         entry_lines.append(f"   :PROJECT:  {project_name}")
+    sensitivity = (getattr(args, "sensitivity", None) or "").strip()
+    if sensitivity:
+        # 任意非空值即受限：不进 context 简报、不进 export 投影（本地读取不受限）。
+        entry_lines.append(f"   :SENSITIVITY: {sensitivity}")
     if mem_type == "F" and getattr(args, "ref", None):
         entry_lines.append(f"   :REF:      {args.ref}")
     entry_lines.append("   :END:")
@@ -596,34 +648,36 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
 
 
 def _memory_touch(entry_id: str, ctx=None) -> None:
+    """使用留痕：刷 UPDATED + USAGE_COUNT 递增（与卡片 touch_card 同语义）。
+
+    UPDATED 继续承载「内容仍成立」的时效语义；USAGE_COUNT 单独记使用次数——
+    报告的 last_used_at/usage 信号由此与编辑时间分离。
+    """
     ctx = ctx or default_context()
-    """更新指定条目的 UPDATED 时间戳。"""
     if not ctx.memory_org.exists():
         die("记忆文件不存在")
 
     text = _read_memory_org_text(ctx)
     lines = text.split("\n")
 
-    # 找到条目位置
-    found = False
     for i, line in enumerate(lines):
-        if match_memory_entry(line, entry_id):
-            found = True
-            # 向下查找 :UPDATED: 属性行（orgserde 层改值，保留原缩进/间距）
-            for j in range(i + 1, min(i + 10, len(lines))):
-                new_line = set_memory_prop_line(lines[j], "UPDATED", today())
-                if new_line is not None:
-                    lines[j] = new_line
-                    break
-                if ":END:" in lines[j]:
-                    break
-            break
+        if not match_memory_entry(line, entry_id):
+            continue
+        end = i + 1
+        while end < len(lines) and not is_memory_boundary(lines[end]):
+            end += 1
+        block = _set_prop_in_block(lines[i:end], "UPDATED", today(), bracket=True)
+        try:
+            count = int(memory_prop(block, "USAGE_COUNT") or 0) + 1
+        except ValueError:
+            count = 1
+        block = _set_prop_in_block(block, "USAGE_COUNT", str(count))
+        lines[i:end] = block
+        atomic_write(ctx.memory_org, "\n".join(lines))
+        print(f"已更新 {entry_id} 时间戳 → {today()}（USAGE_COUNT {count}）")
+        return
 
-    if not found:
-        die(f"未找到条目: {entry_id}")
-
-    atomic_write(ctx.memory_org, "\n".join(lines))
-    print(f"已更新 {entry_id} 时间戳 → {today()}")
+    die(f"未找到条目: {entry_id}")
 
 
 def _memory_archive(entry_id: str, ctx=None) -> None:
@@ -652,8 +706,10 @@ def _memory_archive(entry_id: str, ctx=None) -> None:
             break
         entry_end += 1
 
-    # 提取条目文本
+    # 提取条目文本；deleted_at 墓碑时间戳与 archive_to_file 同口径——
+    # 入 deprecated 即终态删除，归档时点可追溯。
     entry_lines = lines[entry_start:entry_end]
+    entry_lines = _set_prop_in_block(entry_lines, "ARCHIVED_AT", now(), bracket=True)
 
     # 从原位置删除
     del lines[entry_start:entry_end]
@@ -894,9 +950,12 @@ def _memory_project(identifier: str, ctx=None) -> None:
     # 尝试匹配：1) 项目名  2) 路径前缀
     matched = None
 
-    # 按项目名匹配
+    # 按项目名匹配（含源 slug 双向判定：查 slug 命中索引行，查名命中 slug 条目）
     for entry_title, props in proj_entries:
-        if entry_title.strip() == identifier.strip():
+        t = entry_title.strip()
+        if (t == identifier.strip()
+                or project_key_matches(t, identifier.strip())
+                or project_key_matches(identifier.strip(), t)):
             matched = props
             break
 
@@ -1155,11 +1214,12 @@ def _memory_supersede(new_id: str, old_id: str, ctx=None) -> None:
     new_block = _set_prop_in_block(new_block, "VALIDATED_AT", today(), bracket=True)
     lines[ns:ne] = new_block
 
-    # 2) 旧条目：重定位后记 SUPERSEDED_BY，搬 deprecated（ mirrors _memory_archive）
+    # 2) 旧条目：重定位后记 SUPERSEDED_BY + ARCHIVED_AT 墓碑，搬 deprecated
     old_span = _find(old_id, lines)
     assert old_span is not None
     os_, oe = old_span
     old_block = _set_prop_in_block(lines[os_:oe], "SUPERSEDED_BY", new_id)
+    old_block = _set_prop_in_block(old_block, "ARCHIVED_AT", now(), bracket=True)
     del lines[os_:oe]
     sections = _parse_memory_sections("\n".join(lines))
     dep = next((ents[0] for name, ents in sections.items()

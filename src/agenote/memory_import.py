@@ -106,7 +106,7 @@ def normalize(entry: dict) -> dict:
     else:
         mem_type, review = _heuristic_type(entry.get("name", ""), entry.get("body", ""))
     # lazy：memory 薄转发循环依赖，helpers 在调用时导入
-    from agenote.memory import origin_id, scope_for_type
+    from agenote.memory import origin_id, project_slug_of, scope_for_type
 
     scope = scope_for_type(mem_type)
 
@@ -120,6 +120,9 @@ def normalize(entry: dict) -> dict:
         "type": mem_type,
         "scope": scope,
         "needs_review": review,
+        # 项目分区保留：memscan 提取的 projects/<slug> 落 :PROJECT:，
+        # 否则导入后条目丢失宿主侧的项目隔离（context/export 永不命中）。
+        "project": project_slug_of(entry),
         "origin_id": origin_id(entry.get("source", ""), rel, entry.get("name", "")),
     }
 
@@ -265,6 +268,7 @@ def run_import(source: str = "all", dry_run: bool = False, ctx=None) -> dict:
                          "scope": cand["scope"], "body": cand["body"]})
         report["imported"].append({"title": title, "type": cand["type"],
                                    "scope": cand["scope"], "origin_id": cand["origin_id"],
+                                   "project": cand["project"],
                                    "needs_review": cand["needs_review"]})
 
     if not dry_run:
@@ -307,6 +311,8 @@ def _write_entries(cands: list[dict], ctx) -> None:
         extra = ""
         if cand["path"]:
             extra += f"   :ORIGIN_PATH: {cand['path']}\n"
+        if cand["project"]:
+            extra += f"   :PROJECT:  {cand['project']}\n"
         if cand["type"] == "E":
             extra += f"   :MACHINE:  {resolve_machine_key()}\n"
         if cand["needs_review"]:

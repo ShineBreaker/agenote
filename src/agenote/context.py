@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from agenote.core import agenote_context, die
 from agenote.memory import (
     _iter_memory_entries,
     _read_memory_org_text,
+    project_key_matches,
     resolve_machine_key,
     scope_for_type,
 )
@@ -76,16 +78,19 @@ def _cfg_num(section: str, key: str, cast):
 
 
 def _load_entries(ctx, types_set: set[str]) -> list[dict]:
-    """读 MEMORY.org 类型化条目（deprecated 终态排除）。
+    """读 MEMORY.org 类型化条目（deprecated 终态与 :SENSITIVITY: 受限条目排除）。
 
     项目索引行（PATH 指针）保留——P 类路径匹配的载体；session/recall
-    选集阶段再按「指针不是事实」排除。
+    选集阶段再按「指针不是事实」排除。:SENSITIVITY: 非空的条目不离开
+    SSOT（不注入、不投影），与 projector._select_entries 同口径。
     """
     if not ctx.memory_org.exists():
         return []
     rows = []
     for e in _iter_memory_entries(_read_memory_org_text(ctx)):
         if e["section"].lower() == "deprecated":
+            continue
+        if (e["props"].get("SENSITIVITY") or "").strip():
             continue
         if e["type"] not in types_set:
             continue
@@ -112,20 +117,65 @@ def _entry_weight_key(e: dict):
     return ("", e["id"])
 
 
-def _match_project_entries(entries: list[dict], cwd: Path, project_arg: str | None) -> list[dict]:
-    """P 类确定性三步匹配（不做模糊最近邻——错误的项目记忆比没有更糟）：
+def _sanitize_workspace_path(p: Path) -> str:
+    """claude projects/<slug> 的 slug 生成式：非字母数字逐字符 → "-"。"""
+    return re.sub(r"[^A-Za-z0-9]", "-", str(p))
 
-    ①KB 内 P 条目/项目路径与 cwd 精确相等 → 命中；
-    ②cwd 的 git root basename 与 P 条目名（索引行 id / :PROJECT: / 标题）相等 → 命中；
-    ③都不中 → 返回空（简报不含 P 段，不猜）。
-    索引行（PATH 指针）参与路径匹配：索引行命中即项目命中，同项目名下的
-    P 条目（:PROJECT: 指针指向它）一并带出——指针不是事实，事实靠它定位。
+
+def _git_root_path(cwd: Path) -> Path | None:
+    """cwd 所在 git 仓库的工作区根（workspace_identity），不在仓库内返回 None。
+
+    与 basename 之别的关键：linked worktree 的 ``.git`` 是 gitfile
+    （``gitdir: <主仓>/.git/worktrees/<名>``），其目录名与主仓不同——
+    解析 gitfile 回到主仓根，使 worktree 与主仓共享同一项目身份
+    （workspace_identity 与 workspace_path 分离）；submodule gitfile
+    （.git/modules/ 布局）不解析，保留自身目录名。
+    """
+    try:
+        cur = cwd.resolve()
+    except OSError:
+        cur = cwd
+    for d in (cur, *cur.parents):
+        marker = d / ".git"
+        if marker.is_dir():
+            return d
+        if marker.is_file():
+            try:
+                text = marker.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                return d
+            m = re.match(r"\s*gitdir:\s*(.+)", text.strip())
+            if m:
+                gp = Path(m.group(1).strip())
+                if not gp.is_absolute():
+                    gp = (d / gp).resolve()
+                # worktree 布局 <main>/.git/worktrees/<name> → 主仓根
+                if gp.parent.name == "worktrees" and gp.parent.parent.name == ".git":
+                    return gp.parent.parent.parent
+            return d  # submodule/其他 gitfile：自身即项目根
+    return None
+
+
+def _git_root_name(cwd: Path) -> str:
+    """cwd 所在 git 仓库根的 basename（不在仓库内返回 ""）。"""
+    root = _git_root_path(cwd)
+    return root.name if root is not None else ""
+
+
+def _project_targets(
+    cwd: Path, project_arg: str | None
+) -> tuple[set[str], set[Path], set[str]]:
+    """当前项目上下文的三组判据：(候选名集合, 候选路径集合, sanitized 路径集合)。
+
+    sanitized 集合复刻 claude slug 生成式（``/a/b/proj`` → ``-a-b-proj``），
+    供 ``:PROJECT:`` 原始 slug 的路径级全等判定；git root 同时进两组判据，
+    使 cwd 在仓库子目录或 worktree 中同样命中。
     """
     try:
         cwd_resolved = cwd.resolve()
     except OSError:
         cwd_resolved = cwd
-    path_targets = {cwd_resolved}
+    path_targets: set[Path] = {cwd_resolved}
     name_targets: set[str] = set()
     if project_arg:
         name_targets.add(project_arg)
@@ -134,9 +184,33 @@ def _match_project_entries(entries: list[dict], cwd: Path, project_arg: str | No
                 path_targets.add(Path(project_arg).expanduser().resolve())
             except (OSError, RuntimeError):
                 pass
-    git_name = _git_root_name(cwd)
-    if git_name:
-        name_targets.add(git_name)
+    git_root = _git_root_path(cwd)
+    if git_root is not None:
+        name_targets.add(git_root.name)
+        path_targets.add(git_root)
+    slug_keys = {_sanitize_workspace_path(t) for t in path_targets}
+    return name_targets, path_targets, slug_keys
+
+
+def _project_prop_matches(proj: str, name_targets: set[str], slug_keys: set[str]) -> bool:
+    """:PROJECT: 值是否命中当前项目（名别名 + sanitized 路径全等）。"""
+    return (
+        any(project_key_matches(proj, n) for n in name_targets)
+        or proj in slug_keys
+    )
+
+
+def _match_project_entries(entries: list[dict], cwd: Path, project_arg: str | None) -> list[dict]:
+    """P 类确定性三步匹配（不做模糊最近邻——错误的项目记忆比没有更糟）：
+
+    ①KB 内 P 条目/项目路径与 cwd/git root 精确相等 → 命中；
+    ②cwd 的 git root basename 与 P 条目名（索引行 id / :PROJECT: / 标题）相等，
+      或 :PROJECT: 为源 slug（zcode 哈希尾缀 / claude 消毒路径）可判定 → 命中；
+    ③都不中 → 返回空（简报不含 P 段，不猜）。
+    索引行（PATH 指针）参与路径匹配：索引行命中即项目命中，同项目名下的
+    P 条目（:PROJECT: 指针指向它）一并带出——指针不是事实，事实靠它定位。
+    """
+    name_targets, path_targets, slug_keys = _project_targets(cwd, project_arg)
 
     def names_of(e: dict) -> set[str]:
         return {v for v in (e["id"], e["title"],
@@ -163,7 +237,10 @@ def _match_project_entries(entries: list[dict], cwd: Path, project_arg: str | No
     seen: set[int] = set()
     project_names: set[str] = set()
     for e in candidates:
-        if path_hit(e) or (name_targets & names_of(e)):
+        prop = (e["props"].get("PROJECT") or "").strip()
+        if path_hit(e) or (name_targets & names_of(e)) or (
+            prop and _project_prop_matches(prop, name_targets, slug_keys)
+        ):
             matched.append(e)
             seen.add(id(e))
             project_names |= names_of(e)
@@ -175,31 +252,47 @@ def _match_project_entries(entries: list[dict], cwd: Path, project_arg: str | No
     return matched
 
 
-def _git_root_name(cwd: Path) -> str:
-    """cwd 所在 git 仓库根的 basename（含 cwd 自身；不在仓库内返回 ""）。"""
-    try:
-        cur = cwd.resolve()
-    except OSError:
-        cur = cwd
-    if (cur / ".git").exists():
-        return cur.name
-    for parent in cur.parents:
-        if (parent / ".git").exists():
-            return parent.name
-    return ""
+def _scope_gate(cwd: Path, project_arg: str | None, entries: list[dict]):
+    """返回 :PROJECT: 作用域门禁谓词：带分区键的条目仅当前项目命中才放行。
+
+    项目隔离不按类型豁免——import 会把源侧 projects/<slug> 分区落到
+    U/F/E/R 条目上；无分区键的条目行为不变。命中口径三条互补：
+    ①prop 精确等于某已命中项目身份（索引行 PATH 命中时指向它的名字）；
+    ②prop 与候选名做源 slug 判定；③prop 与 sanitized cwd 路径全等。
+    项目上下文缺失（无 git 根、无 --project、无路径命中）时带分区键的
+    条目一律不注入（宁可不注，不越界）。
+    """
+    name_targets, _path_targets, slug_keys = _project_targets(cwd, project_arg)
+    matched_names: set[str] = set()
+    for e in _match_project_entries(entries, cwd, project_arg):
+        matched_names |= {v for v in (e["id"], e["title"],
+                                      (e["props"].get("PROJECT") or "").strip())
+                          if v}
+
+    def ok(e: dict) -> bool:
+        proj = (e["props"].get("PROJECT") or "").strip()
+        if not proj:
+            return True
+        return (proj in matched_names
+                or _project_prop_matches(proj, name_targets, slug_keys))
+
+    return ok
 
 
 def _select_session(entries: list[dict], cwd: Path, project_arg: str | None,
                     f_topk: int) -> list[tuple[str, list[dict]]]:
     """session 简报选集：U 全部 → E 本机 → P 当前项目 → F 权重 top-K → R 全部。"""
     machine = resolve_machine_key()
+    in_scope = _scope_gate(cwd, project_arg, entries)
     by_type: dict[str, list[dict]] = {}
     for e in entries:
         if e["kind"] == "index":
             continue  # 指针行不当事实注入（与投影器同口径）
+        if not in_scope(e):
+            continue
         by_type.setdefault(e["type"] or "?", []).append(e)
     p_hits = [e for e in _match_project_entries(entries, cwd, project_arg)
-              if e["kind"] == "entry"]
+              if e["kind"] == "entry" and in_scope(e)]
     f_sorted = sorted(by_type.get("F", []), key=_entry_weight_key, reverse=True)
     groups: list[tuple[str, list[dict]]] = [
         ("U", by_type.get("U", [])),
@@ -336,8 +429,10 @@ def _recall_brief(ctx, args) -> dict:
     if not entries or len(query) < min_query:
         return _result("empty", "recall", budget, args.host)
     machine = resolve_machine_key()
+    in_scope = _scope_gate(Path.cwd(), getattr(args, "project", None), entries)
     corpus = [e for e in entries
               if e["kind"] != "index"
+              and in_scope(e)
               and (e["type"] != "E" or _machine_matches(e, machine))]
     # 语料键用位置索引而非条目 id：id 理论可撞（手写条目），键冲突会静默塌缩语料
     bm25 = BM25(

@@ -525,7 +525,8 @@ def print_help() -> None:
   add       添加经验卡片
             agenote add --title "标题" [--category 类别] [--tech 技术栈]
                     [--type 类型] [--owner 执行者] [--entry 条目语义]
-                    [--summary 总结] [--stdin] [--force]
+                    [--summary 总结] [--stdin] [--force] [--allow-secret]
+                    写入侧 secret 门禁默认开启（高置信密钥前缀即拒写）
 
   get       读取卡片详情
             agenote get <卡片文件名或ID> [--used]  读取并记录使用
@@ -550,6 +551,8 @@ def print_help() -> None:
             agenote memory --type feedback|project|reference  按类型过滤
             agenote memory --project <名称|路径|.>   检索项目记忆（含 PATH/UPDATED 健康提示）
             agenote memory --add --type <类型> --title "标题" --stdin  添加记忆
+                    [--project 名称] 项目分区（任意类型）  [--sensitivity private] 不注入不投影
+                    [--allow-secret] 豁免写入侧 secret 门禁
             agenote memory --list [--type U|F|P|E|R] [--scope S] [--json]  只读列出条目
             agenote memory --stale                   列出陈旧记忆
             agenote memory --revalidate             只读列出待重验条目
@@ -763,6 +766,11 @@ def _main() -> None:
         action="store_true",
         help="允许创建知识库中不存在的新 type",
     )
+    add_parser.add_argument(
+        "--allow-secret",
+        action="store_true",
+        help="豁免写入侧 secret 门禁（默认命中高置信密钥前缀即拒写）",
+    )
 
     # ── get ───────────────────────────────────────────────────────────────
     get_parser = subparsers.add_parser("get", help="读取卡片详情")
@@ -906,6 +914,16 @@ def _main() -> None:
     memory_parser.add_argument(
         "--conflicts", action="store_true", help="只读列出冲突队列（配合 --json）",
     )
+    memory_parser.add_argument(
+        "--allow-secret",
+        action="store_true",
+        help="豁免 --add 的写入侧 secret 门禁",
+    )
+    memory_parser.add_argument(
+        "--sensitivity",
+        metavar="LEVEL",
+        help="--add 时写 :SENSITIVITY:（如 private）：非空值不进 context/export",
+    )
 
     # ── context ──────────────────────────────────────────────────────────
     # C 线注入通道（设计 C1）：只读免锁，宿主插件/hook 每轮调用取注入正文
@@ -996,6 +1014,11 @@ def _main() -> None:
         action="store_true",
         help="显式从 stdin 读 JSON(默认即从 stdin 读)",
     )
+    inbox_archive_parser.add_argument(
+        "--allow-secret",
+        action="store_true",
+        help="豁免逐条目的 secret 门禁（默认命中即跳过该条）",
+    )
 
     # ── stats ───────────────────────────────────────────────────────────────
     subparsers.add_parser("stats", help="知识库统计概览")
@@ -1026,6 +1049,11 @@ def _main() -> None:
     )
     update_parser.add_argument(
         "--stdin", action="store_true", help="从标准输入读取追加内容"
+    )
+    update_parser.add_argument(
+        "--allow-secret",
+        action="store_true",
+        help="豁免追加内容的 secret 门禁",
     )
 
     # ── init ──────────────────────────────────────────────────────────────

@@ -152,6 +152,47 @@ def scan_secret_categories(text: str) -> list[str]:
     return sorted({name for name, rx in SECRET_PATTERNS if rx.search(text)})
 
 
+def _secret_scan_enabled() -> bool:
+    """[memories].secret_scan_enabled 统一取值（env 覆盖以字符串抵达）。"""
+    raw = config.get("memories", "secret_scan_enabled")
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def gate_secret_write(text: str, what: str, allow: bool = False) -> None:
+    """写入侧 secret 门禁：命中高置信密钥前缀即拒写；--allow-secret 显式豁免。
+
+    与 import/export 共用 SECRET_PATTERNS 与 [memories].secret_scan_enabled——
+    SSOT 内容会经 context 注入每轮外发、经 export 投影进宿主，门禁只在外围
+    入口（import/export）挡等于留缺口：秘密直接写入 MEMORY.org/卡片后即全量
+    放行。报错只含类别名，不回显值。
+    """
+    if allow or not _secret_scan_enabled():
+        return
+    cats = scan_secret_categories(text)
+    if cats:
+        die(f"{what}被 secret 门禁拦截（类别: {', '.join(cats)}，不回显值）；"
+            f"确认非密钥请加 --allow-secret")
+
+
+def warn_secret_write(text: str, what: str) -> None:
+    """捕获通道的温和门禁：inbox 是暂存草稿层，命中只警告不拦截。
+
+    inbox.org 不进注入/投影通道，归档为卡片时 inbox-archive 有硬门禁兜底——
+    快速捕获路径若误拦会打断记录动作，故只提示。
+    """
+    if not _secret_scan_enabled():
+        return
+    cats = scan_secret_categories(text)
+    if cats:
+        print(
+            f"警告: {what}命中 secret 类别 {', '.join(cats)}（不回显值）；"
+            f"inbox-archive 归档时会被硬门禁拦截",
+            file=sys.stderr,
+        )
+
+
 # ── 阈值 ──────────────────────────────────────────────────────────────────────
 DEFAULT_LIST_COUNT = 20  # kb list 默认显示条数（CLI --limit 覆盖，不进配置文件）
 
