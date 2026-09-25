@@ -11,6 +11,7 @@
 
 - [agenote-skills](https://github.com/ShineBreaker/agenote-skills) — 3 个 agent skill
 - [pi-agenote](https://github.com/ShineBreaker/pi-agenote) — oh-my-pi 扩展
+- [injectors/](injectors/README.md) — 宿主记忆注入器（zcode/claude/codex/opencode/hermes）
 
 ## 安装
 
