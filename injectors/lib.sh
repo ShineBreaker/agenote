@@ -19,6 +19,9 @@
 #   rc 1 = agenote CLI 缺失；rc 0 = 正常（stdout 为注入正文，空 = 不注）。
 
 # ─── 可调参数（env 覆盖；语义开关的真相源在 agenote SCHEMA [injection] 节）──
+# 注意：下面两处「与 SCHEMA 同名」的累计预算/门槛仅为 env 口径镜像——改
+# config.toml 中 [injection] 同名键不会同步注入器侧，需用 env 覆盖，
+# 否则 CLI 与注入器的触顶/门槛判定分叉。
 : "${AGENOTE_INJECTION_BRIEF_BUDGET:=8000}"                # session 简报单次预算（字符）
 : "${AGENOTE_INJECTION_RECALL_BUDGET:=4000}"               # recall 单次预算（字符）
 : "${AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET:=24000}"  # 单会话累计预算（与 SCHEMA 同名 env 同口径）

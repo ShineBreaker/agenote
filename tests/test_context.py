@@ -349,3 +349,25 @@ def test_recall_min_score_default_is_calibrated():
     from agenote import config
 
     assert float(config.get("injection", "recall_min_score")) == 8.0
+
+
+# ── 只读无副作用 ──────────────────────────────────────────────────────────────
+
+
+def test_cli_context_on_fresh_kb_writes_nothing(tmp_path, monkeypatch, capsys):
+    """全新 KB 首跑 `agenote context`：零字节 empty 输出且不落 KB 骨架。
+
+    context 在 ensure_dirs 豁免清单（C1 零写盘副作用）：若豁免失效，
+    ensure_dirs 会创建 experiences/、memories/、projects/、inbox.org、
+    MEMORY.org 等骨架文件——本测试整树断言兜住。
+    """
+    import agenote.cli as cli
+    import agenote.core as core
+
+    fresh = tmp_path / "fresh-kb"
+    fresh.mkdir()
+    monkeypatch.setattr(core, "KB_ROOT", fresh)
+    monkeypatch.setattr("sys.argv", ["agenote", "context"])
+    cli.main()
+    assert capsys.readouterr().out == ""  # 空库 → empty 态零字节
+    assert list(fresh.iterdir()) == []  # 骨架一概未写

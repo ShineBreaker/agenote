@@ -12,14 +12,18 @@ hermes 的注入直接实装在生态既有的 hermes 插件 `agenote` 里（不
   `__pycache__` 留装载点本地不迁移）
 - 改造前旧版备份：`/tmp/hermes-agenote-backup/`（一次性，勿长期依赖）
 
+宿主版本（验证时）：hermes v0.21.3（2026-09，`$HERMES_HOME` 实装
+`hermes --version`；register_system_prompt_section / pre_llm_call /
+register_command 三挂点 API 形态以该版本为准，升级后需复测）。
+
 ## 挂点（同一插件内两通道 + 既有能力共存）
 
 | 挂点 | 行为 | 预算 |
 |---|---|---|
-| `register_system_prompt_section`（`agenote-context-brief` 节，框架默认 after_memory 锚点） | 会话级简报（`--mode session`）；进程内指纹缓存——指纹未变零 spawn 重放；**compact 重建时 render 被重新调用，从缓存返回而非空串**（否则重建后丢简报）；disabled/empty 的空 content 同样入缓存防反复 spawn | 3800 字符（框架单节上限 4000） |
+| `register_system_prompt_section`（`agenote-context-brief` 节，框架默认 after_memory 锚点） | 会话级简报（`--mode session`）；进程内指纹缓存——指纹未变零 spawn 重放；**compact 重建时 render 被重新调用，从缓存返回而非空串**（否则重建后丢简报）；空 content（disabled/empty）不入缓存——开关转开即时生效（对齐 lib.sh；disabled 期每次重建多一次 spawn，render 频率低可接受） | 3800 字符（框架单节上限 4000） |
 | `pre_llm_call`（每回合） | recall 注入（追加型三件套：指纹+query 未变不重注 / 短 prompt 门槛 / 累计 24000 触顶停 recall），与既有任务完成信号检测共存——两者独立触发，同回合命中合并为一个 context；subagent/cron 平台整体豁免 | 2000 字符 |
 | 状态文件 | `~/.cache/agenote/injectors/hermes-<session_id>.json`（与 bash 注入器同款布局；session_id 缺失退化 `hermes.json`） | — |
-| 既有能力（未改动语义） | 完成信号检测、`/agenote-summarize`、`/agenote-health`、`/agenote-curate` | — |
+| 既有能力 | 完成信号检测、`/agenote-summarize`、`/agenote-health` 未改动；`/agenote-curate` 改为注入策展任务提示（agent 按 agenote-curator skill 执行，对齐 pi f8ccec3——CLI 无 `curate` 子命令） | — |
 
 ## 安装前置（写侧禁用，防双真相源）
 

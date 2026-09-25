@@ -1351,7 +1351,11 @@ def _main() -> None:
                 args._cross_domain = True
             else:
                 ctx = agenote_context()
-            if ctx is not None and args.command not in ("init", "config", "completions"):
+            # init 自举目录；config/completions 纯配置产物；context 只读免锁——
+            # 三者外加豁免 ensure_dirs：全新 KB 首跑不得写出骨架（C1 零写盘副作用）
+            if ctx is not None and args.command not in (
+                "init", "config", "completions", "context",
+            ):
                 ensure_dirs(ctx)
         except SystemExit:
             raise

@@ -5,6 +5,9 @@
 additionalContext；UserPromptSubmit 注入上限 10000 字符）。宿主版本漂移
 （R2）时先核对文档再改脚本。
 
+宿主版本（验证时）：协议参照公开 hooks 文档 2026-09 版；验证机装有
+claude-code 2.1.278（脚本为标准 hooks 协议，不依赖特定版本特性）。
+
 ## 挂点
 
 `~/.claude/settings.json` 的 `hooks` 节（路径按实际安装位置改）：

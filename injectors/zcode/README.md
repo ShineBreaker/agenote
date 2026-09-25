@@ -26,6 +26,10 @@ mtime+size；状态文件 `~/.cache/agenote/injectors/zcode-<session_id>.json`�
 简报 8000 / recall 4000 字符（zcode 单事件上限 24000，静默截断）；
 累计预算 24000 触顶停 recall。env 覆盖同其他宿主（见总览 README）。
 
+## 宿主版本（验证时）
+
+zcode 3.14.3（2026-09 本机实装验证；协议字段随版本漂移时以 debug 日志为准回改）。
+
 ## 验收
 
 ```bash
