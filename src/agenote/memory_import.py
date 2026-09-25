@@ -136,13 +136,18 @@ def _legacy_origin_id(entry: dict) -> str:
 
 
 def _existing_state(ctx) -> tuple[set[str], list[dict]]:
-    """MEMORY.org 现有 ORIGIN_ID 集 + (TYPE/SCOPE/标题/正文) 候选比对表。"""
+    """MEMORY.org 现有 ORIGIN_ID 集 + (TYPE/SCOPE/标题/正文) 候选比对表。
+
+    deprecated 节是终态（已被裁决取代），不参与去重比对——否则终态条目
+    永远拦截同主题新事实进 dup/conflict 队列（设计 P2）。
+    """
     from agenote.memory import _iter_memory_entries
 
     if not ctx.memory_org.exists():
         return set(), []
     text = ctx.memory_org.read_text(encoding="utf-8")
-    entries = _iter_memory_entries(text)
+    entries = [e for e in _iter_memory_entries(text)
+               if e["section"].lower() != "deprecated"]
     origins = {e["props"].get("ORIGIN_ID", "") for e in entries} - {""}
     rows = [
         {"id": e["id"], "title": e["title"], "type": e["type"] or "",
@@ -303,6 +308,9 @@ def _write_entries(cands: list[dict], ctx) -> None:
             extra += f"   :ORIGIN_PATH: {cand['path']}\n"
         if cand["type"] == "E":
             extra += f"   :MACHINE:  {resolve_machine_key()}\n"
+        if cand["needs_review"]:
+            # 启发式判型落盘（C7 P2）：报告丢失后条目仍可与确认判型区分
+            extra += "   :NEEDS_REVIEW: true\n"
         block = (f"\n** {new_id} {cand['title']}\n   :PROPERTIES:\n"
                  f"   :CREATED:  [{today()}]\n   :UPDATED:  [{today()}]\n"
                  f"   :TYPE:     {cand['type']}\n   :SCOPE:    {cand['scope']}\n"

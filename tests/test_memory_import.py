@@ -270,6 +270,41 @@ def test_import_bom_crlf_source_normalized(tmp_path, monkeypatch):
     assert "验证读取侧归一化" in text
 
 
+def test_import_dedupe_excludes_deprecated(tmp_path, monkeypatch):
+    """deprecated 终态条目不参与去重：同主题新事实正常导入而非疑似重复。"""
+    dep_org = BASE_ORG + (
+        "* deprecated\n"
+        "** F090 部署前清理构建缓存\n"
+        "   :PROPERTIES:\n"
+        "   :CREATED:  [2026-01-01]\n"
+        "   :UPDATED:  [2026-01-01]\n"
+        "   :END:\n")
+    _src(monkeypatch, tmp_path, {
+        "projects/p/memory/dup.md": FM.format(
+            name="部署前清理构建缓存",
+            desc="重复",
+            body="部署前先清理构建缓存再重新构建产物。"),
+    })
+    ctx = _ctx(tmp_path, text=dep_org, monkeypatch=monkeypatch)
+    rep = run_import("zcode", ctx=ctx)
+    assert len(rep["imported"]) == 1 and rep["suspected_dup"] == []
+
+
+def test_import_persists_needs_review(tmp_path, monkeypatch):
+    """启发式判型落盘 :NEEDS_REVIEW: true——报告丢失后仍可与确认判型区分。"""
+    root = tmp_path / "srcmem"
+    p = root / "projects/p/memory/no-type.md"
+    p.parent.mkdir(parents=True)
+    p.write_text("---\nname: 用户要求回复保持简短风格\n---\n"
+                 "用户明确要求所有回复保持简短风格，这是长期偏好，需要在后续会话中持续遵守执行。\n",
+                 encoding="utf-8")
+    monkeypatch.setenv("ZCODE_MEMORIES_DIR", str(root))
+    ctx = _ctx(tmp_path, monkeypatch=monkeypatch)
+    rep = run_import("zcode", ctx=ctx)
+    assert len(rep["imported"]) == 1 and rep["imported"][0]["needs_review"] is True
+    assert ":NEEDS_REVIEW: true" in ctx.memory_org.read_text(encoding="utf-8")
+
+
 def test_import_secret_blocked_no_value_leak(tmp_path, monkeypatch):
     _src(monkeypatch, tmp_path, {
         "projects/p/memory/leak.md": FM.format(
