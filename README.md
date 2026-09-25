@@ -8,22 +8,22 @@ DeepSeek Harness（DSH）的 [agenote](https://github.com/ShineBreaker/agenote) 
 
 ## 它做什么
 
-| 触发点 | DSH 事件 | 行为 |
-|--------|----------|------|
-| 会话开始 | `agent/created` | 注入 `agenote health` 摘要（总数/孤立率/过时率/薄弱类别/记忆统计） |
-| 用户消息进入 | `agent/inbox/inserted` | 记住最近一条**真实用户**发言，用于信号判定 |
-| 新一轮开始 | `agent/status`(running) | 作废待发的空闲计时器 |
-| 工具执行完毕 | `tools/result` | 标记本轮「真的干过活」（空闲兜底的门槛依据） |
-| turn 收尾 | `agent/turn-stopping` | 检测完成信号 → 注入 review 提示；并武装空闲兜底 |
-| 会话销毁 | `agent/disposed` | 清计时器、释放会话状态 |
+| 触发点       | DSH 事件                | 行为                                                               |
+| ------------ | ----------------------- | ------------------------------------------------------------------ |
+| 会话开始     | `agent/created`         | 注入 `agenote health` 摘要（总数/孤立率/过时率/薄弱类别/记忆统计） |
+| 用户消息进入 | `agent/inbox/inserted`  | 记住最近一条**真实用户**发言，用于信号判定                         |
+| 新一轮开始   | `agent/status`(running) | 作废待发的空闲计时器                                               |
+| 工具执行完毕 | `tools/result`          | 标记本轮「真的干过活」（空闲兜底的门槛依据）                       |
+| turn 收尾    | `agent/turn-stopping`   | 检测完成信号 → 注入 review 提示；并武装空闲兜底                    |
+| 会话销毁     | `agent/disposed`        | 清计时器、释放会话状态                                             |
 
 命令：
 
-| 命令 | 说明 |
-|------|------|
+| 命令                 | 说明                                                            |
+| -------------------- | --------------------------------------------------------------- |
 | `/agenote-summarize` | 在当前会话触发经验总结 + 留痕（按 `agenote-review` skill 执行） |
-| `/agenote-curate` | 触发 KB 策展（按 `agenote-curator` skill 执行） |
-| `/agenote-health` | 直接回显 `agenote health` 报告（纯只读） |
+| `/agenote-curate`    | 触发 KB 策展（按 `agenote-curator` skill 执行）                 |
+| `/agenote-health`    | 直接回显 `agenote health` 报告（纯只读）                        |
 
 前两个命令**不直接跑 CLI**——只把任务提示投进会话，流程编排与写盘决策由 agent 按对应 skill 主导。这保证了「行为规范」只有一份真相源（`agenote-skills`），不会在插件里长出第二份。
 
@@ -56,13 +56,13 @@ profile 为 `patchReload: live` 时（web profile 默认如此），新 bundle �
 - id: agenote
   config:
     hooks:
-      enabled: true            # 总开关
-      status: true             # 会话开始注入健康度摘要
-      completionSignals: true  # turn 收尾检测完成信号
-      idleFallback: true       # 空闲兜底（无人值守场景）
-      signals: ['搞定', 'done.']  # 覆盖内置信号清单
-      debounceMs: 300000       # 同信号冷却期
-      idleMs: 300000           # 空闲兜底阈值
+      enabled: true # 总开关
+      status: true # 会话开始注入健康度摘要
+      completionSignals: true # turn 收尾检测完成信号
+      idleFallback: true # 空闲兜底（无人值守场景）
+      signals: ["搞定", "done."] # 覆盖内置信号清单
+      debounceMs: 300000 # 同信号冷却期
+      idleMs: 300000 # 空闲兜底阈值
     commands:
       enabled: true
 ```
@@ -81,14 +81,14 @@ profile 为 `patchReload: live` 时（web profile 默认如此），新 bundle �
 
 ## 与 agenote-pi 的差异
 
-| | agenote-pi（pi/omp） | dsh-agenote |
-|---|---|---|
-| 形态 | 单文件 TS，运行时自动扫描 | Cordis bundle（`package.json` + YAML patch），经 `plugin_manager` 安装 |
-| 会话开始 | `session_start` | `agent/created` |
-| turn 收尾 | `agent_end` | `agent/turn-stopping` |
-| 投递 | `sendUserMessage({deliverAs:'followUp'})` | `agent.followup(createUserMessage(...))` |
+|               | agenote-pi（pi/omp）                      | dsh-agenote                                                                 |
+| ------------- | ----------------------------------------- | --------------------------------------------------------------------------- |
+| 形态          | 单文件 TS，运行时自动扫描                 | Cordis bundle（`package.json` + YAML patch），经 `plugin_manager` 安装      |
+| 会话开始      | `session_start`                           | `agent/created`                                                             |
+| turn 收尾     | `agent_end`                               | `agent/turn-stopping`                                                       |
+| 投递          | `sendUserMessage({deliverAs:'followUp'})` | `agent.followup(createUserMessage(...))`                                    |
 | subagent 守卫 | `isSubagentProcess()` 检测子进程 argv/env | **不需要**——DSH 的 subagent 是同进程独立 agent，靠 per-session 状态天然隔离 |
-| 归因 | `AGENOTE_AGENT=pi` | `AGENOTE_AGENT=dsh` |
+| 归因          | `AGENOTE_AGENT=pi`                        | `AGENOTE_AGENT=dsh`                                                         |
 
 ## 开发
 

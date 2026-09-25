@@ -18,6 +18,6 @@ export const name = "dsh-agenote";
 export const inject = commands.inject;
 
 export function apply(ctx, config = {}) {
-	hooks.apply(ctx, config.hooks ?? {});
-	commands.apply(ctx, config.commands ?? {});
+  hooks.apply(ctx, config.hooks ?? {});
+  commands.apply(ctx, config.commands ?? {});
 }

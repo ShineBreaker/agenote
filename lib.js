@@ -31,35 +31,42 @@ export const KB_SCRIPT = process.env.AGENOTE_BIN || "agenote";
  * shell 解释，也就不存在注入面。
  */
 export function runKb(args, options = {}) {
-	const timeout = options.timeoutMs ?? 30_000;
-	const res = spawnSync(KB_SCRIPT, args, {
-		encoding: "utf8",
-		timeout,
-		maxBuffer: options.maxBuffer ?? 4 * 1024 * 1024,
-		env: { ...process.env, AGENOTE_AGENT: options.agent ?? "dsh" },
-	});
-	if (res.error) {
-		return { ok: false, stdout: "", stderr: String(res.error.message ?? res.error) };
-	}
-	const stdout = res.stdout ?? "";
-	const stderr = res.stderr ?? "";
-	// agenote CLI 用退出码表达成败；非零即失败（lint --check 亦如此，故仅作提示用）。
-	if (res.status !== 0) {
-		return { ok: false, stdout, stderr: stderr || `退出码 ${res.status}` };
-	}
-	return { ok: true, stdout, stderr };
+  const timeout = options.timeoutMs ?? 30_000;
+  const res = spawnSync(KB_SCRIPT, args, {
+    encoding: "utf8",
+    timeout,
+    maxBuffer: options.maxBuffer ?? 4 * 1024 * 1024,
+    env: { ...process.env, AGENOTE_AGENT: options.agent ?? "dsh" },
+  });
+  if (res.error) {
+    return {
+      ok: false,
+      stdout: "",
+      stderr: String(res.error.message ?? res.error),
+    };
+  }
+  const stdout = res.stdout ?? "";
+  const stderr = res.stderr ?? "";
+  // agenote CLI 用退出码表达成败；非零即失败（lint --check 亦如此，故仅作提示用）。
+  if (res.status !== 0) {
+    return { ok: false, stdout, stderr: stderr || `退出码 ${res.status}` };
+  }
+  return { ok: true, stdout, stderr };
 }
 
 /** 取 CLI 输出的一行摘要，失败时返回单行错误说明（用于命令回显）。 */
 export function runKbText(args, options = {}) {
-	const res = runKb(args, options);
-	if (!res.ok) return `(agenote ${args.join(" ")} 失败: ${firstLine(res.stderr)})`;
-	return res.stdout.trimEnd();
+  const res = runKb(args, options);
+  if (!res.ok)
+    return `(agenote ${args.join(" ")} 失败: ${firstLine(res.stderr)})`;
+  return res.stdout.trimEnd();
 }
 
 function firstLine(text) {
-	const line = String(text).split("\n").find((l) => l.trim().length > 0);
-	return line ? line.trim() : "(无输出)";
+  const line = String(text)
+    .split("\n")
+    .find((l) => l.trim().length > 0);
+  return line ? line.trim() : "(无输出)";
 }
 
 // ─── 健康度摘要 ─────────────────────────────────────────────────────────────
@@ -71,35 +78,35 @@ function firstLine(text) {
  * 静默少注入几行，但不会报错——失败降级为「不注入」，绝不影响会话启动。
  */
 export function healthSummary(run = runKb) {
-	const res = run(["health"], { timeoutMs: 15_000 });
-	if (!res.ok) return "";
-	const lines = res.stdout.split("\n");
-	const picked = [];
-	for (const raw of lines) {
-		const line = raw.trim();
-		if (line.length === 0) continue;
-		if (
-			line.startsWith("总卡片") ||
-			line.startsWith("孤立率") ||
-			line.startsWith("过时率") ||
-			line.startsWith("类型偏斜") ||
-			line.startsWith("薄弱类别") ||
-			line.startsWith("feedback:") ||
-			line.startsWith("project:")
-		) {
-			picked.push(`  ${line}`);
-		}
-	}
-	if (picked.length === 0) return "";
-	return ["[agenote] 知识库状态:", ...picked].join("\n");
+  const res = run(["health"], { timeoutMs: 15_000 });
+  if (!res.ok) return "";
+  const lines = res.stdout.split("\n");
+  const picked = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (line.length === 0) continue;
+    if (
+      line.startsWith("总卡片") ||
+      line.startsWith("孤立率") ||
+      line.startsWith("过时率") ||
+      line.startsWith("类型偏斜") ||
+      line.startsWith("薄弱类别") ||
+      line.startsWith("feedback:") ||
+      line.startsWith("project:")
+    ) {
+      picked.push(`  ${line}`);
+    }
+  }
+  if (picked.length === 0) return "";
+  return ["[agenote] 知识库状态:", ...picked].join("\n");
 }
 
 // ─── 消息构造 ───────────────────────────────────────────────────────────────
 
 function deepFreeze(value) {
-	if (value === null || typeof value !== "object") return value;
-	for (const key of Object.keys(value)) deepFreeze(value[key]);
-	return Object.freeze(value);
+  if (value === null || typeof value !== "object") return value;
+  for (const key of Object.keys(value)) deepFreeze(value[key]);
+  return Object.freeze(value);
 }
 
 /**
@@ -110,13 +117,15 @@ function deepFreeze(value) {
  * 解析不到 $DSH_HOME/profiles/node_modules；上游改语义需手动同步。
  */
 export function createUserMessage(input) {
-	return deepFreeze(structuredClone({ ...input, role: "user", id: randomUUID() }));
+  return deepFreeze(
+    structuredClone({ ...input, role: "user", id: randomUUID() }),
+  );
 }
 
 // ─── 会话配置 ───────────────────────────────────────────────────────────────
 
 export function xdgConfigHome() {
-	return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
 }
 
 /**
@@ -126,9 +135,16 @@ export function xdgConfigHome() {
  * 用内置默认值，cordis 行的 config 始终可以覆盖。
  */
 export function sharedConfig() {
-	try {
-		return JSON.parse(readFileSync(join(xdgConfigHome(), "omp", "agenote-hooks.json"), "utf8")) ?? {};
-	} catch {
-		return {};
-	}
+  try {
+    return (
+      JSON.parse(
+        readFileSync(
+          join(xdgConfigHome(), "omp", "agenote-hooks.json"),
+          "utf8",
+        ),
+      ) ?? {}
+    );
+  } catch {
+    return {};
+  }
 }
