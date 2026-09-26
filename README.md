@@ -1,73 +1,55 @@
-# agenote-skills — agenote 跨 Agent 经验平台 skills
+# agenote-skills: agent behavior specs
 
-> [agenote](https://github.com/ShineBreaker/agenote) 跨 Agent 经验平台的三个配套
-> agent skills：基础知识库操作、自动策展、会话后经验采集。
+One behavior spec, shared by every agent.
 
-本仓库作为 `Guix-configs` 的 Git 子模块嵌入，提供 agenote 系统的 agent 行为规范。
+## The problem
 
-## Skills 清单
+The same agent behaves differently depending on where it runs. Habits picked up in
+pi have to be re-taught in crush, opencode, or hermes: look up past experience
+before starting, reuse what is already known while working, write the lesson back
+when the task ends. Each host has its own prompt, model, and toolchain, so a spec
+written into one host's config only binds that host.
 
-| Skill             | 触发信号                                                                 | 职责                                                                               |
-| ----------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `agenote-base`    | 开始非平凡任务前 / 遇到踩过的坑 / 联网查到新方案 / 用户纠正 / 长任务结束 | 任务前查、过程中复用、结束时记的日常 KB 操作（list→search→get；add→touch；commit） |
-| `agenote-curator` | 每周/长会话后例行维护 / 卡片 >50 张 / 检索质量下降 / 发现重复或矛盾      | KB 健康度维护：健康检查+去重+归档+权重重分配+reconcile 多源 memory                 |
-| `agenote-review`  | 完成信号检测 / 用户触发总结 / 长任务结束评估 / 用户纠正 / 排查 >2 步     | 会话后经验采集与留痕：经验信号识别 + ENTRY_TYPE 判定 + 留痕决策树                  |
+agenote-skills lifts that protocol out of host config into a standalone repo. Every
+agent plugged in reads the same file and gets the same rules.
 
-三者相互引用（"转 `agenote-curator`"等）是**提示 agent 按需切换 skill**，不是代码级依赖。
-所有 skill 共享同一个外部依赖：[agenote](https://github.com/ShineBreaker/agenote) CLI。
+## The three skills
 
-## Skill 规范
+- `agenote-base` handles daily reads and writes. Before a task it runs
+  `list`->`search`->`get` to check for known traps, reuses cards mid-task, then
+  records with `add`->`touch` and `commit`s.
+- `agenote-curator` maintains knowledge base health: diagnosis, dedup, archive,
+  search weight recomputation, and memory reconcile across agents.
+- `agenote-review` captures post-session experience. It spots signals worth
+  recording, picks an ENTRY_TYPE, then decides whether to add a new card or touch
+  an existing one.
 
-每个 skill 是一个自包含目录，核心是 `SKILL.md`（YAML front matter + Markdown 正文）：
+Full responsibility table lives in the [usage guide](docs/usage.md).
 
-```
-<skill-name>/
-├── SKILL.md              # 必需：元数据 + 完整指令
-└── references/           # 可选：参考文档子目录
-    └── *.md / *.org
-```
+## Core design
 
-`SKILL.md` front matter 只有两个字段：
+- Plain Markdown. Host frameworks scan the directory each session and load the
+  spec, so editing the source takes effect immediately. Nothing to compile or
+  deploy.
+- Loaded on demand. Each `description` carries its trigger signals, so the body is
+  pulled in only when the host matches one. Idle cost is three lines of
+  description.
+- One external dependency. The spec implements no storage of its own; every read
+  and write goes through the `agenote` CLI on PATH.
 
-```yaml
----
-name: <skill-name>
-description: <功能描述，含触发信号，供 agent 框架匹配调度>
----
-```
+## Who should not use this
 
-## 部署
+- You run a single agent whose behavior is already stable. A prompt of your own
+  does the job, and maintaining a shared spec is overhead.
+- You do not plan to use agenote as the memory backend. Every operation in these
+  skills is an `agenote` CLI call, so a different backend means rewriting them.
 
-### 作为 Guix-configs 子模块（主流程）
+## Read more
 
-本仓库登记为 `Guix-configs` 的 `dotfiles/mutable/agenote/.config/agents/skills`
-子模块，由 `blue stow` 统一纳管：
+- [Usage guide](docs/usage.md): skill spec, responsibility table, deployment, dependencies
+- [中文 README](README.zh.md)
+- [agenote main repo](https://github.com/ShineBreaker/agenote)
 
-```bash
-git submodule update --init dotfiles/mutable/agenote/.config/agents/skills
-blue stow agenote           # 部署软链
-blue stow --restow agenote  # 重建
-```
+## License
 
-部署后 skill 通过 stow 软链到 `~/.config/agents/skills/`，agent 框架（omp/zcode）
-从 `~/.agents/skills/`（运行时 symlink 路径）扫描加载。
-
-### 独立部署（原生 stow）
-
-```bash
-git clone https://github.com/ShineBreaker/agenote-skills.git ~/agenote-skills
-stow --dir=~/agenote-skills --target=$HOME
-```
-
-## 依赖
-
-- **[agenote](https://github.com/ShineBreaker/agenote) CLI**：所有 skill 通过
-  `~/.local/bin/agenote` 执行卡片/记忆/策展操作，必须先安装 agenote CLI。
-
-## 改源生效路径
-
-skills 是纯 Markdown 文档，agent 框架每次会话扫描加载，**改源即生效**。
-
-## 许可证
-
-MIT，见 [LICENSE](LICENSE)。
+MIT, see [LICENSE](LICENSE).
