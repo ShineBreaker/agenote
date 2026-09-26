@@ -20,6 +20,18 @@
   - 中英补空格原先只跳表格行，会在 `[connection]段`、`0=disable省电`、行首标记后误插空格；逐位扫描 + `_skip_zh_latin_at()` 位置判断，与 doc-punct 同口径。
 - 注：`tools/doc-punct.py`（Guix-configs）另有一批 orgfmt 未覆盖的规则——半角 `,;:?!` 转全角、括号按内容判全半角、行内代码/URL/`{{}}` 保护、`主:次` 字段不转、单个一字线连接号不碰。两者职责不同（doc-punct 服务仓库文档的半角→全角，orgfmt 服务 org 结构化格式化），不合并。
 
+## [0.2.0.2] - 2026-09-26
+
+首次真实规模导入（332 条多源记忆）暴露 import 写入管道缺陷：两处修复、一处回归测试强化、一处假阴性测试修正。reviewer 对抗性审查（修复前代码对比复现）核销通过。
+
+### Fixed
+
+- **`memory --import` 多条目同节落位坐标错位**（`memory_import.py` `_write_entries`）：含换行的整块条目作为单元素 insert，而节定位行号是 join 后文本行坐标——列表出现多行块元素后两坐标系错位，`_find_section_end` 扫不到下一节行便返回 `len(lines)`，同节第 2 条起全部尾插到文件尾并落入 deprecated 终态节，且节文本不含已插条目使 ID 恒为同值（332 条真实导入出现 230 条损坏、P002 重复 222 次）。改为按行展开插入，使列表元素坐标与文本行坐标恒一致。F/U 路径（首节/新建尾节）碰巧免疫，故 v0.2.0 起未暴露。
+- **同族：import body 逐行缩进防结构注入**：body 只缩进首行时，源侧 markdown 的 `* `/`** ` 行裸写进 org 顶层会被解析成伪顶级节/伪条目，污染 SSOT 并经 export/context 外流（对抗探针实测伪造出 F999 条目）；改为逐行缩进脱离结构语法。
+- **条目解析剔除 drawer 结构行**（`memory.py` `_iter_memory_entries`）：`:PROPERTIES:`/`:END:` 无属性值、不匹配 `:KEY: value` 属性正则，被当正文收进 body；`memory --add` 条目有 `#` 钩子行兜底（hook 优先）而 import 条目无，残渣直接成为 `agenote context` 注入首行。
+- **修正 `test_cli_context_on_fresh_kb_writes_nothing` 假阴性隔离**：agenote 域 ctx 路径派生自模块常量 `AGENOTE_ROOT`（import 时固化），patch `core.KB_ROOT` 不生效，此前靠真实 KB 为空碰巧通过；改为 patch `core.AGENOTE_ROOT`。
+- 落位回归测试 fixture 改为历史触发形状（条目进既有中间节 + 末节 deprecated），已验证在修复前代码上必失败（原 fixture 的 else 新建末节路径锁不住主 bug）。测试 454 → 459。
+
 ## [0.2.0.1] - 2026-09-25
 
 对照 agent 记忆系统研究报告补齐记忆模型：项目/工作区分区隔离、受限条目不离开 SSOT、写入侧 secret 门禁与生命周期元数据。
