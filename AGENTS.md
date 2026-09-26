@@ -25,3 +25,14 @@ DeepSeek Harness（DSH）的 agenote 集成插件：Cordis bundle，纯 ESM、�
 4. 激活：`dsh --profile <profile> --no-open --port 3099` 冷启动——日志无 `failed to import`。
 
 改了源码就必须冷启动，运行中进程持有旧模块图。运行中进程上的 `plugin_manager set_bundle` 报 `failed to import` 是该次调用自身的诊断，不代表 bundle 未被采用——能否采用只看第 4 步的冷启动日志与会话里是否真的出现注入，不要据此改代码。
+
+## 发布
+
+单包、无构建、不发 npm（纯 ESM 零依赖，git 安装即用；awesome 收录与 npm 发布无关）。流程对齐 agenote CLI 仓库先例：
+
+1. 行为改动按 semver 定性：**patch** = 不改行为的修复（可攒批），**minor** = 新能力或行为变化（单独发）。
+2. `chore(release): 发布 vX.Y.Z`：**版本号 + `CHANGELOG.md`**（Keep a Changelog，新增 `## [X.Y.Z] - 日期` 段，并把 CHANGELOG 登记进 `package.json` 的 `files`）同一个 commit，tag 锚定该 commit。manifest 类变更（如 peer cohort）走独立 `feat(manifest)` commit，不发版也要能被装。
+3. annotated tag：`git tag -a vX.Y.Z -m ...`，**推送前核对指向**：`git log --oneline -1 <tag>` 是目标 release commit，且 `git branch -a --contains <tag>` 有输出（无输出即为悬空，删了重打）。
+4. 推送前按「验证」第 4 步冷启动一遍（新 manifest 也要过：确认无 `failed to import`、无 `incompatible-version`、行未 disabled）。
+5. `git push origin main vX.Y.Z` → `gh release create vX.Y.Z --notes-file <CHANGELOG 对应段>`。
+6. **DSH 出新 cohort 时必须同步抬 `peerDependencies["@deepseek-ai/dsh"]` 与 `dsh.engines.dsh` 下限，两条保持一致**。0.1.7-rc.1 起安装前与启动时按该范围强制校验（`evaluatePluginCompatibility`，可在本地 app-boot 实测）：不声明则跳过检查（现状安全但无保护），声明了不匹配则安装抛 `incompatible-version`、启动整行 disabled，豁免需 `dsh plugin allow-version`。peer 是兼容性声明不是 import，不触犯禁 import 硬禁令；profile 侧 `autoInstallPeers: false` 保证它不会被平铺成第二份核心包。
