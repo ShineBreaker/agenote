@@ -325,5 +325,9 @@ def _write_entries(cands: list[dict], ctx) -> None:
                  f"   :ORIGIN_AGENT: {cand['source']}\n{extra}   :END:\n")
         if cand["body"].strip():
             block += f"   {cand['body'].strip()}\n"
-        lines.insert(at, block)
+        # block 必须按行展开插入：_parse_memory_sections 返回的 target 行号
+        # 是 join 后文本行坐标，只有列表元素与文本行一一对应时 _find_section_end
+        # 的扫描才不错位——整块作为单元素 insert 会让同节第 2 条起全部尾插
+        # 到错误节（并因节文本不含已插条目而 ID 重复）。
+        lines[at:at] = block.rstrip("\n").split("\n")
     atomic_write(ctx.memory_org, "\n".join(lines))

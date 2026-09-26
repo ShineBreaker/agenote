@@ -374,3 +374,68 @@ def test_import_dry_run_no_write(tmp_path, monkeypatch):
     assert len(rep["imported"]) == 1 and len(rep["conflicted"]) == 1
     assert ctx.memory_org.read_text(encoding="utf-8") == before
     assert not (tmp_path / ".memory-conflicts.json").exists()
+
+
+FM_P = """---
+name: {name}
+description: {desc}
+metadata:
+  type: project
+---
+
+{body}
+"""
+
+
+def test_import_multi_entries_same_section_placement_and_ids(tmp_path, monkeypatch):
+    """同节多条目落位与 ID 递增：block 必须按行展开插入。
+
+    回归背景：_write_entries 曾把整块作为单元素 insert，而 target 行号是
+    join 后文本行坐标——列表里出现多行块元素后坐标错位，同节第 2 条起
+    全部尾插到文件尾并落入 deprecated 节、ID 恒为同值（P002×N）。
+    """
+    _src(monkeypatch, tmp_path, {
+        "projects/p/memory/pa.md": FM_P.format(
+            name="项目甲的构建前置步骤需要先同步子模块",
+            desc="构建流程",
+            body="项目甲构建之前必须先把全部子模块同步到位，否则构建系统会拿到过期的接口定义产生难以排查的编译错误。"),
+        "projects/p/memory/pb.md": FM_P.format(
+            name="项目甲的发版前必须回填变更日志",
+            desc="发版流程",
+            body="项目甲每次发版前必须把本版本的变更写进变更日志文件，漏写会导致下游打包流程取不到正确的版本说明。"),
+        "projects/p/memory/pc.md": FM_P.format(
+            name="项目甲的接口变更要同步类型定义",
+            desc="接口约定",
+            body="项目甲的接口发生变更时必须同步更新类型定义文件，两侧不一致会让调用方在运行期才暴露字段缺失问题。"),
+        "projects/p/memory/fa.md": FM.format(
+            name="反馈一：审查意见要绑定产物哈希",
+            desc="审查纪律",
+            body="异步审查的意见必须绑定被审产物的哈希值，否则产物在审查期间被修改后意见就失去了指向对象无法核销。"),
+        "projects/p/memory/fb.md": FM.format(
+            name="反馈二：探索性搜索交给子智能体",
+            desc="委派纪律",
+            body="大范围的探索性搜索应当交给子智能体执行并只取回结论，主会话直接翻找大量文件会消耗宝贵的上下文窗口。"),
+    })
+    ctx = _ctx(tmp_path, monkeypatch=monkeypatch)
+    rep = run_import("zcode", ctx=ctx)
+    assert len(rep["imported"]) == 5
+    text = ctx.memory_org.read_text(encoding="utf-8")
+
+    from agenote.memory import _iter_memory_entries
+    entries = list(_iter_memory_entries(text))
+    assert len(entries) == 6  # BASE_ORG 预置 F001 + 导入 5 条
+    # 无条目落进 deprecated（bug 的直接症状）
+    assert all(e["section"].lower() != "deprecated" for e in entries)
+    # 各节归属正确 + 节内 ID 连续递增无重复
+    by_section: dict[str, list[str]] = {}
+    for e in entries:
+        by_section.setdefault(e["section"].lower(), []).append(e["id"])
+    assert by_section["project"] == ["P001", "P002", "P003"]
+    assert by_section["feedback"] == ["F001", "F002", "F003"]
+    all_ids = [e["id"] for e in entries]
+    assert len(all_ids) == len(set(all_ids))
+
+    # 幂等：复跑全部 origin_id skip
+    rep2 = run_import("zcode", ctx=ctx)
+    assert rep2["imported"] == []
+    assert len(rep2["skipped"]) == 5
