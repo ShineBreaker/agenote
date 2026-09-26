@@ -324,7 +324,11 @@ def _write_entries(cands: list[dict], ctx) -> None:
                  f"   :ORIGIN_ID: {cand['origin_id']}\n"
                  f"   :ORIGIN_AGENT: {cand['source']}\n{extra}   :END:\n")
         if cand["body"].strip():
-            block += f"   {cand['body'].strip()}\n"
+            # 逐行缩进：body 只缩进首行时，源侧 markdown 的 `* `/`** ` 行
+            # 裸写进 org 会被解析成伪顶级节/伪条目，污染 SSOT 并经 export 外流
+            block += "\n".join(
+                (f"   {ln}" if ln.strip() else "") for ln in cand["body"].strip().splitlines()
+            ) + "\n"
         # block 必须按行展开插入：_parse_memory_sections 返回的 target 行号
         # 是 join 后文本行坐标，只有列表元素与文本行一一对应时 _find_section_end
         # 的扫描才不错位——整块作为单元素 insert 会让同节第 2 条起全部尾插

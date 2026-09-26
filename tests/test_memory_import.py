@@ -393,7 +393,11 @@ def test_import_multi_entries_same_section_placement_and_ids(tmp_path, monkeypat
     回归背景：_write_entries 曾把整块作为单元素 insert，而 target 行号是
     join 后文本行坐标——列表里出现多行块元素后坐标错位，同节第 2 条起
     全部尾插到文件尾并落入 deprecated 节、ID 恒为同值（P002×N）。
+    fixture 必须是历史触发形状：条目进「既有中间节」且末节 deprecated
+    存在——默认 BASE_ORG（无 project/deprecated 节）下 P 走 else 新建
+    末节、尾插恰好落回自己节内，锁不住本 bug（reviewer 复现验证）。
     """
+    placement_org = BASE_ORG + "* project\n* deprecated\n"
     _src(monkeypatch, tmp_path, {
         "projects/p/memory/pa.md": FM_P.format(
             name="项目甲的构建前置步骤需要先同步子模块",
@@ -416,7 +420,7 @@ def test_import_multi_entries_same_section_placement_and_ids(tmp_path, monkeypat
             desc="委派纪律",
             body="大范围的探索性搜索应当交给子智能体执行并只取回结论，主会话直接翻找大量文件会消耗宝贵的上下文窗口。"),
     })
-    ctx = _ctx(tmp_path, monkeypatch=monkeypatch)
+    ctx = _ctx(tmp_path, text=placement_org, monkeypatch=monkeypatch)
     rep = run_import("zcode", ctx=ctx)
     assert len(rep["imported"]) == 5
     text = ctx.memory_org.read_text(encoding="utf-8")
@@ -444,3 +448,38 @@ def test_import_multi_entries_same_section_placement_and_ids(tmp_path, monkeypat
     rep2 = run_import("zcode", ctx=ctx)
     assert rep2["imported"] == []
     assert len(rep2["skipped"]) == 5
+
+
+def test_import_multiline_body_star_lines_indented(tmp_path, monkeypatch):
+    """多行 body 的 `* `/`** ` 行必须逐行缩进：裸写会被解析成伪节/伪条目。
+
+    源侧 markdown 列表/加粗行直写 org 顶层会成为顶级节或条目标题，
+    污染 SSOT 并经 export/context 外流（reviewer 对抗探针复现）。
+    """
+    _src(monkeypatch, tmp_path, {
+        "projects/p/memory/with-stars.md": (
+            "---\nname: 星号列表正文需要被安全缩进\ndescription: 结构注入\n"
+            "metadata:\n  type: feedback\n---\n\n"
+            "首行说明正文来源与用途。\n"
+            "* 这是 markdown 列表项不是 org 节\n"
+            "** 这是 markdown 加粗行不是 org 条目\n"
+            "尾行说明列表项应该留在正文里。\n"
+        ),
+    })
+    ctx = _ctx(tmp_path, text=BASE_ORG + "* project\n* deprecated\n",
+               monkeypatch=monkeypatch)
+    rep = run_import("zcode", ctx=ctx)
+    assert len(rep["imported"]) == 1
+    text = ctx.memory_org.read_text(encoding="utf-8")
+
+    from agenote.memory import _iter_memory_entries
+    entries = list(_iter_memory_entries(text))
+    # 仅预置 F001 + 导入 1 条——伪节/伪条目不得出现在解析结果中
+    assert len(entries) == 2
+    imported = [e for e in entries if e["id"] != "F001"][0]
+    # 星号行留在 body 里且已被缩进脱离 org 结构语法
+    assert "* 这是 markdown 列表项" in imported["body"]
+    assert "** 这是 markdown 加粗行" in imported["body"]
+    for ln in text.splitlines():
+        assert not re.match(r"^\*\s+这是", ln), f"伪顶级节泄漏: {ln!r}"
+        assert not re.match(r"^\*\*\s+这是", ln), f"伪条目泄漏: {ln!r}"
