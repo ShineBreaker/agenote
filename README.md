@@ -1,141 +1,73 @@
-# agenote-el — agenote Emacs 集成
+# agenote-el: the Emacs front end for agenote
 
-> [agenote](https://github.com/ShineBreaker/agenote) 跨 Agent 经验平台的 Emacs 集成包。
-> 在 Emacs 内调用 agenote CLI 进行知识卡片 CRUD、记忆管理、策展与健康度查看。
+agenote-el wires the knowledge base operations of the
+[agenote](https://github.com/ShineBreaker/agenote) CLI into Emacs, so you can
+capture, search, review and curate experience cards from a buffer. You and the
+AI read the same org files.
 
-本包把 agenote CLI 的能力以交互命令、浏览 mode、健康度面板和 dashboard 数据源的形式
-接入 Emacs。所有文件系统操作都委托给 agenote CLI，Emacs 只负责交互调用与 buffer 刷新，
-避免 Emacs 与 CLI 之间的索引/扫描逻辑漂移。
+## What problem it solves
 
-## 依赖
+agenote turns experience into a knowledge base: one org file per card, written
+by hand or through org-capture, and AI agents can write into the same tree. The
+friction is that these operations otherwise only happen in a terminal, so
+Emacs users switch back and forth for every card.
 
-| 依赖                                                       | 说明                                                         |
-| ---------------------------------------------------------- | ------------------------------------------------------------ |
-| **[agenote](https://github.com/ShineBreaker/agenote) CLI** | 必须先安装（`uv tool install`，产出 `~/.local/bin/agenote`） |
-| **Emacs ≥ 29.1**                                           | `Package-Requires: ((emacs "29.1"))`                         |
+agenote-el turns the terminal commands into interactive commands. A card is an
+ordinary org file, capture goes through org-capture, search goes through
+consult-ripgrep or rgrep, and opening a card is `find-file`. There is no second
+data format to keep in sync.
 
-无第三方 elisp 依赖，仅用 `cl-lib` / `json` / `org`（内置）。
+## What it does
 
-## 安装
+- **Knowledge base overview.** `M-x agenote-knowledge-browse` lists cards grouped
+  by the human and agenote domains, with status, author, last use, count,
+  category and title on each row. Press `/` to filter on title, category, status
+  or author, and `RET` on a group header to expand it from 20 cards to all of
+  them.
+- **Health panel.** `M-x agenote-health` renders the CLI health report as a
+  panel; `g` refetches it.
+- **Card lifecycle.** Capture, archive, commit, merge, deduplicate, connect two
+  cards, and update timestamps each have a command. The slow ones run as async
+  processes and write to their own buffer, so editing is never blocked.
+- **Web visualization.** Hand a domain's card graph to the browser.
 
-### 方式一：use-package + load-path（推荐）
+One rule holds the implementation together: every CLI call goes through
+`agenote-call` or `agenote-call-async`. The Emacs side duplicates no index or
+scan logic and leaves ordering and filtering to the CLI. Each call re-resolves
+`executable-find "agenote"` instead of caching an absolute path, so a long-lived
+daemon picks up the new CLI after a Guix profile switch.
+
+`agenote-dashboard.el` adds a few pure functions that a host dashboard calls to
+get recent entries, keeping its own cache and refresh.
+
+## Who it is not for
+
+- People who do not use Emacs. The whole value is inside Emacs; terminal users
+  should call the CLI directly.
+- Knowledge bases not managed by the agenote CLI. The elisp side never scans the
+  org directory on its own.
+- Anyone after a knowledge base tool with its own database and full-text index.
+  What agenote stores is org files plus one CLI-maintained index.
+
+## Quick start
 
 ```elisp
 (use-package agenote
-  :load-path "/path/to/agenote-el"            ; 或 stow 部署后的路径
+  :load-path "/path/to/agenote-el"
   :custom
-  (agenote-org-directory "~/Documents/Org"))   ; 知识库根（KB_ROOT）
+  (agenote-org-directory "~/Documents/Org"))
 ```
 
-### 方式二：直接加 load-path
+Needs Emacs 29.1 or later, with no third-party elisp dependencies. For
+installation steps, the keybinding table, the full browse mode reference and
+every configuration option, see the [usage guide](docs/usage.md).
 
-```elisp
-(add-to-list 'load-path "/path/to/agenote-el")
-(require 'agenote-keybinds)                    ; 加载全部命令 + command-map
-```
+## Read more
 
-### 绑定快捷键
+- [Usage guide](docs/usage.md)
+- [中文 README](README.zh.md)
+- [agenote main repo](https://github.com/ShineBreaker/agenote)
 
-本包**不绑定任何全局前缀**——`agenote-command-map` 是裸 keymap，由宿主配置挂到喜欢的
-前缀上（保留宿主对键绑定的单一真相源）：
+## License
 
-```elisp
-;; 挂到 C-c o k 前缀（which-key 会自动显示子命令）
-(keymap-global-set "C-c o k" agenote-command-map)
-
-;; 或用 use-package
-(use-package agenote-keybinds
-  :after agenote
-  :bind-keymap ("C-c o k" . agenote-command-map))
-```
-
-## 命令
-
-加载 `agenote-keybinds` 后，`agenote-command-map` 含以下绑定：
-
-| 键  | 命令                                    | 功能            |
-| --- | --------------------------------------- | --------------- |
-| `c` | `agenote-knowledge-capture`             | 捕获经验卡片    |
-| `s` | `agenote-knowledge-search`              | 搜索经验        |
-| `t` | `agenote-knowledge-search-by-tag`       | 按标签搜索      |
-| `I` | `agenote-knowledge-open-inbox`          | 打开 Inbox      |
-| `S` | `agenote-knowledge-stats`               | 知识库统计      |
-| `v` | `agenote-knowledge-browse-human`        | 总览人类域全部  |
-| `b` | `agenote-knowledge-browse-agenote`      | 总览 agenote 域全部 |
-| `a` | `agenote-knowledge-archive-inbox-entry` | 归档 Inbox 条目 |
-| `d` | `agenote-knowledge-deduplicate`         | 检测重复卡      |
-| `e` | `agenote-knowledge-merge`               | 合并卡片        |
-| `l` | `agenote-knowledge-lint`                | 校验知识库      |
-| `m` | `agenote-knowledge-memory`              | 记忆系统        |
-| `n` | `agenote-knowledge-connect`             | 链接卡片        |
-| `o` | `agenote-knowledge-commit`              | 提交知识库      |
-| `r` | `agenote-knowledge-review`              | 审查卡片        |
-| `u` | `agenote-knowledge-touch`               | 更新卡片时间    |
-| `V` | `agenote-knowledge-viz-open-browser`    | 浏览器可视化    |
-
-另含 `agenote-health`（健康度面板）与 dashboard 数据源函数（见下）。
-
-## 知识库总览（browse mode）
-
-`M-x agenote-knowledge-browse` 打开双域分组总览：human 与 agenote 各显示前 20 张卡片
-（列：状态 / 作者 / 上次使用 / 次数 / 类别 / 标题；作者列显示 `source_agent`，无则
-`owner`；mode-line 显示各域总数与当前过滤词）。
-
-| 键       | 动作                                                     |
-| -------- | -------------------------------------------------------- |
-| `RET`    | 条目行：打开卡片文件；分组头行：该域 20 条 ↔ 全部 展开/收起 |
-| `/`      | 子串过滤（匹配标题/类别/状态/作者，如 `stale`、`archived`） |
-| `B`      | 回双区总览（重置展开状态并清除过滤）                     |
-| `g`      | 重新拉取两域数据                                         |
-| `o`      | 打开光标所在域的 web 可视化（`agenote viz --open`）      |
-
-数据来自 `agenote --domain <domain> list --all --json`（每次刷新全量拉取，分组截取在
-Emacs 侧完成，保证过滤对全量数据准确）。
-
-## 配置项
-
-| defcustom                       | 默认值                        | 说明                                      |
-| ------------------------------- | ----------------------------- | ----------------------------------------- |
-| `agenote-org-directory`         | `~/Documents/Org`             | 知识库根（对应 agenote CLI 的 `KB_ROOT`） |
-| `agenote-experiences-directory` | `<org-directory>/experiences` | 经验卡片目录                              |
-| `agenote-inbox-file`            | `<org-directory>/inbox.org`   | 收件箱文件                                |
-| `agenote-subdomain-directory`   | `<org-directory>/agenote`     | agent 写入子域                            |
-
-## 包结构
-
-| 文件                   | 职责                                                                                                            |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `agenote.el`           | **适配层**：`agenote-call` / `-call-async` / `-call-string`（call-process / make-process 封装）+ 路径 defcustom |
-| `agenote-knowledge.el` | 知识库交互命令（CRUD/检索/记忆/策展）+ `agenote-knowledge-browse-mode`                                          |
-| `agenote-health.el`    | 健康度面板（`agenote-health-mode`，special-mode 派生）                                                          |
-| `agenote-dashboard.el` | dashboard 纯数据函数（无缓存/无进程/无 UI，供宿主 dashboard 调用）                                              |
-| `agenote-keybinds.el`  | `agenote-command-map`（17 命令的裸 keymap，不含全局前缀绑定）                                                   |
-
-### 设计要点
-
-- **适配层是唯一入口**：所有 CLI 调用走 `agenote-call` / `agenote-call-async`，不直接
-  `executable-find` + `call-process`。
-- **路径每次解析**：`executable-find "agenote"` 每次调用都重新解析 PATH，**不缓存**绝对
-  路径——长生命周期 daemon 在 Guix profile 切换后能自动用到新版 agenote。
-- **域隔离**：每次调用显式传 `--domain human|agenote`，不依赖 CLI 默认值。
-- **dashboard 零状态**：`agenote-dashboard.el` 只提供纯函数（如
-  `agenote-recent-knowledge-entries`），缓存/进程/UI 注册归宿主 dashboard 框架——这让它
-  可被任何 dashboard 实现复用。
-
-## Dashboard 集成
-
-宿主 dashboard 通过纯函数获取最近条目数据（自行管理缓存与异步刷新）：
-
-```elisp
-;; 返回最近 N 条知识条目（alist 列表，供 dashboard 渲染）
-;; 默认 agenote 域（agent 写入卡片所在地；human 域多为手写、常为空）
-(agenote-recent-knowledge-entries 5)
-;; 可显式指定域
-(agenote-recent-knowledge-entries 5 'human)
-```
-
-宿主负责：缓存、异步进程刷新、widget 注册。本包不介入这些。
-
-## 许可证
-
-MIT，见 [LICENSE](LICENSE)。
+MIT, see [LICENSE](LICENSE).
