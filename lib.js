@@ -12,14 +12,32 @@
 
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 // ─── CLI 调用 ───────────────────────────────────────────────────────────────
 
-/** CLI 可执行名。可用环境变量覆盖（如指向未安装的源码仓库 shim）。 */
-export const KB_SCRIPT = process.env.AGENOTE_BIN || "agenote";
+/**
+ * 解析 CLI 可执行名：AGENOTE_BIN 是环境变量，可被外部注入——裸采用等于
+ * 让环境决定执行哪个程序。只接受指向「已存在的可执行普通文件」的路径
+ * （覆盖 shim 的正当用法），其余一律回退 "agenote" 走 PATH 解析。
+ */
+function resolveKbScript() {
+  const fromEnv = process.env.AGENOTE_BIN?.trim();
+  if (fromEnv) {
+    try {
+      const st = statSync(fromEnv);
+      if (st.isFile() && st.mode & 0o111) return fromEnv;
+    } catch {
+      // 路径不存在 / 不可访问 → 回退内置名
+    }
+  }
+  return "agenote";
+}
+
+/** CLI 可执行名。可用环境变量 AGENOTE_BIN 指向源码仓库 shim（须为可执行文件路径）。 */
+export const KB_SCRIPT = resolveKbScript();
 
 /**
  * 调用 agenote CLI，返回 { ok, stdout, stderr }。
