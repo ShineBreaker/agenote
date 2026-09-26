@@ -1,190 +1,140 @@
-# agenote — 跨 Agent 经验平台 CLI
+# agenote: cross-agent knowledge base
 
 [![CI](https://github.com/ShineBreaker/agenote/actions/workflows/ci.yml/badge.svg)](https://github.com/ShineBreaker/agenote/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> 跨 Agent 知识管理与经验共享系统。通过 CLI 命令（终端调试与 cron 入口）暴露统一
-> API；支持多个 AI agent 共享经验卡片、记忆、策展与工作流蒸馏。
+> One memory, six agents sharing it.
 
-本仓库是 agenote 系统的**程序本体**——Python CLI 工具与共享库。配套的 agent skills
-和 omp 扩展在独立仓库：
+Agents don't share memory. A pitfall you hit in Claude Code has to be hit again in
+Codex, because every host stores its memory in a private format you can neither read nor
+maintain. agenote collects those memories into one Org directory that both AI and humans
+read and write as the same files.
 
-- [agenote-skills](https://github.com/ShineBreaker/agenote-skills) — 3 个 agent skill
-- [pi-agenote](https://github.com/ShineBreaker/pi-agenote) — oh-my-pi 扩展
-- [injectors/](injectors/README.md) — 宿主记忆注入器（zcode/claude/codex/opencode/hermes）
+## Why Org rather than Markdown
 
-## 安装
+Most memory systems are built for the Markdown ecosystem: `.md` files, paragraphs for
+body text, heading levels for structure, front matter for state. agenote takes the other
+route, and every card is a standard org file.
 
-### uv tool（推荐）
+This isn't a wrapper. Card structure uses org's native mechanisms directly:
+
+- **Property drawers** hold structured metadata. `CATEGORY`, `TECH`, `STATUS`, `WEIGHT`,
+  and `USAGE_COUNT` are drawer keys, not lines in the body.
+- **TODO keywords** carry the state machine. The heading is always `* DONE`, with the
+  real state in the `:STATUS:` property, and the CLI moves cards through four states
+  (done, stable, stale, archived).
+- **Sections and inline markers** keep org syntax. `** 场景` is an org subsection,
+  `~orgfmt --check~` is an org code marker rather than a backtick.
+
+You get three things a Markdown design can't offer:
+
+**Humans can edit directly.** Open Emacs and `M-x org agenda` lists the cards by state;
+`org-refile` moves them; `[[card][description]]` links are clickable. Maintaining the
+knowledge base needs no agent and no separate interface.
+
+**Zero learning cost for Emacs users.** If you already take notes in org mode, recording
+an agent's lessons is just more entries in the same drawers.
+
+**Readable Git diffs.** Which sentence changed in a card is visible at a glance in org.
+Large Markdown files are mostly reflowing in a diff.
+
+The cost is explicit: it assumes you have Emacs or at least an editor that understands
+org syntax. Even without one, the files are plain text and nothing is lost, you just
+lose agenda and refile.
+
+## What it stores
+
+Two kinds of content, with a clear boundary:
+
+- **Experience cards** in `experiences/`. One reusable lesson each, with a title, category,
+  tech stack, body, and status. This is the knowledge base's atom.
+- **Memory entries** in `MEMORY.org`. Long-lived constraints that cut across cards, such as
+  your preferences, a project's build commands, or gotchas specific to one machine. Lighter
+  than cards, and injected into sessions first when you search.
+
+Cards you write by hand and cards written by agents live in separate subdirectories and
+don't contaminate each other. Search spans both domains by default, weighting what you
+wrote higher.
+
+## Core capabilities
+
+**Write safety.** Mutating commands hold a flock process lock, writes go through tmp +
+rename atomically, and same-second writes get an ID suffix appended. Several agents writing
+to one knowledge base don't collide.
+
+**Mixed Chinese-English search.** BM25 ranking with CJK 1/2/3-gram tokenization, so an
+English command name embedded in a Chinese sentence still matches.
+
+**Write gating.** Secret scanning is on by default and rejects key-shaped content. Sensitive
+memory entries carry a marker and stay local, never injected into a session or projected to
+a host.
+
+**Trace back to the source.** Every experience links back to the original full conversation,
+tool calls and reasoning included, rather than to a summary.
+
+**A curation loop.** Health reports, dedup, status downgrade, archive, and weight recompute
+are all atomic commands. The agent decides what to keep based on the spec; the CLI only
+surfaces candidates and the evidence behind them.
+
+**Visualization.** `agenote viz` renders the whole knowledge base into a single searchable
+HTML file.
+
+## Six hosts
+
+zcode, Claude Code, Codex, oh-my-pi, opencode, and Hermes each have a plugin or injector
+wired to `agenote context`. A brief is injected at session start, and task completion
+triggers experience capture, with the exact behavior defined by shared skills. Each host's
+built-in memory write side must be turned off by hand; `agenote doctor` checks them one by
+one.
+
+The knowledge base itself is a set of org files, and a Python CLI handles cards, search,
+curation, and health. 37 subcommands, 460 tests, Python ≥ 3.10, no database.
+
+## Versus built-in host memory
+
+| Dimension | Built-in host memory | agenote |
+| --- | --- | --- |
+| Scope | Private to one host | Six hosts share one knowledge base |
+| Storage | Per-host private formats (Markdown fragments, SQLite, JSONL) | Unified org files, human-readable |
+| Write side | Each host writes independently | Host writes disabled; the CLI is the sole writer |
+| Search | Local, per-host matching | Global BM25 with CJK n-gram |
+| Curation | None | Health, dedup, downgrade, archive, weight recompute |
+| Visualization | None | HTML visualization and an Emacs dashboard panel |
+
+## Quick start
 
 ```bash
-# 从 git 安装（产出 ~/.local/bin/{agenote,agenote-cli,orgfmt}）
 uv tool install git+https://github.com/ShineBreaker/agenote.git
 
-# 本地开发（editable，改源即生效）
-uv tool install --editable /path/to/agenote
+agenote init                    # set up the knowledge base, default ~/Documents/Org
 
-# 带 jieba 中文分词（dream 子命令用）
-uv tool install --with jieba git+https://github.com/ShineBreaker/agenote.git
+agenote add --title "concurrent write test" --category testing --tech Python
 ```
 
-### pip
+The full command set, configuration, and architecture are in the
+[usage guide](docs/usage.md).
 
-```bash
-pip install --user git+https://github.com/ShineBreaker/agenote.git
-```
+## Who shouldn't use this
 
-## 命令
+- One person, one agent. Host built-in memory is enough.
+- You already have a note system that works and don't intend to let AI read or write it.
+- You need team sharing, multi-user permissions, or real-time collaboration. agenote is a
+  single-machine file store versioned with Git.
 
-安装后获得三个命令：
+## Ecosystem
 
-| 命令          | 用途                                                                      |
-| ------------- | ------------------------------------------------------------------------- |
-| `agenote`     | 主 CLI（30+ 子命令）：卡片 CRUD、检索、记忆、策展、健康度、跨 agent 协同 |
-| `agenote-cli` | 轻量 shim，供 pi 扩展 execSync 调用（health）                             |
-| `orgfmt`      | 通用 org-mode 格式化 CLI（共享 agenote 库）                               |
+- [agenote-skills](https://github.com/ShineBreaker/agenote-skills): three agent skills (base, curator, review)
+- [pi-agenote](https://github.com/ShineBreaker/pi-agenote): the oh-my-pi integration extension
+- [injectors/](injectors/README.md): memory injectors for the six hosts
+- [agenote-el](https://github.com/ShineBreaker/agenote-el): the Emacs integration package
 
-运行 `agenote --help` 查看完整子命令清单。主要命令分组：
+## Read more
 
-- **卡片 CRUD**：`add` / `get` / `list` / `update` / `merge` / `connect` / `archive` / `restore`
-- **检索**：`search`（BM25 排序，CJK n-gram 中英混检）/ `tags` / `fields` / `inbox`
-- **记忆系统**：`memory`（`--add` / `--stale` / `--touch` / `--archive` 等子选项）
-- **策展**（原子工具，流程由 agent 依据 [agenote-skills](https://github.com/ShineBreaker/agenote-skills) 编排）：
-  `health` / `gaps` / `deduplicate` / `review` / `archive --stale`（归档候选，只读）/
-  `list --unused-days`（降级候选，只读）/ `lint`（`--json` 分类报告）/ `reindex`（含 WEIGHT 重算）/ `stats`
-- **跨 agent**：`reconcile` / `dream` / `distill` / `extract`
-- **维护**：`init` / `commit` / `config` / `doctor`（环境自诊断）/ `touch` / `viz`
+- [Usage guide](docs/usage.md): installation, command reference, configuration, architecture, development
+- [中文 README](README.zh.md)
+- [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Architecture decisions](docs/adr/)
+- [Glossary](CONTEXT.md): what cards, memory entries, and reconcile actually mean
 
-多 agent 并发写入安全：变更类命令持进程级 KB 锁（flock），文件落盘走
-原子写（tmp + rename），同秒 `add` 自动追加 ID 序号防覆盖。
+## License
 
-## 配置
-
-### 快速上手
-
-```bash
-agenote config init    # 生成带注释的配置模板到 ~/.config/agenote/config.toml
-agenote config show    # 打印当前生效配置及每个键的来源（env / file / default）
-```
-
-配置文件遵循 XDG（`$XDG_CONFIG_HOME/agenote/config.toml`，默认
-`~/.config/agenote/config.toml`），TOML 格式。**三层优先级：环境变量 > 配置文件 > 内置默认值**——CLI 显式传参时参数最优先。
-
-### 可配置项（节选）
-
-| 节 | 内容 |
-| --- | --- |
-| `[paths]` | `kb_root` 知识库根、`agenote_dir` agent 域子目录名、conversations/reconcile/viz 产物目录 |
-| `[agent]` | 卡片 SOURCE_AGENT 默认写入者标签 |
-| `[weights]` | 检索权重（人类 1.5 / agent 1.0）、touch 加成、stale 惩罚、去重加成、评分系数 |
-| `[curation]` | stale/archive 天数阈值、去重相似度阈值 |
-| `[health]` | 孤立率/过时率/类型偏斜的 warn/bad 分级阈值 |
-| `[dream]` / `[distill]` | 启发式阈值（词频、窗口天数、聚类下限等） |
-| `[extract]` / `[extract.sources]` | 抽取截断链、每源条数上限、6 个 agent 对话源数据库路径 |
-| `[search]` / `[add]` / `[commit]` / `[viz]` | 检索参数、新卡片默认字段、commit 精准 add 清单、可视化参数 |
-
-完整键清单与默认值见 `agenote config init` 生成的模板注释，或
-[config.py SCHEMA](src/agenote/config.py)（全部键的单一真相源）。
-
-### 知识库根（`KB_ROOT`）
-
-默认 `~/Documents/Org`，配置方式（按优先级）：
-
-```bash
-KB_ROOT=/path/to/kb agenote stats      # ① 环境变量临时覆盖
-# ② 配置文件：[paths] kb_root = "/path/to/kb"
-# ③ 默认值：~/Documents/Org
-```
-
-卡片数据、`MEMORY.org`、`index.json`、`conversations/` 等运行时产物写入 `KB_ROOT`，
-**不在本仓库**——本仓库只管 CLI 源码。
-
-### 知识库 commit 约定
-
-`agenote init` / `agenote commit` 生成与建议的 message 采用 Conventional Commits
-（内容仓库简化版）：
-
-```
-chore(init): 初始化知识库
-chore(curate): 新增 K 张 / 更新 M 张
-feat(card): <新卡片主题>
-```
-
-## 架构
-
-```
-agenote CLI ─┐
-             ├── agenote 包（src/agenote/）
-orgfmt CLI ──┤     ├── config.py    配置层（SCHEMA 单源 + env > toml > 默认）
-             │     ├── core.py     常量 + KBContext + 工具函数
-agenote-cli ─┘     ├── cards.py    卡片 CRUD
-                   ├── memory.py   记忆系统
-                   ├── health.py   健康度分析
-                   ├── reconcile.py 跨 agent 只读索引
-                   ├── dream.py    启发式候选发现
-                   ├── distill.py  工作流蒸馏
-                   ├── extract/    对话抽取（6 个 agent extractor）
-                   └── viz/        HTML 可视化生成
-```
-
-三个 CLI 共享同一 `agenote` 包内核，行为一致。`agenote-cli` 是给 pi 扩展的
-轻量入口（纯 stdlib，仅 health 一个命令——策展由 agent 走主 CLI 编排）。
-
-## 开发
-
-```bash
-# 克隆 + 本地安装（editable）
-git clone https://github.com/ShineBreaker/agenote.git
-cd agenote
-uv sync --extra test
-uv tool install --editable .
-
-# 验证
-agenote --help
-python -c "from agenote import core; print(core.KB_ROOT)"
-
-# 测试（CI 同款）
-uv run pytest -q
-
-# 构建 wheel/sdist
-uv build
-```
-
-## Shell 补全
-
-fish / zsh / bash 均支持 Tab 补全子命令与常用选项。
-
-```bash
-# 动态生成（推荐：变更后自动同步）
-agenote completions fish > ~/.config/fish/completions/agenote.fish
-agenote completions zsh  > ~/.zsh/completions/_agenote   # 确保该目录在 $fpath
-agenote completions bash > /etc/bash_completion.d/agenote  # 或 source
-
-# 静态脚本（随仓库分发，无需已安装 agenote）
-# completions/agenote.fish  completions/_agenote  completions/agenote.bash
-```
-
-覆盖 CLI 的全部子命令（含 `config init/show` 二级）、`--domain` / `--type` /
-`--source` 等常用枚举。`completions/` 下的静态脚本与 `agenote completions`
-输出逐字节一致，CI 校验。
-
-贡献指南（含 Conventional Commits 规范）见 [CONTRIBUTING.md](CONTRIBUTING.md)，
-版本历史见 [CHANGELOG.md](CHANGELOG.md)，架构决策见 [docs/adr/](docs/adr/)。
-
-## 致谢
-
-本项目的若干核心设计移植自 [claude-obsidian](https://github.com/AgriciDaniel/claude-obsidian)
-（MIT License © AgriciDaniel 及贡献者），在此致谢：
-
-- **写入安全**（flock 进程锁 + tmp/rename 原子写）源自其「崩溃后可确定性恢复」
-  的事务哲学（裁剪版——agenote 单命令即时写入，不引入 journal/审批两阶段）
-- **BM25 检索**（纯 stdlib Okapi + CJK 1/2/3-gram 分词）源自其 wiki-retrieve
-  检索扩展（裁剪版——百级卡片进程内即时计算，不引入持久倒排索引）
-- **doctor 能力检测**的三态声明与 `verification_reason` 惯例
-  （「没有验证器」是一等信息公开声明）源自其 capabilities 合同
-- **lint 分类报告**（summary.category_counts + 条目 {file, reason}，
-  agent 可消费、可差分）源自其 wiki-lint 报告结构
-
-## 许可证
-
-MIT，见 [LICENSE](LICENSE)。
+MIT, see [LICENSE](LICENSE).
