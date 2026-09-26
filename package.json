@@ -9,6 +9,14 @@
     "type": "git",
     "url": "git+https://github.com/ShineBreaker/dsh-agenote.git"
   },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": "^0.1.7-rc.2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh": {
+      "optional": true
+    }
+  },
   "main": "./index.js",
   "exports": {
     ".": "./index.js",
@@ -27,8 +35,12 @@
     "LICENSE"
   ],
   "dsh": {
+    "manifestVersion": 1,
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "engines": {
+      "dsh": ">=0.1.7-rc.2"
     }
   }
 }
