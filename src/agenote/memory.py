@@ -249,7 +249,9 @@ def _iter_memory_entries(text: str) -> list[dict]:
                     hook = hm.group(1).strip()[:120]
                 else:
                     stripped = lines[j].strip()
-                    if stripped:
+                    # drawer 结构行无属性值（不匹配上面的 :KEY: value 正则），
+                    # 不能落进正文——否则 context 首行会出现 ":PROPERTIES: :END:" 残渣
+                    if stripped and stripped not in (":PROPERTIES:", ":END:"):
                         body_parts.append(stripped)
             j += 1
         if m_typed:

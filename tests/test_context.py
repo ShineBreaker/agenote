@@ -366,7 +366,9 @@ def test_cli_context_on_fresh_kb_writes_nothing(tmp_path, monkeypatch, capsys):
 
     fresh = tmp_path / "fresh-kb"
     fresh.mkdir()
-    monkeypatch.setattr(core, "KB_ROOT", fresh)
+    # agenote 域 ctx 的路径全部派生自模块常量 AGENOTE_ROOT（import 时固化），
+    # patch KB_ROOT 不生效——此前本测试靠真实 KB 恰好为空假阴性通过
+    monkeypatch.setattr(core, "AGENOTE_ROOT", fresh)
     monkeypatch.setattr("sys.argv", ["agenote", "context"])
     cli.main()
     assert capsys.readouterr().out == ""  # 空库 → empty 态零字节

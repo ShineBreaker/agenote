@@ -435,6 +435,11 @@ def test_import_multi_entries_same_section_placement_and_ids(tmp_path, monkeypat
     all_ids = [e["id"] for e in entries]
     assert len(all_ids) == len(set(all_ids))
 
+    # 导入条目无 # 钩子行，body 是注入首行来源——drawer 结构行不得混入
+    # （曾现形为 context 输出 "— :PROPERTIES: :END: 正文…"）
+    for e in entries:
+        assert ":PROPERTIES:" not in e["body"] and ":END:" not in e["body"]
+
     # 幂等：复跑全部 origin_id skip
     rep2 = run_import("zcode", ctx=ctx)
     assert rep2["imported"] == []
