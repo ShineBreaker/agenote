@@ -50,7 +50,7 @@ profile 为 `patchReload: live` 时（web profile 默认如此），新 bundle �
 
 ## 配置
 
-配置从 cordis 行的 `config` 下发（见 `cordis.patch.yml` 注释）。全部字段可选：
+配置从 cordis 行的 `config` 下发（见 `cordis.patch.yml` 注释）。全部字段可选，**默认值由插件导出的 `Config` schema 声明**（`index.js` 组合，字段定义在 `hooks.js` / `commands.js`）：Cordis 加载时用它校验配置并填默认值，**非法配置在加载期直接失败**（`invalid config: ...`），不会带着错值跑起来：
 
 ```yaml
 - id: agenote
@@ -63,6 +63,7 @@ profile 为 `patchReload: live` 时（web profile 默认如此），新 bundle �
       signals: ["搞定", "done."] # 覆盖内置信号清单
       debounceMs: 300000 # 触发冷却期（durable log 推导）
       idleMs: 300000 # 空闲兜底阈值
+      statusTtlMs: 300000 # 健康度摘要缓存时长（0 = 每个请求重算）
     commands:
       enabled: true
 ```
@@ -78,6 +79,7 @@ profile 为 `patchReload: live` 时（web profile 默认如此），新 bundle �
 - **每会话状态用 `Map<sessionId, state>`**，不用模块级标量。一个进程里可并存多个会话（web 多标签、subagent），模块级状态会串台——这正是 pi 版历史上修过的 bug。
 - **自注入反馈环防护**。注入的提示词自身含「完成」等信号词；`agent/inbox/inserted` 只认 `source.kind === 'user'` 的消息（本插件注入的 source.kind 是 `'plugin'`），回路在来源层面断开。
 - **不 import `@deepseek-ai/*`**。本包经 `link:` 部署时模块 realpath 落在源码目录，Node 的 `node_modules` 父级检索够不到 `$DSH_HOME/profiles/node_modules` 共享 fallback。需要上游纯函数（`createUserMessage`）时在 `lib.js` 里复刻并注明出处；上游改语义需手动同步。
+- **配置走 Standard Schema，不手写 normalize**。插件导出 `Config`（Standard Schema v1 节点，`lib.js` 里手搓的 schemastery 最小子集，语义逐条对齐上游），Cordis 加载时用它校验 cordis.yml 行下发的 config 并填默认值；非法值（如 `debounceMs: -1`、`signals: []`）在加载期抛 `ValidationError`，而不是被静默回退。字段与默认值的单一真相源在 `hooks.js` / `commands.js` 的 `Config` 声明里，新增可调项必须加在那里。
 - **空闲兜底以「跑过工具的轮次」为门槛**，不用裸 turn 数。turn 数无法区分「完成了一段工作」与「回答了一个问题」——纯对话轮同样推进 turn，会导致兜底在纯聊天上误报（实测发生过）。判据是 `workedThisTurn`（仅在该轮 `tools/result` 触发过时才成立）。
 - **不重复实现行为规范**。信号清单、写入流程、卡片格式全部归 `agenote-skills`；插件只做「事件触发 + 命令快捷入口」。
 - **归因**。所有 CLI 调用都带 `AGENOTE_AGENT=dsh`（`lib.js:runKb`）。该变量只给卡片打归因标签，不做写入隔离，但不带的话归因会错误落到默认 agent（`omp`）。
@@ -100,6 +102,7 @@ profile 为 `patchReload: live` 时（web profile 默认如此），新 bundle �
 
 ```bash
 node --check index.js hooks.js commands.js lib.js   # 语法检查
+node --input-type=module -e "import('./index.js').then(m=>{const v=m.Config['~standard'].validate;console.log(JSON.stringify(v(undefined)));console.log(JSON.stringify(v({hooks:{debounceMs:-1}}).issues??null))})"  # 配置 schema：全默认值 / 非法值报 issues
 dsh --profile <profile> --no-open --port 3099       # 新进程冷启动，确认无激活失败
 ```
 

@@ -8,11 +8,16 @@
 // 命令只把任务提示投进会话；只有 /agenote-health 是纯只读、直接回显 CLI 输出。
 
 import { buildCuratePrompt, buildReviewPrompt } from "./hooks.js";
-import { createUserMessage, runKb } from "./lib.js";
+import { createUserMessage, runKb, schema } from "./lib.js";
 
 export const name = "agenote-commands";
 
 export const inject = ["commands"];
+
+/** commands 半边的配置 schema（默认值单一真相源，由 index.js 组合成插件 Config）。 */
+export const Config = schema.object({
+  enabled: schema.boolean(true),
+}, { default: {} });
 
 /** 提示注入用同一个投递路径（followup 排一轮后续 turn 并唤醒 driver）。 */
 function deliver(agent, text, plugin) {
@@ -25,8 +30,8 @@ function deliver(agent, text, plugin) {
   );
 }
 
-export function apply(ctx, config = {}) {
-  if (config.enabled === false) return;
+export function apply(ctx, cfg) {
+  if (!cfg.enabled) return;
 
   // ── /agenote-summarize ──
   // 不开新会话——直接注入当前会话，让有完整上下文的 agent 做总结。

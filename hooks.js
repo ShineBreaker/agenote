@@ -19,7 +19,7 @@
 //   - review/curate 提示 → agent.followup()：这才是"要 agent 立即执行任务"的场景，
 //     等价 pi 的 sendUserMessage({deliverAs:'followUp'})。
 
-import { createUserMessage, healthSummary, runKb } from "./lib.js";
+import { createUserMessage, healthSummary, runKb, schema } from "./lib.js";
 
 export const name = "agenote-hooks";
 
@@ -64,6 +64,35 @@ const STATUS_TTL_MS = 5 * 60 * 1000;
 /** 本插件注入提示的标记——用于排除自注入消息，断开自触发反馈环。 */
 export const HOOK_MARKER = "<agenote-hook>";
 
+/**
+ * hooks 半边的配置 schema——本半边默认值与合法范围的单一真相源。
+ *
+ * 由 index.js 组合成插件的 `Config` 导出；Cordis 加载时据此校验 cordis.yml
+ * 行下发的 config 并填默认值，非法值（debounceMs 为负、signals 为空数组等）
+ * 在加载期抛 ValidationError，不会被静默回退。新增可调项必须加到这里，
+ * 不要在 apply() 里另写一套默认值。
+ */
+export const Config = schema.object({
+  enabled: schema.boolean(true),
+  /** system prompt 注入健康度摘要 */
+  status: schema.boolean(true),
+  /** 完成信号 → 注入 review 提示 */
+  completionSignals: schema.boolean(true),
+  /** 空闲兜底（无人值守场景） */
+  idleFallback: schema.boolean(true),
+  /** 覆盖内置信号清单（默认值即上方 COMPLETION_SIGNALS，上游真相源在 agenote-skills） */
+  signals: schema.array(schema.string(), {
+    default: COMPLETION_SIGNALS,
+    minLength: 1,
+  }),
+  /** 显式完成信号触发的防抖冷却期 */
+  debounceMs: schema.number({ default: DEBOUNCE_MS, minimum: 0 }),
+  /** 空闲兜底阈值 */
+  idleMs: schema.number({ default: IDLE_FALLBACK_MS, minimum: 1 }),
+  /** 健康度摘要缓存时长；0 = 每个请求重算 */
+  statusTtlMs: schema.number({ default: STATUS_TTL_MS, minimum: 0 }),
+}, { default: {} });
+
 /** 注入到下一轮的 agenote-review 评估提示（含留痕环节）。reason 说明触发来源。 */
 export function buildReviewPrompt(reason) {
   return [
@@ -101,30 +130,6 @@ export function extractText(content) {
     )
     .map((block) => block.text ?? "")
     .join(" ");
-}
-
-function normalize(cfg = {}) {
-  return {
-    enabled: cfg.enabled ?? true,
-    /** system prompt 注入健康度摘要 */
-    status: cfg.status ?? true,
-    /** 完成信号 → 注入 review 提示 */
-    completionSignals: cfg.completionSignals ?? true,
-    /** 空闲兜底（无人值守场景） */
-    idleFallback: cfg.idleFallback ?? true,
-    signals:
-      Array.isArray(cfg.signals) && cfg.signals.length > 0
-        ? cfg.signals
-        : COMPLETION_SIGNALS,
-    debounceMs:
-      Number.isFinite(cfg.debounceMs) && cfg.debounceMs >= 0
-        ? cfg.debounceMs
-        : DEBOUNCE_MS,
-    idleMs:
-      Number.isFinite(cfg.idleMs) && cfg.idleMs > 0
-        ? cfg.idleMs
-        : IDLE_FALLBACK_MS,
-  };
 }
 
 /** 本插件投递的消息统一带这个 source（durable log 里以此识别自注入）。 */
@@ -182,8 +187,9 @@ function deliveredByUs(session) {
   return events;
 }
 
-export function apply(ctx, config = {}) {
-  const cfg = normalize(config);
+export function apply(ctx, cfg) {
+  // cfg 已由 index.js 导出的 Config schema 校验并填默认值——非法配置在加载期
+  // 就已失败，这里直接使用，不再另写一套默认值或静默降级。
   if (!cfg.enabled) return;
 
   // ── 健康度摘要 → system-prompt section ──
@@ -198,7 +204,7 @@ export function apply(ctx, config = {}) {
       interpolate: false,
       text: () => {
         const now = Date.now();
-        if (now - cachedAt < STATUS_TTL_MS) return cached;
+        if (now - cachedAt < cfg.statusTtlMs) return cached;
         try {
           cached = healthSummary(runKb);
         } catch {

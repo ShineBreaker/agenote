@@ -166,3 +166,132 @@ export function sharedConfig() {
     return {};
   }
 }
+
+// ─── Config schema（Standard Schema v1 手搓子集）────────────────────────────
+
+/**
+ * 把校验节点包成 Cordis 认的 Config schema。
+ *
+ * Cordis 加载插件时读运行时的 `Config`，调 `Config["~standard"].validate(config)`
+ * （duck-typing，见 cordis 的 resolveConfig）：同步返回 { value } 或
+ * { issues: [{ message, path }] }——后者在加载期抛 ValidationError，非法配置
+ * 因此"响亮失败"，不会带着错值跑起来。
+ *
+ * 这里复刻 @deepseek-ai/schemastery 3.x 的最小子集（object/array/string/
+ * number/boolean + default + minimum/minLength），语义逐条对齐上游：
+ *   - undefined/null 输入走 default，克隆后继续跑类型校验（对象默认值里的
+ *     字段默认值由此逐层填上）；
+ *   - 对象的未知键放行（上游非 strict 模式的 merge 行为）；
+ *   - 数组逐项校验，issue 路径带下标。
+ * 上游改语义需手动同步。不 import schemastery 的原因同 createUserMessage：
+ * link: 部署下 Node 解析不到 $DSH_HOME/profiles/node_modules。
+ */
+function schemaNode(kind, extra) {
+  const node = { kind };
+  // 只收录"确实给了"的选项——`"default" in node` 即"有默认值"的判据
+  for (const [key, value] of Object.entries(extra)) {
+    if (value !== undefined) node[key] = value;
+  }
+  node["~standard"] = {
+    version: 1,
+    vendor: "dsh-agenote",
+    validate(value) {
+      const issues = [];
+      const resolved = resolveNode(node, value, [], issues);
+      return issues.length > 0 ? { issues } : { value: resolved };
+    },
+  };
+  return node;
+}
+
+/** 递归校验节点；issues 收集全部问题（不止报第一个），返回值仅在无问题时使用。 */
+function resolveNode(node, value, path, issues) {
+  if (value === undefined || value === null) {
+    if (!("default" in node)) return value;
+    value = structuredClone(node.default);
+  }
+  switch (node.kind) {
+    case "boolean":
+      if (typeof value !== "boolean") {
+        issues.push({ message: `应为布尔值，收到 ${JSON.stringify(value)}`, path });
+        return undefined;
+      }
+      return value;
+    case "number":
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        issues.push({
+          message: `应为有限数字，收到 ${JSON.stringify(value)}`,
+          path,
+        });
+        return undefined;
+      }
+      if (node.minimum !== undefined && value < node.minimum) {
+        issues.push({ message: `应 >= ${node.minimum}，收到 ${value}`, path });
+        return undefined;
+      }
+      return value;
+    case "string":
+      if (typeof value !== "string") {
+        issues.push({
+          message: `应为字符串，收到 ${JSON.stringify(value)}`,
+          path,
+        });
+        return undefined;
+      }
+      return value;
+    case "array":
+      if (!Array.isArray(value)) {
+        issues.push({
+          message: `应为数组，收到 ${JSON.stringify(value)}`,
+          path,
+        });
+        return undefined;
+      }
+      if (node.minLength !== undefined && value.length < node.minLength) {
+        issues.push({
+          message: `至少需要 ${node.minLength} 项，收到 ${value.length} 项`,
+          path,
+        });
+        return undefined;
+      }
+      return value.map((item, index) =>
+        resolveNode(node.item, item, [...path, index], issues),
+      );
+    case "object": {
+      if (typeof value !== "object" || Array.isArray(value)) {
+        issues.push({
+          message: `应为对象，收到 ${JSON.stringify(value)}`,
+          path,
+        });
+        return undefined;
+      }
+      // 未知键放行（对齐 schemastery 非 strict 模式），已知键逐项校验
+      const result = { ...value };
+      for (const [key, child] of Object.entries(node.shape)) {
+        result[key] = resolveNode(child, value[key], [...path, key], issues);
+      }
+      return result;
+    }
+    default:
+      throw new TypeError(`unknown schema kind: ${node.kind}`);
+  }
+}
+
+/** 配置 schema 构造器（最小子集，按需扩充）。 */
+export const schema = {
+  boolean(defaultValue) {
+    return schemaNode("boolean", { default: defaultValue });
+  },
+  number({ default: defaultValue, minimum } = {}) {
+    return schemaNode("number", { default: defaultValue, minimum });
+  },
+  string() {
+    return schemaNode("string", {});
+  },
+  array(item, { default: defaultValue, minLength } = {}) {
+    return schemaNode("array", { item, default: defaultValue, minLength });
+  },
+  object(shape, { default: defaultValue } = {}) {
+    return schemaNode("object", { shape, default: defaultValue });
+  },
+};
