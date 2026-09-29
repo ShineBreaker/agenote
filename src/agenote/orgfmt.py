@@ -277,20 +277,32 @@ _BLOCK_END = re.compile(r"^(\s*)#\+end_(\w+)\b", re.IGNORECASE)
 _MD_FENCE = re.compile(r"^(\s*)```(\w*)\s*$")
 
 
-def _iter_lines_with_block_state(text: str):
+# 代码类块：内容按字面保留，不做 org 标记修复。
+# 其余块（note/tip/quote/verse 等富文本块）的内容是正文档，标记照常渲染。
+_CODE_BLOCK_NAMES = {"src", "example", "comment", "export"}
+
+
+def _iter_lines_with_block_state(text: str, code_blocks_only: bool = False):
     """逐行生成 (行内容, 行号, in_block)。
 
-    in_block 标记该行是否位于 #+begin_src/.../#+end_src 或 ``` 围栏内部。
-    围栏起始行本身 in_block=False（它是边界），围栏内内容 True。
+    in_block 标记该行是否位于块内部；块边界行本身 in_block=False。
+    code_blocks_only=True 时只把代码类块（src/example/comment/export）
+    视为块——note/tip 等富文本块的内容是普通正文，按非块处理。
     """
     in_org = False
     in_md = False
     for i, line in enumerate(text.split("\n")):
-        if _BLOCK_BEGIN.match(line):
+        m = _BLOCK_BEGIN.match(line)
+        if m and (
+            not code_blocks_only or m.group(2).lower() in _CODE_BLOCK_NAMES
+        ):
             in_org = True
             yield line, i, False
             continue
-        if _BLOCK_END.match(line):
+        m = _BLOCK_END.match(line)
+        if m and (
+            not code_blocks_only or m.group(2).lower() in _CODE_BLOCK_NAMES
+        ):
             in_org = False
             yield line, i, False
             continue
@@ -449,63 +461,173 @@ def _md_to_org(text: str) -> tuple[str, list[str]]:
 # Org 强调标记 PRE 合法字符（行首也合法）
 _MARKER_PRE_VALID = set(" \t\n({['\"`")
 # Org 强调标记 POST 合法字符（行尾也合法）
-_MARKER_POST_VALID = set(' \t\n.,:;!?\'"" )}]\\-')
+_MARKER_POST_VALID = set(' \t\n.,:;!?\'" )}]\\-')
+# 标记字符集合：紧邻另一个标记字符时不插空格——那是跨标记的合法
+# 边界（如 verbatim 内嵌字面星号「=*Warnings*=」、双星 bold「**bold**」）
+_MARKER_ANY_CHAR = set("=~*")
 
 
-def _fix_marker_spacing(line: str, marker_char: str) -> tuple[str, int, int]:
-    """检查并修复 ~...~ 或 *...* 标记的外部空格。
+def _marker_boundary_insert(ch: str, valid: set) -> bool:
+    """外侧插空格的触发条件：非法边界 + 非标记字符 + 中文语境。
 
-    使用 Org 的 PRE/POST 规则判断是否需要插入空格。
-    相邻标记共享边界空格，避免重复插入。
+    非 ASCII 邻接（CJK 汉字 / 全角标点）是「作者想渲染但边界写错」的
+    高置信信号；ASCII 非法边界（如「word=foo=」的字母、多标记行里
+    错配对的两端）含义不明，不自动改——可能改坏字面符号或代码。
+    """
+    return ch not in valid and ch not in _MARKER_ANY_CHAR and ord(ch) > 0x7F
 
-    Returns (fixed_line, pre_fix_count, post_fix_count).
+
+def _marker_boundary_unclear(ch: "str | None", valid: set) -> bool:
+    """内侧修复的准入检查：外侧是含义不明的 ASCII 非法边界时拒绝修改。
+
+    finditer 会把「甲对右界 + 中间文本 + 乙对左界」错配成一个对
+    （如「把 =A= 的 =B=」两对之间的中段）；此类错配对的外侧常与
+    ASCII 字母相接，去掉内空会吞掉中段文本。真标记对的左界外总是
+    合法边界、行首或中文语境。ch 为 None（行首/行尾）时不拦截。
+    """
+    return (
+        ch is not None
+        and ch not in valid
+        and ch not in _MARKER_ANY_CHAR
+        and ord(ch) <= 0x7F
+    )
+
+
+# 内容含中文句读 / 全角括号时，视为跨段错配而非真标记对：
+# 真标记的内容是代码实体或文本片段，句中不会出现这些标点。
+_CJK_PUNCT_RE = re.compile(r"[，。、；：？！（）「」『』【】]")
+
+# 双星混写（Markdown 习惯渗入）：org 没有 **…** 语法，写成「**X* *」
+# 或「**X**」时整段都不渲染（* 与 * 之间夹空格同样失效）。收敛为
+# org 单星强调「 *X* 」，两侧空格按标记边界规则补齐。
+# 前视排除紧邻 =/~/* 的星号：verbatim 内嵌的字面双星（如 =**argv=）是内容，不动。
+# 首字符排除空白与星号：行首标题「** 」与三者结构不匹配，不会误伤。
+_DOUBLE_STAR_RE = re.compile(r"(?<![=~*])\*\*([^\s*][^*\n]*?)\*\s*\*\s*")
+
+
+def _fix_double_star(line: str) -> tuple[str, int]:
+    """把 Markdown 式双星混写收敛为 org 单星强调。Returns (line, count)."""
+    count = 0
+
+    def _replace(m: re.Match) -> str:
+        nonlocal count
+        count += 1
+        return f" *{m.group(1)}* "
+
+    return _DOUBLE_STAR_RE.sub(_replace, line), count
+
+
+def _iter_marker_pairs(line: str, pattern: re.Pattern) -> "list[re.Match]":
+    """从左到右收集标记对，拒绝三类错配后继续扫描。
+
+    多标记行里贪婪配对会把「甲对右界 + 中间文本 + 乙对左界」撞成
+    一个对，导致真对失去作为端点被检查的机会。拒绝的条件：
+      1. 端点紧邻另一标记字符（如 bold 记号「 *=let* …：=custom…=」
+         吞掉后对的左界）；
+      2. 内容含中文句读（如「= 两个块* ：」把标题内字面等号与后对
+         起点撞配）；
+      3. 内容为纯空白。
+    拒绝后推进一位重扫，让被吞的真对重新成对。
+    """
+    matches: list[re.Match] = []
+    pos = 0
+    while True:
+        m = pattern.search(line, pos)
+        if m is None:
+            break
+        if (m.start() > 0 and line[m.start() - 1] in _MARKER_ANY_CHAR) or (
+            m.end() < len(line) and line[m.end()] in _MARKER_ANY_CHAR
+        ):
+            pos = m.start() + 1
+            continue
+        inner = m.group(1)
+        if not inner.strip() or _CJK_PUNCT_RE.search(inner):
+            pos = m.start() + 1
+            continue
+        matches.append(m)
+        pos = m.end()
+    return matches
+
+
+def _fix_marker_spacing(line: str, marker_char: str) -> tuple[str, int, int, int]:
+    """检查并修复 =...= / ~...~ / *...* 标记的内外侧空格。
+
+    内侧：标记与内容边界之间不得有空白（如「= foo =」→「=foo=」）；
+    仅在内容去掉边界空白后仍为单一无空白 token 时才修——含空白的
+    内容（公式、句子）可能是字面符号，保持原样。
+    外侧：在非法的中文语境边界插入空格（见 _marker_boundary_insert）；
+    相邻字符为另一标记字符时豁免（见 _MARKER_ANY_CHAR）。
+
+    Returns (fixed_line, pre_fix_count, post_fix_count, inner_fix_count).
     """
     escaped = re.escape(marker_char)
-    pattern = escaped + r"[^" + escaped + r"\n]+" + escaped
-    markers = [
-        (m.start(), m.end())
-        for m in re.finditer(pattern, line)
-        if m.group()[1:-1].strip()
-    ]
+    pattern = re.compile(escaped + r"([^" + escaped + r"\n]+)" + escaped)
 
-    if not markers:
-        return line, 0, 0
+    inner_count = 0
 
+    # ── 内侧：去边界空格（只对 =...=，见下） ──────────────────────────────
+    if marker_char == "=":
+        stripped_parts: list[str] = []
+        pos = 0
+        for m in _iter_marker_pairs(line, pattern):
+            inner = m.group(1)
+            stripped = inner.strip()
+            if (
+                stripped != inner
+                and stripped
+                and not re.search(r"\s", stripped)
+                and not _marker_boundary_unclear(
+                    line[m.start() - 1] if m.start() > 0 else None, _MARKER_PRE_VALID
+                )
+                and not _marker_boundary_unclear(
+                    line[m.end()] if m.end() < len(line) else None, _MARKER_POST_VALID
+                )
+            ):
+                inner_count += 1
+                stripped_parts.append(line[pos : m.start()])
+                stripped_parts.append(marker_char + stripped + marker_char)
+                pos = m.end()
+        if inner_count:
+            stripped_parts.append(line[pos:])
+            line = "".join(stripped_parts)
+
+    # ── 外侧：在非法的中文语境边界插空格 ─────────────────────────────────
     inserts: list[tuple[int, str]] = []
     pre_count = 0
     post_count = 0
 
-    for start, end in markers:
-        if (
-            start > 0
-            and line[start - 1] not in _MARKER_PRE_VALID
-            and line[start - 1] != marker_char
-        ):
+    for m in _iter_marker_pairs(line, pattern):
+        if not m.group(1).strip():
+            continue
+        start, end = m.start(), m.end()
+        if start > 0 and _marker_boundary_insert(line[start - 1], _MARKER_PRE_VALID):
             if not any(pos == start for pos, _ in inserts):
                 inserts.append((start, " "))
                 pre_count += 1
 
-        if end < len(line) and line[end] not in _MARKER_POST_VALID:
+        if end < len(line) and _marker_boundary_insert(line[end], _MARKER_POST_VALID):
             if not any(pos == end for pos, _ in inserts):
                 inserts.append((end, " "))
                 post_count += 1
 
     if not inserts:
-        return line, 0, 0
+        return line, 0, 0, inner_count
 
     result = list(line)
     for pos, char in sorted(inserts, reverse=True):
         result.insert(pos, char)
 
-    return "".join(result), pre_count, post_count
+    return "".join(result), pre_count, post_count, inner_count
 
 
 def _fix_inline_markers(text: str) -> tuple[str, list[str]]:
-    """对全文非代码块行应用 ~...~ / *...* 标记的 PRE/POST 间距修复。"""
+    """对全文非代码块行应用 =...= / ~...~ / *...* 标记的内外侧空格修复。"""
     changes: list[str] = []
     result = []
 
-    for line, idx, in_block in _iter_lines_with_block_state(text):
+    for line, idx, in_block in _iter_lines_with_block_state(
+        text, code_blocks_only=True
+    ):
         if in_block:
             result.append(line)
             continue
@@ -515,19 +637,26 @@ def _fix_inline_markers(text: str) -> tuple[str, list[str]]:
             continue
 
         new_line = line
-        if "~" in new_line:
-            new_line, pre_n, post_n = _fix_marker_spacing(new_line, "~")
-            if pre_n:
-                changes.append(f"  行 {idx + 1}: ~code~ 前缺空格 (×{pre_n})")
-            if post_n:
-                changes.append(f"  行 {idx + 1}: ~code~ 后缺空格 (×{post_n})")
+        new_line, ds_n = _fix_double_star(new_line)
+        if ds_n:
+            changes.append(f"  行 {idx + 1}: 双星混写 → org 单星 (×{ds_n})")
 
-        if "*" in new_line:
-            new_line, pre_n, post_n = _fix_marker_spacing(new_line, "*")
+        for marker_char, label in (
+            ("~", "~code~"),
+            ("*", "*bold*"),
+            ("=", "=code="),
+        ):
+            if marker_char not in new_line:
+                continue
+            new_line, pre_n, post_n, inner_n = _fix_marker_spacing(
+                new_line, marker_char
+            )
+            if inner_n:
+                changes.append(f"  行 {idx + 1}: {label} 内侧去空格 (×{inner_n})")
             if pre_n:
-                changes.append(f"  行 {idx + 1}: *bold* 前缺空格 (×{pre_n})")
+                changes.append(f"  行 {idx + 1}: {label} 前缺空格 (×{pre_n})")
             if post_n:
-                changes.append(f"  行 {idx + 1}: *bold* 后缺空格 (×{post_n})")
+                changes.append(f"  行 {idx + 1}: {label} 后缺空格 (×{post_n})")
 
         result.append(new_line)
 
@@ -912,13 +1041,20 @@ def _fix_punct_spacing(line: str, idx: int) -> tuple[str, list[str]]:
     """删除中文全角标点紧邻的半角空格（标点前、标点后各一处）。
 
     上游规范：「中文全角标点符号两旁禁止空半角空格」。
+    例外：空格另一侧是行内标记字符（=~*）时保留——那是 Org 渲染
+    必需的边界间隔，删掉会让标记与外层全角标点紧贴而不再渲染
+    （如「（ =foo= ）」变成「（=foo=）」后标记失配）。
     """
     changes: list[str] = []
     new = line
     # 标点前空格：「 。」→「。」
-    new2 = re.sub(r"[ \t]+([" + re.escape(_ZH_PUNCT) + r"])", r"\1", new)
+    new2 = re.sub(
+        r"(?<![=~*])[ \t]+([" + re.escape(_ZH_PUNCT) + r"])", r"\1", new
+    )
     # 标点后空格：「， 」→「，」
-    new2 = re.sub(r"([" + re.escape(_ZH_PUNCT) + r"])[ \t]+", r"\1", new2)
+    new2 = re.sub(
+        r"([" + re.escape(_ZH_PUNCT) + r"])[ \t]+(?![=~*])", r"\1", new2
+    )
     if new2 != new:
         changes.append(f"  行 {idx + 1}: 全角标点旁多余空格")
         new = new2

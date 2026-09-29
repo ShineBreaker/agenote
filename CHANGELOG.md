@@ -13,12 +13,15 @@
 
 ### Fixed
 
+- **orgfmt 内联标记在 Emacs 中不渲染的系统性缺陷**（`_fix_inline_markers` / `_fix_marker_spacing`，`orgfmt.py`）：两类失效形态——外侧（全角标点或汉字紧贴标记，如 `：=foo=`、「（=X=）」）补齐两侧空格；内侧（`= foo =`）去边界空格，仅限单一无空白 token，公式类含空白内容保守保留。新增双星混写收敛（Markdown 式 `**X* *` / `**X**` → org 单星 `*X*`；verbatim 内嵌字面双星如 `=**argv=` 不动）。防误伤：多标记行跨段错配对拒绝重扫、ASCII 邻接（`word=foo=`）不补空格、含中文句读的配对判为错配、双星规则排除行首标题与 C 指针。
+- **`_iter_lines_with_block_state` 富文本块误判**：状态机把 note/tip/quote 等一切都当代码块跳过，块内正文（说明性文字的常见载体）的标记修复全部漏改。新增 `code_blocks_only` 参数区分代码类块（src/example/comment/export）与富文本块，`_fix_inline_markers` 采用后者口径。
+- 测试新增 `tests/test_orgfmt_markers.py`（19 项：内外侧修复、错配对保护、双星收敛与周界豁免、块状态口径），总数 479 全绿。
+
 - `_normalize_blank_lines` 状态机漏掉文件首行：状态更新整块在 `if out:` 内，导致以 `:PROPERTIES:` 或 `#+begin_src` 开头的文件状态永不置位，drawer 内被插入空行。状态推进抽为 `_advance_blank_state()` 纯函数，首行走同一路径。
 - `_classify_line` 不识别 markdown ``` 围栏：非 strict 模式下围栏内容被当 normal 段落，行间被插入空行。新增 `md_fence` 行类型与 `in_fence` 状态跟踪。
 - orgfmt 与 Guix-configs `tools/doc-punct.py` 的重叠规则口径不一致（两工具交替使用时结果不同）：
   - 省略号原先一刀切转，会把 `v1.2.3`、`v2...v3` 版本号/范围误转；改为三点两侧挨数字时跳过（`so...that...` 这类句型省略两侧是单词，仍转）。
   - 中英补空格原先只跳表格行，会在 `[connection]段`、`0=disable省电`、行首标记后误插空格；逐位扫描 + `_skip_zh_latin_at()` 位置判断，与 doc-punct 同口径。
-- 注：`tools/doc-punct.py`（Guix-configs）另有一批 orgfmt 未覆盖的规则——半角 `,;:?!` 转全角、括号按内容判全半角、行内代码/URL/`{{}}` 保护、`主:次` 字段不转、单个一字线连接号不碰。两者职责不同（doc-punct 服务仓库文档的半角→全角，orgfmt 服务 org 结构化格式化），不合并。
 
 ## [0.2.0.2] - 2026-09-26
 
