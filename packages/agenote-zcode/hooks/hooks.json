@@ -16,7 +16,7 @@
     ],
     "UserPromptSubmit": [
       {
-        "matcher": "搞定|做完了|测试通过|可以用了|一切正常|都没问题|都正常|就这些|先这样|暂时够了|就这样|没了|ship it|looks good|[Dd]one[.!]",
+        "matcher": "搞定|完成|做完了|测试通过|可以用了|一切正常|都没问题|都正常|就这些|先这样|暂时够了|就这样|没了|ship it|looks good|[Dd]one[.!]",
         "hooks": [
           {
             "type": "process",

@@ -52,10 +52,12 @@ function logLoadError(ext: string, where: string, err: unknown): void {
 }
 
 /**
- * 任务完成信号（取自 agenote-review skill references/triggers.md — 单一真相源）
+ * 任务完成信号。
  * 收紧到强完成词，避免"好了"等高频词误触发。
- * 改动此处需同步 agenote-review/references/triggers.md。
+ * 行为规范的散文版在 agenote-review skill 的 references/triggers.md。
  */
+// ─── BEGIN GENERATED: signals.completion ───
+// 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
 const COMPLETION_SIGNALS = [
   // 中文显式完成
   "可以用了",
@@ -77,6 +79,7 @@ const COMPLETION_SIGNALS = [
   "looks good",
   "ship it",
 ];
+// ─── END GENERATED: signals.completion ───
 
 /** 注入到下一轮的 agenote-review 评估提示（含留痕环节）。reason 说明触发来源。 */
 function buildReviewPrompt(reason: string): string {
@@ -103,10 +106,15 @@ function buildCuratePrompt(reason: string): string {
   ].join("\n");
 }
 
-/** 显式完成信号触发的防抖冷却期：同一信号在冷却期内不重复触发 */
-const DEBOUNCE_MS = 5 * 60 * 1000; // 5 分钟
+// ─── BEGIN GENERATED: timing.debounce ───
+// 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
+const DEBOUNCE_MS = 300000;
+// ─── END GENERATED: timing.debounce ───
 /** 空闲兜底：会话连续空闲超过此时长且本会话从未触发过总结 → 触发一次（覆盖夜间无人值守） */
-const IDLE_FALLBACK_MS = 5 * 60 * 1000; // 5 分钟
+// ─── BEGIN GENERATED: timing.idle ───
+// 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
+const IDLE_FALLBACK_MS = 300000;
+// ─── END GENERATED: timing.idle ───
 
 let lastTriggerTime = 0;
 /** 本会话是否已通过显式信号触发过总结（true 后禁用空闲兜底，避免重复打扰） */
@@ -348,7 +356,10 @@ interface InjectConfig {
   injectEnabled: boolean;
   budget: number;
 }
+// ─── BEGIN GENERATED: hosts.pi.brief ───
+// 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
 const DEFAULT_INJECT_CONFIG: InjectConfig = { injectEnabled: true, budget: 8000 };
+// ─── END GENERATED: hosts.pi.brief ───
 
 /** 读 <omp 配置根>/agenote-pi.json；缺文件 = 默认开；解析失败容错回退默认 + 日志 */
 function loadInjectConfig(): InjectConfig {
@@ -384,7 +395,10 @@ function loadInjectConfig(): InjectConfig {
  * 返回 null 表示 CLI 缺失/失败/超时（记加载日志，本轮按空正文跳过注入）。
  * 与 runKb 不同：失败绝不能把错误文本当正文注入，故单独成函数、独立 5s 超时。
  */
+// ─── BEGIN GENERATED: hosts.pi.timeout ───
+// 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
 const BRIEFING_TIMEOUT_MS = 5000;
+// ─── END GENERATED: hosts.pi.timeout ───
 function fetchBriefing(budget: number): string | null {
   try {
     const stdout = execSync(

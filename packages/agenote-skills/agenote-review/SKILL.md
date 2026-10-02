@@ -11,7 +11,7 @@ description: 会话后经验采集与留痕。**触发信号**：agenote-hooks �
 
 ## 触发时机
 
-- agenote-hooks 插件检测到完成信号（完整信号清单见 [references/triggers.md](references/triggers.md)，它是插件单一真相源）
+- 宿主插件检测到完成信号（散文版完整清单见 [references/triggers.md](references/triggers.md)；代码真相源是 monorepo 根的 `spec/injection.toml`）
 - 用户主动 `/agenote-summarize`
 - 长会话结束前的例行评估
 
@@ -142,7 +142,7 @@ description: 会话后经验采集与留痕。**触发信号**：agenote-hooks �
 
 ## 详细参考
 
-- [经验信号检测触发器](references/triggers.md) — 完整信号清单（agenote-hooks 单一真相源）
+- [经验信号检测触发器](references/triggers.md) — 完整信号清单的散文版（代码真相源是 `spec/injection.toml`）
 - [写入决策树](references/write-decision.md) — 轻量 vs 完整卡片
 - [轻量写入模式](references/lightweight-writing.md) — 快速捕获与补充
 - [写作指南](references/writing-guide.md) — 传播联动、自包含、时效性、矛盾检测

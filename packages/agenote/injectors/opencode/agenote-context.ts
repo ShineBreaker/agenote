@@ -29,7 +29,10 @@ import { basename, join } from "node:path";
 import type { Plugin } from "@opencode-ai/plugin";
 
 // ── 配置（env 覆盖；与 bash/mjs 注入器同款旋钮）─────────────────────────────
+// ─── BEGIN GENERATED: hosts.opencode.brief ───
+// 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
 const BRIEF_BUDGET = Number(process.env.AGENOTE_INJECTION_BRIEF_BUDGET || 8000);
+// ─── END GENERATED: hosts.opencode.brief ───
 const CLI_TIMEOUT_MS = 6000;
 
 // ── KB agent 域根（镜像 CLI 解析：KB_ROOT env > config.toml > 默认）──────────

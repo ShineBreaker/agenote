@@ -38,5 +38,5 @@ Then open a new session — plugin hooks are snapshotted at session start. Verif
 
 ## Maintenance notes
 
-- Completion signals have a single source of truth: `agenote-review/references/triggers.md`. Changing them means syncing three places — triggers.md, `COMPLETION_SIGNALS` in `hooks/prompt-submit.mjs`, and the `UserPromptSubmit` matcher regex in `hooks/hooks.json`.
+- The source of truth for completion signals is `spec/injection.toml` at the monorepo root. `COMPLETION_SIGNALS` and the budget constants in `hooks/prompt-submit.mjs` are **generated blocks** (emitted by `tools/codegen/generate.py`, committed so the plugin keeps working standalone); the `UserPromptSubmit` matcher regex in `hooks/hooks.json` and the prose list in `agenote-review/references/triggers.md` are verified against the spec by `tools/codegen/check.py`.
 - The debounce timestamp is the only long-lived state: it goes to the plugin data directory ZCode injects, falling back to `~/.local/state/agenote-zcode/`.

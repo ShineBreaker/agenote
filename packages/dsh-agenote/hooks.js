@@ -29,10 +29,12 @@ const SECTION_NAME = "agenote-health-summary";
 const PLUGIN_SOURCE = "agenote-hooks";
 
 /**
- * 任务完成信号（取自 agenote-review skill references/triggers.md — 单一真相源）。
+ * 任务完成信号。
  * 收紧到强完成词，避免"好了"等高频词误触发。
- * 改动此处需同步 agenote-review/references/triggers.md。
+ * 行为规范的散文版在 agenote-review skill 的 references/triggers.md。
  */
+// ─── BEGIN GENERATED: signals.completion ───
+// 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
 export const COMPLETION_SIGNALS = [
   // 中文显式完成
   "可以用了",
@@ -54,11 +56,17 @@ export const COMPLETION_SIGNALS = [
   "looks good",
   "ship it",
 ];
+// ─── END GENERATED: signals.completion ───
 
-/** 显式完成信号触发的防抖冷却期：冷却期内的后续信号不再触发。 */
-const DEBOUNCE_MS = 5 * 60 * 1000;
+// ─── BEGIN GENERATED: timing.debounce ───
+// 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
+const DEBOUNCE_MS = 300000;
+// ─── END GENERATED: timing.debounce ───
 /** 空闲兜底：turn 结束后静置超过此时长且本会话从未触发过 → 触发一次（覆盖无人值守）。 */
-const IDLE_FALLBACK_MS = 5 * 60 * 1000;
+// ─── BEGIN GENERATED: timing.idle ───
+// 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
+const IDLE_FALLBACK_MS = 300000;
+// ─── END GENERATED: timing.idle ───
 /** 健康度摘要缓存时长：system prompt 每个请求都拼装，摘要无需每步重算。 */
 const STATUS_TTL_MS = 5 * 60 * 1000;
 /** 本插件注入提示的标记——用于排除自注入消息，断开自触发反馈环。 */

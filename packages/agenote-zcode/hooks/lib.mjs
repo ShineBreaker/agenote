@@ -7,8 +7,8 @@
 // 职责：指纹缓存（MEMORY.org/memories 的 mtime+size）、状态文件
 // （~/.cache/agenote/injectors/zcode-<session_id>.json）、追加型三件套
 // （①指纹+query 未变不重注 ②短 prompt/分数下限滤空跳过 ③单会话累计
-// 预算触顶停 recall）。与 agenote 仓库 injectors/lib.sh（claude/codex 用）
-// 及 hermes 插件同构，改语义需跨文件同步。
+// 预算触顶停 recall）。与 injectors/lib.sh（claude/codex 用）及 hermes 插件
+// 同构；下方预算是**生成块**，改语义请改 spec/injection.toml 后重新生成。
 //
 // 语义开关的真相源在 agenote SCHEMA [injection]（一键全关
 // AGENOTE_INJECTION_ENABLED=false）；本库只管预算/门槛/状态目录旋钮。
@@ -24,20 +24,17 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 /** 单次预算（字符）：简报 8000 / recall 4000，设计 C4 每宿主预算表 */
+// ─── BEGIN GENERATED: hosts.zcode.budgets ───
+// 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
 export const BRIEF_BUDGET = Number(process.env.AGENOTE_INJECTION_BRIEF_BUDGET || 8000);
 export const RECALL_BUDGET = Number(process.env.AGENOTE_INJECTION_RECALL_BUDGET || 4000);
-/** 单会话累计预算（与 SCHEMA 同名 env 同口径；SessionStart/compact 重置）。
- * 镜像仅 env 口径：改 config.toml 中 [injection] 同名键不会同步注入器侧，
- * 需用 env 覆盖或接受 CLI/注入器判定分叉。 */
 export const CUMULATIVE_BUDGET = Number(
   process.env.AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET || 24000,
 );
-/** recall 有效 query 最短字符（镜像 SCHEMA recall_min_query=6；同上仅 env 口径） */
 export const MIN_QUERY = Number(process.env.AGENOTE_INJECTION_MIN_QUERY || 6);
-/** recall query 取 prompt 前 N 字符（设计 C4 规定值） */
 export const QUERY_MAX_CHARS = 200;
-
-const CLI_TIMEOUT_MS = 6000; // 单次 CLI 冷启动数百 ms，留足余量仍在 hook 超时内
+const CLI_TIMEOUT_MS = 6000;
+// ─── END GENERATED: hosts.zcode.budgets ───
 
 // ── 状态目录：~/.cache/agenote/injectors/（整目录可清理，无副作用）──────────
 

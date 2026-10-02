@@ -46,7 +46,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-# ── 完成信号（与 pi-agenote/index.ts 保持一致）─────────────────────
+# ── 完成信号。行为规范的散文版在 agenote-review skill 的 references/triggers.md。
+# ─── BEGIN GENERATED: signals.completion ───
+# 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
 COMPLETION_SIGNALS = [
     "可以用了",
     "一切正常",
@@ -66,9 +68,13 @@ COMPLETION_SIGNALS = [
     "looks good",
     "ship it",
 ]
+# ─── END GENERATED: signals.completion ───
 
 HOOK_MARKER = "<agenote-hook>"
-DEBOUNCE_MS = 5 * 60 * 1000  # 5 分钟冷却
+# ─── BEGIN GENERATED: timing.debounce ───
+# 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
+DEBOUNCE_MS = 300000  # 毫秒
+# ─── END GENERATED: timing.debounce ───
 
 _last_trigger_ms: float = 0.0
 
@@ -76,13 +82,16 @@ _last_trigger_ms: float = 0.0
 # 注意：此处累计预算/门槛仅为 env 口径的镜像——改 config.toml 中 [injection]
 # 同名键不会同步注入器侧（注入器不读 config 数值键），需用 env 覆盖，否则
 # CLI 与注入器的触顶/门槛判定分叉。
+# ─── BEGIN GENERATED: hosts.hermes.budgets ───
+# 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
 _BRIEF_BUDGET = int(os.environ.get("AGENOTE_INJECTION_BRIEF_BUDGET") or 3800)
 _RECALL_BUDGET = int(os.environ.get("AGENOTE_INJECTION_RECALL_BUDGET") or 2000)
 _CUMULATIVE_BUDGET = int(
     os.environ.get("AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET") or 24000
 )
 _MIN_QUERY = int(os.environ.get("AGENOTE_INJECTION_MIN_QUERY") or 6)
-_QUERY_MAX_CHARS = 200  # recall query 取 prompt 前 N 字符
+_QUERY_MAX_CHARS = 200
+# ─── END GENERATED: hosts.hermes.budgets ───
 _SKIP_PLATFORMS = ("subagent", "cron")
 
 # 会话级简报的进程内缓存：{fp, content}（指纹未变零 spawn；compact 重建安全）

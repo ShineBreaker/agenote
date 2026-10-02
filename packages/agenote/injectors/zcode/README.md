@@ -4,8 +4,7 @@ zcode 的注入**不在本仓库交付脚本**，而是直接实装在生态既�
 `agenote-zcode` 里（与 claude/codex 的独立脚本不同——zcode 侧挂点在插件
 hooks.json 内统一管理，避免双挂接入口）：
 
-- **单一真相源**：`~/Projects/Config/Guix-configs/dotfiles/mutable/agenote/.zcode/plugins/agenote-zcode/`
-  （Guix-configs 主仓库直接跟踪）
+- **单一真相源**：`packages/agenote-zcode/`（agenote monorepo，见 docs/adr/0005）
 - **装载点**：`~/.zcode/plugins/agenote-zcode/`（hooks 文件为指向源的单文件
   symlink，源改动即生效）
 

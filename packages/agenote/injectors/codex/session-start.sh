@@ -20,8 +20,14 @@
 
 set -uo pipefail
 
-: "${AGENOTE_INJECTION_BRIEF_BUDGET:=2800}"   # codex CJK 折算保守值（字符）
+# codex 按 CJK token 计费，2500 token 上限折算字符后的保守值，防 spill。
+# ─── BEGIN GENERATED: hosts.codex.brief ───
+# 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
+: "${AGENOTE_INJECTION_BRIEF_BUDGET:=2800}"
+# ─── END GENERATED: hosts.codex.brief ───
+# ─── BEGIN GENERATED: hosts.codex.recall ───
 : "${AGENOTE_INJECTION_RECALL_BUDGET:=2800}"
+# ─── END GENERATED: hosts.codex.recall ───
 
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib.sh

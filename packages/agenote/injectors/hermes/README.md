@@ -4,9 +4,8 @@ hermes 的注入直接实装在生态既有的 hermes 插件 `agenote` 里（不
 `agenote-inject` 模板——原插件已是生态唯一 hermes 接入点，注入能力原地合入，
 `register` 时同时注册注入挂点与既有命令入口，无命名冲突问题）：
 
-- **单一真相源（已收编进 agenote stow 包）**：
-  `~/Projects/Config/Guix-configs/dotfiles/mutable/agenote/.local/share/hermes/plugins/agenote/`
-  （`__init__.py` + `plugin.yaml` + `.gitignore`，Guix-configs 主仓库跟踪）
+- **单一真相源**：`packages/agenote-hermes/`（agenote monorepo，见 docs/adr/0005）
+  （`__init__.py` + `plugin.yaml` + `.gitignore`）
 - **装载点**：`~/.local/share/hermes/plugins/agenote/`（`__init__.py`、
   `plugin.yaml` 为指向源的单文件相对 symlink，pi/omp 插件同类模式；
   `__pycache__` 留装载点本地不迁移）

@@ -1,6 +1,8 @@
 # 经验信号检测触发器
 
-> **单一真相源**：agenote-hooks 插件（`stow/pi/.config/pi/extensions/agenote-hooks/index.ts` 的 `COMPLETION_SIGNALS` 常量）以本文件的"任务完成信号"节为准。
+> **显式完成信号的代码真相源**是 monorepo 根的 `spec/injection.toml`
+> （`[signals.completion]`），本文件是它的散文版。本节的两张清单由
+> `tools/codegen/check.py` 校验与 spec 一致，改动请改 spec 后重新生成。
 
 ## 修正信号（→ type: debug, owner: collab）
 
@@ -115,8 +117,14 @@
 
 ## 调整原则
 
-新增/删除信号时：
+显式完成信号是**跨组件的代码级契约**，本文件只承载它的散文版（含机制说明与
+隐式信号），代码真相源是 monorepo 根的 `spec/injection.toml` 的
+`[signals.completion]`。改动信号时：
 
-1. 修改本文件
-2. 同步 `agenote-hooks/index.ts` 的 `COMPLETION_SIGNALS` 数组（仅任务完成信号）
-3. 优先用"明确无歧义"的完成词，避免高频词
+1. 改 `spec/injection.toml`（不要直接改本文件的清单——CI 会校验二者一致）
+2. 跑 `python3 tools/codegen/generate.py`，把常量块同步进 pi / dsh / zcode /
+   hermes 四个插件
+3. 跑 `python3 tools/codegen/check.py`，校验 `hooks.json` 的预筛正则与本文件的
+   清单都与 spec 一致
+
+新增/删除信号时优先用「明确无歧义」的完成词，避免高频词误触发。

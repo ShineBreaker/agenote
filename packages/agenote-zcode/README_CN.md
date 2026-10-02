@@ -38,5 +38,5 @@
 
 ## 维护说明
 
-- 完成信号的单一真相源是 `agenote-review/references/triggers.md`。改动信号需同步三处：triggers.md、`hooks/prompt-submit.mjs` 的 `COMPLETION_SIGNALS`、`hooks/hooks.json` 的 `UserPromptSubmit` matcher 正则。
+- 完成信号的真相源是 monorepo 根的 `spec/injection.toml`：`hooks/prompt-submit.mjs` 的 `COMPLETION_SIGNALS` 与预算常量都是**生成块**（`tools/codegen/generate.py` 产出，提交进仓）；`hooks/hooks.json` 的 `UserPromptSubmit` matcher 正则与 `agenote-review/references/triggers.md` 的散文清单由 `tools/codegen/check.py` 校验与 spec 一致。
 - 唯一的常驻状态是防抖时间戳：写入 zcode 注入的插件数据目录，缺失时退到 `~/.local/state/agenote-zcode/`。

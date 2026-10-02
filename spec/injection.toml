@@ -1,0 +1,99 @@
+# spec/injection.toml — 跨组件注入语义的单一真相源（见 docs/adr/0005）
+#
+# 这里**只放跨宿主复制的语义**：完成信号清单、时序阈值、每宿主注入预算。
+#
+# 刻意不放：
+#   - CLI 自身配置项——真相源是 packages/agenote/src/agenote/config.py 的 SCHEMA。
+#     下方 [append] 的 min_query 是**镜像值**（只为省一次 spawn），改它不会改 CLI 行为。
+#   - 宿主适配胶水逻辑——各插件自有，不跨宿主复制。
+#   - 无法复用的实现细节（如各宿主 CLI 超时的不同理由，只统一数值并在此注明）。
+#
+# 消费方式：
+#   python3 tools/codegen/generate.py   把常量块写进各包（生成物**提交进仓**）
+#   python3 tools/codegen/check.py      校验 JSON 正则 / Markdown 散文与本文件一致
+#   CI 跑这两条 + `git diff --exit-code`，把「改信号需同步 6 处」的手工纪律
+#   换成机器保障（迁移前信号散落 6 处，见 ADR 0005 的 Why）。
+
+schema = 1
+
+# ═══ 任务完成信号 ═══════════════════════════════════════════════
+# 匹配规则（各插件实现一致，不由本表描述）：只看**最近一条用户消息**，
+# 排除含 <agenote-hook> 标记的自注入（断开自我触发反馈环）。
+#
+# 隐式信号（用户满意 / 突然换话题 / "先这样了"）**刻意不进本表**：插件无法
+# 可靠判定，留给 agenote-review 的 references/triggers.md 以散文承载，
+# 由 agent 判断而非机器匹配。
+[signals.completion]
+# 收紧到强完成词——「好了」「行」这类高频词会大量误触发。
+zh = [
+  "可以用了", "一切正常", "都没问题", "都正常",
+  "搞定", "完成", "做完了", "测试通过",
+  "就这些", "先这样", "暂时够了", "就这样", "没了",
+]
+en = ["done.", "done!", "looks good", "ship it"]
+
+# ═══ 时序阈值（毫秒）════════════════════════════════════════════
+[timing]
+# 显式完成信号触发后的冷却期，期内后续信号不再触发。
+debounce_ms = 300000
+# 空闲兜底：turn 结束静置超过此时长且本会话从未被显式触发 → 触发一次，
+# 覆盖「用户 kick-off 后离开、agent 自主完成、无人说完成」的场景。
+idle_ms = 300000
+
+# ═══ 追加型（append）三件套共用参数 ════════════════════════════
+# ① 指纹 + query 未变不重注 ② recall 有效长度门槛 ③ 单会话累计触顶停 recall
+[append]
+cumulative = 24000
+# 镜像 CLI SCHEMA 的 recall_min_query=6。两边**仅 env 口径联动**
+# （AGENOTE_INJECTION_MIN_QUERY），改 config.toml 的 [injection] 不同步注入器；
+# CLI 侧始终是召回与否的最终裁决，注入器这道门槛只为省一次 spawn。
+min_query = 6
+# recall query 取 prompt 前 N 字符（设计 C4 规定值）。
+query_max_chars = 200
+
+# ═══ 每宿主注入档位 ═════════════════════════════════════════════
+# mode = "append"  每轮追加正文，靠三件套抑制上下文膨胀。
+# mode = "rewrite" 每请求幂等重写（先剥旧块再注缓存块），只需简报。
+#
+# 状态文件统一布局：${XDG_CACHE_HOME:-$HOME/.cache}/agenote/injectors/<host>-<session_id>.json
+#   （session_id 取不到则退化为 <host>.json；整目录可清理，无副作用。）
+
+# zcode：追加型，预算是 8000/4000 默认组。
+[hosts.zcode]
+mode = "append"
+brief = 8000
+recall = 4000
+# 单次 CLI 冷启动数百 ms，6s 留足余量仍在 hook 超时（8s）内。
+cli_timeout_ms = 6000
+
+# claude：追加型，经 injectors/lib.sh 实现，预算同默认组。
+[hosts.claude]
+mode = "append"
+brief = 8000
+recall = 4000
+
+# codex：追加型，但预算压到 2800——codex 按 **CJK token** 计费，
+# 2500 token 上限折算成字符的保守值，防止 spill。
+[hosts.codex]
+mode = "append"
+brief = 2800
+recall = 2800
+
+# hermes：追加型，预算 3800/2000。
+[hosts.hermes]
+mode = "append"
+brief = 3800
+recall = 2000
+
+# opencode：重写型（experimental.chat.messages.transform），
+# 幂等重写无需三件套，只要简报预算。
+[hosts.opencode]
+mode = "rewrite"
+brief = 8000
+
+# pi：重写型（context 事件，先剥旧块再注缓存块），只要简报预算。
+[hosts.pi]
+mode = "rewrite"
+brief = 8000
+# 单次简报超时，较 zcode 短（omp 的 context 钩子预算更紧）。
+cli_timeout_ms = 5000

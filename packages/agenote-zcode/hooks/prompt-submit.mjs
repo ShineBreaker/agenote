@@ -10,9 +10,10 @@
 //   本脚本再做一次精确匹配 + 防抖，双层过滤。
 // - zcode 无 agent_end / 空闲兜底挂点，v1 不做夜间兜底。
 //
-// 完成信号清单的单一真相源是 agenote-review skill 的 references/triggers.md
-// （"任务完成信号"节）。改动信号时需同步本文件 COMPLETION_SIGNALS 与
-// hooks.json 的 UserPromptSubmit matcher 正则。
+// 完成信号清单的真相源是 monorepo 根的 spec/injection.toml，本文件的
+// COMPLETION_SIGNALS 是**生成块**——改 spec 后跑 tools/codegen/generate.py。
+// hooks.json 的 UserPromptSubmit matcher 正则由 tools/codegen/check.py 校验
+// 其对 spec 全信号的覆盖度。
 //
 // 手动冒烟测试：
 //   printf '%s\n' '{"hook_event_name":"UserPromptSubmit","session_id":"manual","prompt":"搞定了"}' \
@@ -22,8 +23,11 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-/** 显式完成信号（与 pi COMPLETION_SIGNALS 同源：triggers.md 单一真相源） */
+/** 显式完成信号。行为规范的散文版在 agenote-review skill 的 references/triggers.md。 */
+// ─── BEGIN GENERATED: signals.completion ───
+// 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
 const COMPLETION_SIGNALS = [
+  // 中文显式完成
   "可以用了",
   "一切正常",
   "都没问题",
@@ -37,14 +41,19 @@ const COMPLETION_SIGNALS = [
   "暂时够了",
   "就这样",
   "没了",
+  // 英文显式完成
   "done.",
   "done!",
   "looks good",
   "ship it",
 ];
+// ─── END GENERATED: signals.completion ───
 
 /** 防抖冷却期：同一冷却期内不重复注入评估提示 */
-const DEBOUNCE_MS = 5 * 60 * 1000;
+// ─── BEGIN GENERATED: timing.debounce ───
+// 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
+const DEBOUNCE_MS = 300000;
+// ─── END GENERATED: timing.debounce ───
 
 /** 本 hook 注入的评估提示标识符——含此标记的 prompt 是自注入回声，跳过检测 */
 const HOOK_MARKER = "<agenote-hook>";

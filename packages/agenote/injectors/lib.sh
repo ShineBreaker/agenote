@@ -22,11 +22,17 @@
 # 注意：下面两处「与 SCHEMA 同名」的累计预算/门槛仅为 env 口径镜像——改
 # config.toml 中 [injection] 同名键不会同步注入器侧，需用 env 覆盖，
 # 否则 CLI 与注入器的触顶/门槛判定分叉。
-: "${AGENOTE_INJECTION_BRIEF_BUDGET:=8000}"                # session 简报单次预算（字符）
-: "${AGENOTE_INJECTION_RECALL_BUDGET:=4000}"               # recall 单次预算（字符）
-: "${AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET:=24000}"  # 单会话累计预算（与 SCHEMA 同名 env 同口径）
-: "${AGENOTE_INJECTION_MIN_QUERY:=6}"                      # recall 有效 query 最短字符（镜像 recall_min_query）
-_AGENOTE_QUERY_MAX_CHARS=200                               # recall query 取 prompt 前 N 字符（设计 C4 规定值）
+# ─── BEGIN GENERATED: hosts.claude.budgets ───
+# 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
+: "${AGENOTE_INJECTION_BRIEF_BUDGET:=8000}"
+: "${AGENOTE_INJECTION_RECALL_BUDGET:=4000}"
+# ─── END GENERATED: hosts.claude.budgets ───
+# ─── BEGIN GENERATED: append.common.bash ───
+# 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
+: "${AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET:=24000}"
+: "${AGENOTE_INJECTION_MIN_QUERY:=6}"
+_AGENOTE_QUERY_MAX_CHARS=200
+# ─── END GENERATED: append.common.bash ───
 
 # ─── 状态目录：~/.cache/agenote/injectors/（整目录可清理，无副作用）──────────
 _agenote_state_dir() {
