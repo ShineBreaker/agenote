@@ -1,0 +1,12 @@
+* DONE workflow notes
+:PROPERTIES:
+:ID:       20260101-000001
+:CATEGORY: general
+:TECH:     pytest
+:STATUS:   done
+:CREATED:  [<DATE>]
+:END:
+** 任务描述
+关键词检索验证
+** 执行过程
+steps

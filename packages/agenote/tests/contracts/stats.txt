@@ -1,0 +1,22 @@
+═══ 知识库统计 ═══
+总卡片数: 1
+时间范围: <DATE> ~ <DATE>
+
+── 按类别 ──
+  general                1 █
+
+── 按类型 ──
+  workflow               1 █
+
+── 按执行者 ──
+  ai                     1 █
+
+── 按技术栈 ──
+  pytest                 1 █
+
+── MEMORY ──
+  feedback 条目数: 0
+  project 索引数: 0
+  reference 条目数: 0
+  deprecated 条目数: 0
+  stale (>30d): 0

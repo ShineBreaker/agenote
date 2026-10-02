@@ -1,0 +1,10 @@
+=== 卡片审查: 20260101-000001 ===
+标题: workflow notes
+状态: done
+创建: [<DATE>]
+最后验证: 未验证
+关联数: 0
+建议: 建议策展后设为 stable
+问题:
+  ❌ 无关联链接（孤立卡片）
+修复用: agenote update <id> --category <值> / --tech <值> / connect 建关联

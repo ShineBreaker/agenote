@@ -115,7 +115,11 @@ cd packages/agenote && uv sync --extra test && uv run pytest -q
 - **脆弱耦合**：`list` 必须 `--json` 且含 `:id :title :category :created`；
   `stats` / `health` / `review` / `get` / `memory` 按**自由文本原样渲染**，CLI 改
   措辞会静默破坏显示；`inbox-archive --stdin` 吃 `[{"heading":..,"body":..}]`。
-  改这些命令的输出前先看 `tools/` 里的契约测试。
+  这两类耦合都有测试守护：字段形状在
+  `packages/agenote/tests/test_el_contract.py`，逐字文案在
+  `tests/test_contracts_text.py` 的 golden 快照。**改这些命令的输出前先看那两处**
+  ——确认是有意的展示层调整后，先同步 elisp 侧，再用
+  `AGENOTE_CONTRACT_UPDATE=1 uv run pytest tests/test_contracts_text.py` 重生快照。
 
 ### `agenote-pi` / `dsh-agenote` / `agenote-zcode` / `agenote-hermes`（宿主适配）
 

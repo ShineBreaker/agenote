@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -142,6 +143,17 @@ def _artifacts(out: Path) -> list[Path]:
     return sorted(
         p for p in out.iterdir() if p.is_file() and p.name.endswith(ARTIFACT_SUFFIXES)
     )
+
+
+def _write_checksums(out: Path, artifacts: list[Path]) -> None:
+    """写 SHA256SUMS。
+
+    dotfiles 侧的 `sync-agenote.sh` 靠它校验下载的 tarball——固定 tag 的
+    产物理论上不可变，但 GitHub Release 资产可以被手动替换，校验和是唯一
+    能把「拉到的就是发出来的那个」变成可验证事实的手段。
+    """
+    lines = [f"{hashlib.sha256(a.read_bytes()).hexdigest()}  {a.name}" for a in artifacts]
+    (out / "SHA256SUMS").write_text("\n".join(lines) + "\n")
 
 
 def _run(cmd: list[str], cwd: Path) -> None:
@@ -272,10 +284,12 @@ def main() -> int:
 
     out = _clean_dist(pkg)
     artifacts = BUILDERS[pkg](pkg, version, out)
+    _write_checksums(out, artifacts)
     (out / "release_notes.md").write_text(release_notes(pkg, version), encoding="utf-8")
     print(f"✓ {pkg} {version} 产物：")
     for a in artifacts:
         print(f"    {a.relative_to(REPO_ROOT)}  ({a.stat().st_size} bytes)")
+    print(f"    dist/{pkg}/SHA256SUMS  （供 dotfiles 侧拉取脚本校验）")
     return 0
 
 
