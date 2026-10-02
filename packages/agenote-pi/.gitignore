@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 BrokenShine <xchai404@gmail.com>
+#
+# SPDX-License-Identifier: MIT
+
+# omp 扩展加载错误日志（运行时产物）
+.load-errors.log
+
+# 无构建产物——omp 直接加载 .ts 源码，无需 node_modules/dist
