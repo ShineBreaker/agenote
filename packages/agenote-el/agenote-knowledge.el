@@ -3,6 +3,9 @@
 ;; SPDX-FileCopyrightText: 2026 BrokenShine <xchai404@gmail.com>
 ;; SPDX-License-Identifier: MIT
 
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "29.1"))
+
 ;; This file is part of agenote-el.  It provides the interactive
 ;; knowledge-base commands and the card browse mode that sit on top of
 ;; the `agenote' CLI adapter in `agenote.el'.

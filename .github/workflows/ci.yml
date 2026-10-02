@@ -5,18 +5,27 @@ on:
     branches: [main]
   pull_request:
 
+# monorepo（ADR 0005）：7 个包、4 种语言。此前只有 CLI 的 pytest，
+# 其余 6 个包零 CI 覆盖——agenote-zcode 与 hermes 甚至连 git 边界都没有。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  cli:
+    name: CLI (pytest, py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
+    defaults:
+      run:
+        working-directory: packages/agenote
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 uv
-        uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -25,3 +34,106 @@ jobs:
 
       - name: 运行测试
         run: uv run pytest -q
+
+  spec:
+    name: spec 单一真相源（codegen 漂移 + 契约校验）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      # 这两条命令把「改信号需同步 6 处」的手工纪律换成机器保障：
+      #   --check  重新生成后应无差异（有则说明有人手改了生成块）
+      #   check.py 校验无法生成的产物（hooks.json 正则 / triggers.md 散文）
+      #            并清点有无未登记的信号副本
+      - name: 生成块漂移检查
+        run: python3 tools/codegen/generate.py --check
+
+      - name: 契约与副本清点
+        run: python3 tools/codegen/check.py
+
+      - name: 重新生成后工作区应保持干净
+        run: |
+          python3 tools/codegen/generate.py
+          git diff --exit-code
+
+  adapters:
+    name: 适配器语法（elisp / node / python / bash）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # zcode / pi / dsh 是 JS/TS 宿主插件。node --check 只做语法解析，
+      # 不执行，故无需 npm install（三个包都是零依赖）。
+      - name: node 语法检查（zcode / dsh / pi）
+        run: |
+          set -euo pipefail
+          for f in packages/agenote-zcode/hooks/*.mjs; do node --check "$f"; echo "  ok $f"; done
+          # dsh 包是 "type": "module"，--check 按 CJS 解析会误报 export，
+          # 故复制成 .mjs 再检。
+          cp packages/dsh-agenote/hooks.js /tmp/dsh-hooks.mjs
+          node --check /tmp/dsh-hooks.mjs && echo "  ok packages/dsh-agenote/hooks.js"
+
+      - name: python 语法检查（hermes 插件）
+        run: python3 -m py_compile packages/agenote-hermes/__init__.py
+
+      - name: bash 语法检查（claude / codex 注入器）
+        run: |
+          set -euo pipefail
+          for f in packages/agenote/injectors/lib.sh \
+                   packages/agenote/injectors/claude/*.sh \
+                   packages/agenote/injectors/codex/*.sh; do
+            bash -n "$f" && echo "  ok $f"
+          done
+
+      - name: elisp 字节编译（agenote-el）
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq emacs-nox
+          cd packages/agenote-el
+          # -pkg.el 里的 define-package 来自 package.el，不先 require 会误报未定义。
+          emacs -Q --batch -L . -l package -f batch-byte-compile *.el
+
+  injectors:
+    name: 注入器离线自测（30 项断言）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # 覆盖 claude/codex 的 bash 注入器、zcode 的 mjs 注入器、hermes 的
+      # python 插件导入级行为。全部离线（mock stdin + 临时 KB + spy PATH）。
+      - name: bash injectors/selftest.sh
+        working-directory: packages/agenote
+        run: bash injectors/selftest.sh
+
+  packages:
+    name: 发布产物可构建（7 个组件）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # 打包配置坏掉（缺 ELPA 的 ;; Version: 头、CHANGELOG 缺版本段）
+      # 只有真跑一次构建才发现得了——发版时才发现代价太大。
+      - name: 构建全部组件产物
+        run: |
+          for c in $(python3 tools/release/build.py --list | awk '{print $1}'); do
+            echo "───── $c"
+            python3 tools/release/build.py --component "$c"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 3

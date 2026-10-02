@@ -3,6 +3,9 @@
 ;; SPDX-FileCopyrightText: 2026 BrokenShine <xchai404@gmail.com>
 ;; SPDX-License-Identifier: MIT
 
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "29.1"))
+
 ;; Author: BrokenShine <xchai404@gmail.com>
 ;; Keywords: tools, knowledge
 ;; Package-Requires: ((emacs "29.1"))

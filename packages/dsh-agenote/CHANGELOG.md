@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **`private: true` 已移除**，本包可正式发布到 npm。此前该字段使 `npm publish`
+  被拒，等于从未真正对外分发过；tag 触发方式见 monorepo 的
+  `docs/adr/0005-monorepo-unify-seven-components.md`（`dsh-agenote-v*` → npm +
+  GitHub Release）。
+- **迁入 monorepo**：目录 `packages/dsh-agenote/`，原独立仓保留完整历史。
+- **`hooks.js` 的 `COMPLETION_SIGNALS` / `DEBOUNCE_MS` / `IDLE_FALLBACK_MS` 改为
+  生成块**：真相源是仓库根 `spec/injection.toml`，由 `tools/codegen/generate.py`
+  产出并提交进仓。迁移前信号在本插件、pi、zcode、hermes 四处逐字复制。
+  数值未变（`5*60*1000` 统一写成 `300000`）。
+
 ## [0.1.0] - 2026-09-27
 
 首个发布版本。DeepSeek Harness 的 agenote 集成插件：把 agenote 知识库接进 DSH 会话。行为规范由 `agenote-skills` 定义，本插件只做事件触发与命令快捷入口，不重复实现知识库逻辑。

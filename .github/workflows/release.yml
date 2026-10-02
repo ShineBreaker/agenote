@@ -1,12 +1,32 @@
 name: Release
 
+# monorepo（ADR 0005）：一个仓、四条分发渠道。tag 前缀即包名，
+# 一个提交可携带多个 tag，每个 tag 只触发自己那条链路，组件版本互不牵制。
+#
+#   agenote-v0.3.0        → PyPI + GitHub Release
+#   agenote-el-v0.1.0     → ELPA 格式 tar + GitHub Release
+#   dsh-agenote-v0.2.0    → npm + GitHub Release
+#   agenote-pi-v0.1.0     → tar.gz + GitHub Release
+#   agenote-zcode-v0.1.0  → tar.gz + GitHub Release
+#   agenote-hermes-v0.1.0 → tar.gz + GitHub Release
+#   agenote-skills-v0.1.0 → tar.gz + GitHub Release
+#
+# ⚠️ 历史遗留的 `v*` tag（v0.1.5 … v0.2.0.2，共 14 个）仍有效可引用，
+#    但**新发版一律用 `<component>-v*`**。
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "agenote-v*"
+      - "agenote-el-v*"
+      - "dsh-agenote-v*"
+      - "agenote-pi-v*"
+      - "agenote-zcode-v*"
+      - "agenote-hermes-v*"
+      - "agenote-skills-v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "回填 Release 的 tag（须已存在于远端）"
+        description: "回填的 tag（须已存在于远端，形如 <component>-v<version>）"
         required: true
 
 permissions:
@@ -16,42 +36,115 @@ env:
   TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
-  release:
+  # ── 1. 判定组件 + 构建产物 ─────────────────────────────────
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      component: ${{ steps.sel.outputs.component }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.TAG }}
+          # 完整历史，用于构建 CHANGELOG 段落与 git ls-files
+          fetch-depth: 0
 
-      - name: 校验 tag 与 pyproject 版本一致
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # tag 前缀即包名。这一步是唯一的映射点——新增组件只改
+      # tools/release/build.py 的 COMPONENTS，本 job 无需改动。
+      - name: 由 tag 前缀判定组件
+        id: sel
         run: |
-          VERSION="${TAG#v}"
-          PKG_VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
-          if [ "$PKG_VERSION" != "$VERSION" ]; then
-            echo "::error::tag ${TAG} 指向提交的 pyproject.toml version=${PKG_VERSION}，不一致（核对 tag 是否打在 release commit 上）" >&2
-            exit 1
-          fi
+          set -euo pipefail
+          for c in $(python3 tools/release/build.py --list | awk '{print $1}'); do
+            if [[ "$TAG" == "$c"-v* ]]; then echo "component=$c" >> "$GITHUB_OUTPUT"; exit 0; fi
+          done
+          echo "::error::tag $TAG 不匹配任何组件（应为 <component>-v<version>）" >&2
+          exit 1
 
-      - name: 从 CHANGELOG 提取本版本段落
-        run: |
-          VERSION="${TAG#v}" python3 - <<'PY'
-          import os, re, sys
-          version = os.environ["VERSION"]
-          text = open("CHANGELOG.md", encoding="utf-8").read()
-          m = re.search(rf"^## \[{re.escape(version)}\][^\n]*\n.*?(?=^## \[|\Z)",
-                        text, re.M | re.S)
-          if not m or not m.group(0).strip():
-              sys.exit(f"CHANGELOG.md 中未找到 ## [{version}] 段落——发版流程要求先记日志")
-          open("release_notes.md", "w", encoding="utf-8").write(m.group(0).strip() + "\n")
-          PY
+      # 同时校验 tag 版本与包内版本一致，并抽取 CHANGELOG 段落。
+      # 校验放在构建里而非只做提示，是为了让「tag 打错 commit」当场失败。
+      - name: 构建产物 + 校验版本
+        run: python3 tools/release/build.py --component "${{ steps.sel.outputs.component }}" --tag "$TAG"
 
-      - name: 安装 uv
-        uses: astral-sh/setup-uv@v5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ steps.sel.outputs.component }}
+          path: dist/${{ steps.sel.outputs.component }}/
+          retention-days: 7
 
-      - name: 构建 wheel / sdist
-        run: uv build
+  # ── 2. PyPI（仅 CLI）────────────────────────────────────────
+  publish-pypi:
+    needs: build
+    if: needs.build.outputs.component == 'agenote'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # trusted publishing：无需在仓库存 API token
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ needs.build.outputs.component }}
+          path: dist
 
-      - name: 创建 GitHub Release
+      # 需在 PyPI 后台一次性配置 trusted publisher：
+      #   项目 pypi 下的 agenote + 仓 ShineBreaker/agenote + workflow release.yml
+      # 未配置时本 job 失败；此时改用 PYPI_API_TOKEN secret 亦可（见 README）。
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+  # ── 3. npm（仅 dsh 插件）────────────────────────────────────
+  publish-npm:
+    needs: build
+    if: needs.build.outputs.component == 'dsh-agenote'
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ needs.build.outputs.component }}
+          path: dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+
+      # 需要仓内存 NPM_TOKEN secret（automation token）。
+      # 另注：package.json 此前是 "private": true（发不了 npm），
+      # 已在本仓改为正式可发布包，见该仓 CHANGELOG。
+      - run: npm publish dist/*.tgz --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ── 4. GitHub Release（全部组件）────────────────────────────
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ needs.build.outputs.component }}
+          path: dist
+
+      - name: 创建 / 更新 GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$TAG" --title "$TAG" --notes-file release_notes.md dist/*
+        run: |
+          set -euo pipefail
+          COMPONENT="${{ needs.build.outputs.component }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file "dist/release_notes.md" \
+              dist/*
+          fi
+          echo "::notice::组件 $COMPONENT 发布完成：$TAG"
