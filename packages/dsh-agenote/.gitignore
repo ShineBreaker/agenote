@@ -1,0 +1,13 @@
+# direnv
+.direnv/
+
+# Editor
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node（本包无构建步骤、无依赖，此目录仅在本地试验时可能出现）
+node_modules/
+*.log

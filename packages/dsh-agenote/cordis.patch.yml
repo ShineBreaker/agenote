@@ -1,0 +1,32 @@
+# dsh-agenote bundle patch layer.
+#
+# ONE host row, mounted by the bare package name. The row's specifier must be an
+# exact package specifier — dsh's client-modules scanner resolves the row's
+# module location and keeps only bare specifiers (`exactPackageSpecifier` rejects
+# any non-scoped name containing "/"), so a subpath row such as
+# `dsh-agenote/hooks` makes `locatePkgJson` bail out and the `dsh.client`
+# declaration is silently skipped. dsh-agenote currently ships no browser half,
+# but keep this row bare so adding one later needs no patch surgery.
+#
+# Config 从本行下发，形如：
+#
+#   - id: agenote
+#     config:
+#       hooks:
+#         enabled: true            # 总开关
+#         status: true            # 会话开始注入健康度摘要
+#         completionSignals: true # turn 结束检测完成信号
+#         idleFallback: true      # 空闲 5 分钟兜底（无人值守场景）
+#         signals: ['搞定', 'done.']   # 覆盖内置信号清单
+#         debounceMs: 300000
+#         idleMs: 300000
+#         statusTtlMs: 300000     # 健康度摘要缓存时长（0 = 每个请求重算）
+#       commands:
+#         enabled: true
+#
+# config 由 index.js 导出的 Config schema（Standard Schema v1）校验并填默认值，
+# 非法值在加载期抛 ValidationError；字段与默认值的单一真相源在 hooks.js /
+# commands.js 的 Config 声明里。
+- insert:
+    - id: agenote
+      name: 'dsh-agenote'

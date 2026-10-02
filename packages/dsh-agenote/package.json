@@ -1,0 +1,47 @@
+{
+  "name": "dsh-agenote",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "DeepSeek Harness 的 agenote 集成插件：会话开始注入知识库健康度、turn 结束检测完成信号并转交 agenote-review 流程，外加 /agenote-summarize|curate|health 斜杠命令。行为规范由 agenote-skills 定义，插件只做事件触发与命令快捷入口。",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ShineBreaker/dsh-agenote.git"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": "^0.1.7-rc.2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh": {
+      "optional": true
+    }
+  },
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./hooks": "./hooks.js",
+    "./commands": "./commands.js",
+    "./lib": "./lib.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "hooks.js",
+    "commands.js",
+    "lib.js",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "engines": {
+      "dsh": ">=0.1.7-rc.2"
+    }
+  }
+}
