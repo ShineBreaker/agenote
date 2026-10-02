@@ -29,3 +29,14 @@ dist/
 # pytest
 .pytest_cache/
 .zcode/plans/
+
+# ─── monorepo（ADR 0005）─────────────────────────────────────────
+# 每个包各自可能有构建/工具产物，根规则已覆盖 __pycache__ / .venv /
+# dist / .mimosa；此处补 JS 侧与 elisp 侧。
+node_modules/
+*.elc
+
+# spec 代码生成：生成物**提交进仓**（插件独立安装，运行时不能依赖 monorepo），
+# 故此处**不**忽略 packages/ 下任何文件。漂移由 CI 的 `check-generated` 拦截。
+# 校验和文件由 tools/release 写出，可入库。
+
