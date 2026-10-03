@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-03
+
 ### Changed
 
 - **`private: true` 已移除**，本包可正式发布到 npm。此前该字段使 `npm publish`
