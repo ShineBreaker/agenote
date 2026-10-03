@@ -172,30 +172,29 @@ export default function init(pi: ExtensionAPI): void {
 
 ## 部署
 
-### 作为 Guix-configs 子模块（主流程）
+### Guix-configs 钉版本部署（主流程）
 
-本仓库登记为 `Guix-configs` 的
-`dotfiles/mutable/agenote/.config/omp/extensions/agenote-hooks` 子模块，
-由 `blue stow` 统一纳管：
-
-```bash
-git submodule update --init dotfiles/mutable/agenote/.config/omp/extensions/agenote-hooks
-blue stow agenote           # 部署软链
-blue stow --restow agenote  # 重建
-```
-
-部署后每个文件都是逐文件软链：
+扩展随 agenote monorepo 以 `agenote-pi-v<版本>` tag 发布 GitHub Release
+tarball。`Guix-configs` dotfiles 不再使用 submodule，改为在 `agenote.lock`
+里钉版本，由 `sync-agenote.sh` 拉取 Release 产物、校验 sha256、解包到内容
+寻址缓存后铺软链。部署后 omp 扩展目录里是逐文件软链：
 
 ```
-~/.config/omp/extensions/agenote-hooks/index.ts → 本仓库源
+~/.config/omp/extensions/agenote-hooks/index.ts → 缓存中的 agenote-pi 源
 ```
 
-### 独立部署（原生 stow）
+机制细节见 monorepo 根 AGENTS.md §7 与 docs/adr/0005。
 
-```bash
-git clone https://github.com/ShineBreaker/pi-agenote.git ~/pi-agenote
-stow --dir=~/pi-agenote --target=$HOME
-```
+### 手动安装
+
+没有 dotfiles 时，从对应 tag 的 GitHub Release 下载
+`agenote-pi-<版本>.tar.gz`，把 `index.ts` 放到
+`~/.config/omp/extensions/agenote-hooks/` 下即可，omp 会自动扫描。
+
+### 从源码开发
+
+clone [agenote monorepo](https://github.com/ShineBreaker/agenote)，扩展源码
+在 `packages/agenote-pi/index.ts`。生效方式见文末「改源生效路径」。
 
 ## 依赖
 

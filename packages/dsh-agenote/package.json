@@ -6,8 +6,13 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ShineBreaker/dsh-agenote.git"
+    "url": "git+https://github.com/ShineBreaker/agenote.git",
+    "directory": "packages/dsh-agenote"
   },
+  "bugs": {
+    "url": "https://github.com/ShineBreaker/agenote/issues"
+  },
+  "homepage": "https://github.com/ShineBreaker/agenote/tree/main/packages/dsh-agenote",
   "peerDependencies": {
     "@deepseek-ai/dsh": "^0.1.7-rc.2"
   },

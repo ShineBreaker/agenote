@@ -2,15 +2,31 @@
 
 感谢关注 agenote！本文说明开发环境搭建、commit 规范与提交流程。
 
+本仓库是 monorepo（见 [docs/adr/0005](docs/adr/0005-monorepo-unify-seven-components.md)）：
+CLI 唯一实现层在 `packages/agenote`，其余 6 个包是宿主插件/skill 适配层，
+改动前先读[根 AGENTS.md](AGENTS.md)对应小节。
+
 ## 开发环境
 
 ```bash
 git clone https://github.com/ShineBreaker/agenote.git
-cd agenote
-uv sync --extra test        # 安装依赖 + 测试工具
-uv run pytest -q            # 运行测试（提交前必须全绿）
-uv tool install --editable .  # 本地体验 CLI（改源即生效）
+cd agenote/packages/agenote   # Python CLI 是唯一需要装依赖的包
+uv sync --extra test          # 安装依赖 + 测试工具
+uv run pytest -q              # 运行测试（提交前必须全绿）
+uv tool install --editable .  # 本地体验 CLI（改源即生效，在本目录执行）
 ```
+
+其余包零依赖，无需安装；改动后的验证方式见下表（与 CI 一致）。
+
+## 各包验证入口
+
+| 包 | 验证 |
+| --- | --- |
+| `packages/agenote` | `uv run pytest -q` + `bash injectors/selftest.sh`（注入器 30 项断言） |
+| `packages/agenote-el` | `emacs -Q --batch -L . -l package -f batch-byte-compile *.el` |
+| `packages/agenote-zcode` / `packages/dsh-agenote` | `node --check`（mjs/js 语法） |
+| `packages/agenote-hermes` | `python3 -m py_compile __init__.py` |
+| 跨组件常量（`spec/`） | `python3 tools/codegen/generate.py --check && python3 tools/codegen/check.py` |
 
 ## Commit 规范（Conventional Commits）
 
@@ -54,7 +70,7 @@ uv tool install --editable .  # 本地体验 CLI（改源即生效）
 
 1. fork 仓库并从 `main` 切出特性分支；
 2. 改动附带测试（新功能必须有测试，修复附回归测试）；
-3. 确保 `uv run pytest -q` 全绿、CI 通过；
+3. 确保对应包的验证全绿（见上表）、CI 通过；
 4. PR 标题遵循 Conventional Commits（与 commit 规范一致）。
 
 ## 语言约定

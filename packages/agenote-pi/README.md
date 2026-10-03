@@ -72,16 +72,24 @@ as a subagent, and every hook returns immediately.
 
 ## Deploy
 
-The repo follows a native stow layout, so unpacking it into `$HOME` is enough:
+agenote-pi lives at `packages/agenote-pi` in the
+[agenote monorepo](https://github.com/ShineBreaker/agenote). The standalone
+repo and the Guix-configs submodule flow are gone (see docs/adr/0005 in the
+monorepo).
 
-```bash
-git clone https://github.com/ShineBreaker/pi-agenote.git ~/pi-agenote
-stow --dir=~/pi-agenote --target=$HOME
-```
+Deployment is managed by the Guix-configs dotfiles: `agenote.lock` pins a
+release tag (`agenote-pi-v<version>`), and `sync-agenote.sh` fetches the
+matching GitHub Release tarball, verifies its sha256, and symlinks the
+extension into the omp extension directory. See the monorepo root AGENTS.md
+§7 for the mechanism.
 
-As a Guix-configs submodule, the extension lives at
-`dotfiles/mutable/agenote/.config/omp/extensions/agenote-hooks` and is managed by
-that repo's stow flow rather than deployed on its own.
+Without the dotfiles, download `agenote-pi-<version>.tar.gz` from the
+matching GitHub Release and put `index.ts` under
+`~/.config/omp/extensions/agenote-hooks/`; omp picks it up on the next
+session start.
+
+For development, clone the monorepo — omp loads the TypeScript source at
+`packages/agenote-pi/index.ts` directly.
 
 ## Read more
 
@@ -89,8 +97,8 @@ that repo's stow flow rather than deployed on its own.
   switches, deployment, dependencies
 - [中文 README](README.zh.md)
 - [agenote main repo](https://github.com/ShineBreaker/agenote)
-- [agenote-skills](https://github.com/ShineBreaker/agenote-skills): source of
-  truth for the signal list and the write flow
+- [agenote-skills](https://github.com/ShineBreaker/agenote/tree/main/packages/agenote-skills):
+  source of truth for the signal list and the write flow
 
 ## License
 

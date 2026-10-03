@@ -55,7 +55,7 @@ pip install --user git+https://github.com/ShineBreaker/agenote.git
 
 **检索溯源** `search` 是 BM25 排序加 CJK n-gram 中英混检，`trace` 回查 dream 候选对应的原始完整对话。
 
-**策展** `health` 报健康度，`gaps` 列覆盖空白，`deduplicate` 找重复，`review` 列待审卡片，`sweep` 给降级候选，`lint` 校验结构，`reindex` 重建索引并重算权重，`stats` 出统计。这些是原子命令，取舍流程由 agent 依据 [agenote-skills](https://github.com/ShineBreaker/agenote-skills) 编排。
+**策展** `health` 报健康度，`gaps` 列覆盖空白，`deduplicate` 找重复，`review` 列待审卡片，`sweep` 给降级候选，`lint` 校验结构，`reindex` 重建索引并重算权重，`stats` 出统计。这些是原子命令，取舍流程由 agent 依据 [agenote-skills](https://github.com/ShineBreaker/agenote/tree/main/packages/agenote-skills) 编排。
 
 **跨 agent** `reconcile` 从外部 agent 记忆抽取已沉淀经验进只读索引，`dream` 发现知识库未覆盖的高频主题，`distill` 聚类出候选工作流，`extract` 把原始对话抽成 org 文件。
 
@@ -78,7 +78,7 @@ agenote context --mode recall --query "orgfmt 报错"        # BM25 召回
 - 召回带分数下限（`recall_min_score` 默认 8.0，按真实语料 600 样本标定）与最短 query 门槛。「继续」「ok」这类短 prompt 不触发召回。
 - 记忆条目按 `:PROJECT:` 分区隔离，linked worktree 与主仓共享项目身份；带 `:SENSITIVITY:` 的条目只留在 SSOT，不注入不投影。写入侧 secret 门禁扫描 `add` / `update` / `memory --add`，命中密钥形态即拒写，`--allow-secret` 显式豁免；`doctor kb-secrets` 做存量事后审计。
 - 开关的单一真相源在 agenote 侧：`AGENOTE_INJECTION_ENABLED=false` 一键全关，任何注入器随之静默。`[injection.hosts]` 下有 6 个 per-host 开关（zcode、claude、codex、pi、opencode、hermes）。
-- 注入器在 [injectors/](injectors/README.md)：claude 为成品脚本，codex 与 opencode 为 recipe 模板（experimental），zcode 与 hermes 的实装在各自宿主插件内，pi 的实装见 [pi-agenote](https://github.com/ShineBreaker/pi-agenote)。追加型注入器共用三件套防上下文膨胀：指纹未变不注、recall 门槛、单会话累计预算。`agenote doctor` 例行检测各宿主自带记忆开关是否已关。
+- 注入器在 [injectors/](injectors/README.md)：claude 为成品脚本，codex 与 opencode 为 recipe 模板（experimental），zcode 与 hermes 的实装在各自宿主插件内，pi 的实装见 [agenote-pi](https://github.com/ShineBreaker/agenote/tree/main/packages/agenote-pi)。追加型注入器共用三件套防上下文膨胀：指纹未变不注、recall 门槛、单会话累计预算。`agenote doctor` 例行检测各宿主自带记忆开关是否已关。
 
 ## 配置
 
@@ -194,7 +194,7 @@ agenote completions bash > /etc/bash_completion.d/agenote  # 或 source
 
 ## 贡献与版本历史
 
-贡献指南（含 Conventional Commits 规范）见 [CONTRIBUTING.md](CONTRIBUTING.md)，版本历史见 [CHANGELOG.md](CHANGELOG.md)，架构决策见 [docs/adr/](docs/adr/)。
+贡献指南（含 Conventional Commits 规范）见 [CONTRIBUTING.md](https://github.com/ShineBreaker/agenote/blob/main/CONTRIBUTING.md)，版本历史见 [CHANGELOG.md](CHANGELOG.md)，架构决策见 [docs/adr/](docs/adr/)。
 
 ## 致谢
 

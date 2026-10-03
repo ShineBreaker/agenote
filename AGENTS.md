@@ -179,7 +179,8 @@ LLM 参与的提交按**实际宿主与模型**附加 `Co-authored-by`，多个�
 | `agenote` | `agenote-v0.3.0` | PyPI + GitHub Release | `pyproject.toml` |
 | `agenote-el` | `agenote-el-v0.1.0` | ELPA tar + Release | `agenote-pkg.el` 的 `define-package` |
 | `dsh-agenote` | `dsh-agenote-v0.2.0` | npm + Release | `package.json` |
-| `agenote-pi` / `agenote-zcode` / `agenote-hermes` / `agenote-skills` | `<pkg>-v0.1.0` | tar.gz + Release | `VERSION` 文件 |
+| `agenote-zcode` | `agenote-zcode-v0.1.0` | tar.gz + Release | `.zcode-plugin/plugin.json`（无 VERSION 文件） |
+| `agenote-pi` / `agenote-hermes` / `agenote-skills` | `<pkg>-v0.1.0` | tar.gz + Release | `VERSION` 文件 |
 
 流程：
 
@@ -240,7 +241,7 @@ python3 tools/release/build.py --component agenote --tag agenote-v0.3.0   # 校�
 ```bash
 # 全量本地验证（与 CI 的 5 个 job 对应）
 cd packages/agenote && uv sync --extra test && uv run pytest -q   # CLI
-bash packages/agenote/injectors/selftest.sh                        # 注入器 30 项离线断言
+bash packages/agenote/injectors/selftest.sh                        # 注入器 30 项断言；zcode/hermes 实装直接验本仓 packages/ 源码（需上面的 .venv 提供 agenote）
 python3 tools/codegen/generate.py --check && python3 tools/codegen/check.py
 node --check packages/agenote-zcode/hooks/*.mjs                    # 适配器语法
 python3 -m py_compile packages/agenote-hermes/__init__.py

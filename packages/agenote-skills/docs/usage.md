@@ -44,26 +44,23 @@ skill 之间互相引用对方名字，框架据此切换加载哪份规范。ag
 
 ## 部署
 
-### 作为 Guix-configs 子模块
+### Guix-configs 钉版本部署（主流程）
 
-本仓库在 `Guix-configs` 中登记为 `dotfiles/mutable/agenote/.config/agents/skills`
-子模块。检出后由配置仓的 stow 流程部署软链：
+skills 随 agenote monorepo 以 `agenote-skills-v<版本>` tag 发布 GitHub
+Release tarball。`Guix-configs` dotfiles 不再使用 submodule，改为在
+`agenote.lock` 里钉版本，由 `sync-agenote.sh` 拉取 Release 产物、校验
+sha256、解包到内容寻址缓存后铺软链。部署后 skill 出现在
+`~/.config/agents/skills/`。agent 框架从 `~/.agents/skills/` 扫描加载，
+该路径是指向前者的软链。
 
-```bash
-git submodule update --init dotfiles/mutable/agenote/.config/agents/skills
-blue stow agenote           # 部署软链
-blue stow --restow agenote  # 重建
-```
+机制细节见 monorepo 根 AGENTS.md §7 与 docs/adr/0005。
 
-部署后 skill 出现在 `~/.config/agents/skills/`。agent 框架从 `~/.agents/skills/`
-扫描加载，该路径是指向前者的软链。
+### 手动安装
 
-### 独立部署
-
-```bash
-git clone https://github.com/ShineBreaker/agenote-skills.git ~/agenote-skills
-stow --dir=~/agenote-skills --target=$HOME
-```
+没有 dotfiles 时，从对应 tag 的 GitHub Release 下载
+`agenote-skills-<版本>.tar.gz`，把 `agenote-base`、`agenote-curator`、
+`agenote-review` 三个目录放进 agent 框架扫描的 skills 目录（如
+`~/.config/agents/skills/`）。
 
 ## 依赖
 

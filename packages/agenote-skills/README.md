@@ -10,7 +10,8 @@ before starting, reuse what is already known while working, write the lesson bac
 when the task ends. Each host has its own prompt, model, and toolchain, so a spec
 written into one host's config only binds that host.
 
-agenote-skills lifts that protocol out of host config into a standalone repo. Every
+agenote-skills lifts that protocol out of host config into a shared package in
+the agenote monorepo. Every
 agent plugged in reads the same file and gets the same rules.
 
 ## The three skills

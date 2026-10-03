@@ -123,17 +123,17 @@ The full command set, configuration, and architecture are in the
 
 ## Ecosystem
 
-- [agenote-skills](https://github.com/ShineBreaker/agenote-skills): three agent skills (base, curator, review)
-- [pi-agenote](https://github.com/ShineBreaker/pi-agenote): the oh-my-pi integration extension
+- [agenote-skills](https://github.com/ShineBreaker/agenote/tree/main/packages/agenote-skills): three agent skills (base, curator, review)
+- [agenote-pi](https://github.com/ShineBreaker/agenote/tree/main/packages/agenote-pi): the oh-my-pi integration extension
 - [injectors/](injectors/README.md): memory injectors for the six hosts
-- [agenote-el](https://github.com/ShineBreaker/agenote-el): the Emacs integration package
+- [agenote-el](https://github.com/ShineBreaker/agenote/tree/main/packages/agenote-el): the Emacs integration package
 
 ## Read more
 
 - [Usage guide](docs/usage.md): installation, command reference, configuration, architecture, development
 - [中文 README](README.zh.md)
-- [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Architecture decisions](docs/adr/)
-- [Glossary](CONTEXT.md): what cards, memory entries, and reconcile actually mean
+- [Contributing](https://github.com/ShineBreaker/agenote/blob/main/CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Architecture decisions](docs/adr/)
+- [Glossary](https://github.com/ShineBreaker/agenote/blob/main/CONTEXT.md): what cards, memory entries, and reconcile actually mean
 
 ## License
 

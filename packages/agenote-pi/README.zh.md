@@ -57,23 +57,27 @@ agenote-curator skill 主导执行，插件不直接跑策展命令。
 
 ## 部署
 
-仓库按原生 stow 布局组织，把内容铺到 `$HOME` 即可：
+agenote-pi 位于 [agenote monorepo](https://github.com/ShineBreaker/agenote)
+的 `packages/agenote-pi`，独立仓与 Guix-configs submodule 流程均已废除
+（见 monorepo 的 docs/adr/0005）。
 
-```bash
-git clone https://github.com/ShineBreaker/pi-agenote.git ~/pi-agenote
-stow --dir=~/pi-agenote --target=$HOME
-```
+日常部署由 Guix-configs dotfiles 托管：`agenote.lock` 钉住发布 tag
+（`agenote-pi-v<版本>`），`sync-agenote.sh` 拉取对应 GitHub Release 的
+tar.gz、校验 sha256 后把扩展软链进 omp 扩展目录。机制详见 monorepo 根
+AGENTS.md §7。
 
-作为 Guix-configs 子模块时，扩展落在
-`dotfiles/mutable/agenote/.config/omp/extensions/agenote-hooks`，由该仓库的 stow 流程
-统一纳管，不单独部署。
+没有 dotfiles 时，从对应 GitHub Release 下载 `agenote-pi-<版本>.tar.gz`，
+把 `index.ts` 放到 `~/.config/omp/extensions/agenote-hooks/` 下，下次 omp
+会话启动即被扫描加载。
+
+开发则 clone monorepo——omp 直接加载 `packages/agenote-pi/index.ts` 源码。
 
 ## 深入阅读
 
 - [使用文档](docs/usage.md)：钩子与命令清单、注入机制、开关、部署、依赖
 - [English README](README.md)
 - [agenote 主仓库](https://github.com/ShineBreaker/agenote)
-- [agenote-skills](https://github.com/ShineBreaker/agenote-skills)：信号清单与
+- [agenote-skills](https://github.com/ShineBreaker/agenote/tree/main/packages/agenote-skills)：信号清单与
   写入流程的真相源
 
 ## 许可证

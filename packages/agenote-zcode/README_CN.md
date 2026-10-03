@@ -20,16 +20,18 @@
 - **MCP server**——agenote 主路径是 CLI，skill 直接指示 bash 调用。
 - **subagent 守卫**——`UserPromptSubmit` 只在主会话用户输入时触发。
 
-提交规范保障是独立关注点，单独成插件：见 `../../../../agents/zcode/.zcode/plugins/assisted-by-zcode/`。
+提交规范保障是独立关注点，单独成插件（`assisted-by-zcode`，不随本包分发）。
 
 ## 安装
 
-在 `~/.zcode/cli/config.json` 的 `plugins.dirs` 指向本插件根目录（每条是一个含 `.zcode-plugin/plugin.json` 的插件目录，扫描到的默认启用）：
+先从 monorepo 取插件：解包 [GitHub Release](https://github.com/ShineBreaker/agenote/releases) 中 `agenote-zcode-v*` 附带的 tar.gz，或直接复制 checkout 里的 [`packages/agenote-zcode`](https://github.com/ShineBreaker/agenote/tree/main/packages/agenote-zcode) 目录，比如放到 `~/.zcode/plugins/agenote-zcode`。
+
+然后在 `~/.zcode/cli/config.json` 的 `plugins.dirs` 指向本插件根目录（每条是一个含 `.zcode-plugin/plugin.json` 的插件目录，扫描到的默认启用）：
 
 ```json
 {
   "plugins": {
-    "dirs": ["/home/brokenshine/Projects/Config/Guix-configs/dotfiles/mutable/agenote/.zcode/plugins/agenote-zcode"]
+    "dirs": ["~/.zcode/plugins/agenote-zcode"]
   }
 }
 ```

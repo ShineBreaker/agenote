@@ -36,11 +36,11 @@ agenote context --mode session|recall --query Q --budget N --host H [--format js
 
 | 路径 | 形态 | 挂点 | 单次预算（简报/recall） |
 |---|---|---|---|
-| `zcode/` | 仅 README——实装在 agenote-zcode 插件（Guix-configs） | SessionStart + UserPromptSubmit（插件 hooks.json） | 8000 / 4000 |
+| `zcode/` | 仅 README——实装在本仓 packages/agenote-zcode 插件 | SessionStart + UserPromptSubmit（插件 hooks.json） | 8000 / 4000 |
 | `claude/` | 成品脚本（sh）+ README | `~/.claude/settings.json` hooks 节 | 8000 / 4000 |
 | `codex/` | recipe 模板（sh）+ README | `~/.codex/config.toml` [hooks]（示例待实装核对） | 2800 / 2800（CJK 折算保守值） |
 | `opencode/` | recipe 模板（ts）+ README | `experimental.chat.messages.transform` | 8000 / —（重写型） |
-| `hermes/` | 仅 README——实装在 hermes agenote 插件（Guix-configs） | system prompt section + pre_llm_call | 3800 / 2000 |
+| `hermes/` | 仅 README——实装在本仓 packages/agenote-hermes 插件 | system prompt section + pre_llm_call | 3800 / 2000 |
 | `lib.sh` | bash 共享库（claude/codex source） | — | — |
 | `selftest.sh` | 离线验收（mock stdin + 临时 KB + spy PATH） | — | — |
 
@@ -53,8 +53,9 @@ agenote context --mode session|recall --query Q --budget N --host H [--format js
    `autoMemoryEnabled`+`autoDreamEnabled`；codex 保持 `[features] memories`
    默认关；hermes 关 `memory.memory_enabled`+`user_profile_enabled`；
    zcode 关 `features.memory`/`memory.use`。状态用 `agenote doctor` 例行检测。
-4. **验收**：先 `bash injectors/selftest.sh`（离线全量），再按各 README 的
-   宿主内观测面复核；每个 README 标注协议来源版本（R2 漂移应对）。
+4. **验收**：先 `bash injectors/selftest.sh`（离线全量；zcode/hermes 实装在本仓
+   packages/agenote-zcode、packages/agenote-hermes，selftest 默认验证仓内源码），
+   再按各 README 的宿主内观测面复核；每个 README 标注协议来源版本（R2 漂移应对）。
 
 ## 开关（一键全关）
 

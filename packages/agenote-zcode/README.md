@@ -20,16 +20,18 @@ Deliberately not ported from pi:
 - **MCP server** — agenote's primary path is the CLI; skills instruct bash invocation directly.
 - **Subagent guard** — `UserPromptSubmit` only fires on user input in the main session.
 
-Commit-trailer enforcement is a separate concern living in its own plugin: see `../../../../agents/zcode/.zcode/plugins/assisted-by-zcode/`.
+Commit-trailer enforcement is a separate concern living in its own plugin (`assisted-by-zcode`, not shipped with this package).
 
 ## Install
 
-Point `plugins.dirs` in `~/.zcode/cli/config.json` at this plugin root (each entry is one plugin directory containing `.zcode-plugin/plugin.json`; scanned entries are enabled by default):
+Fetch the plugin from the monorepo first: unpack the `agenote-zcode-v*` tarball attached to its [GitHub Release](https://github.com/ShineBreaker/agenote/releases), or copy the [`packages/agenote-zcode`](https://github.com/ShineBreaker/agenote/tree/main/packages/agenote-zcode) directory from a checkout — e.g. to `~/.zcode/plugins/agenote-zcode`.
+
+Then point `plugins.dirs` in `~/.zcode/cli/config.json` at this plugin root (each entry is one plugin directory containing `.zcode-plugin/plugin.json`; scanned entries are enabled by default):
 
 ```json
 {
   "plugins": {
-    "dirs": ["/home/brokenshine/Projects/Config/Guix-configs/dotfiles/mutable/agenote/.zcode/plugins/agenote-zcode"]
+    "dirs": ["~/.zcode/plugins/agenote-zcode"]
   }
 }
 ```

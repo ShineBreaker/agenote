@@ -107,17 +107,17 @@ agenote add --title "并发写入测试" --category testing --tech Python
 
 ## 生态组成
 
-- [agenote-skills](https://github.com/ShineBreaker/agenote-skills)：三个 agent skill（base、curator、review）
-- [pi-agenote](https://github.com/ShineBreaker/pi-agenote)：oh-my-pi 集成扩展
+- [agenote-skills](https://github.com/ShineBreaker/agenote/tree/main/packages/agenote-skills)：三个 agent skill（base、curator、review）
+- [agenote-pi](https://github.com/ShineBreaker/agenote/tree/main/packages/agenote-pi)：oh-my-pi 集成扩展
 - [injectors/](injectors/README.md)：六宿主记忆注入器
-- [agenote-el](https://github.com/ShineBreaker/agenote-el)：Emacs 集成插件
+- [agenote-el](https://github.com/ShineBreaker/agenote/tree/main/packages/agenote-el)：Emacs 集成插件
 
 ## 深入阅读
 
 - [使用文档](docs/usage.md)：安装、命令参考、配置、架构、开发
 - [English README](README.md)
-- [贡献指南](CONTRIBUTING.md) · [版本历史](CHANGELOG.md) · [架构决策](docs/adr/)
-- [术语表](CONTEXT.md)：卡片、记忆条目、reconcile 这些词的确切含义
+- [贡献指南](https://github.com/ShineBreaker/agenote/blob/main/CONTRIBUTING.md) · [版本历史](CHANGELOG.md) · [架构决策](docs/adr/)
+- [术语表](https://github.com/ShineBreaker/agenote/blob/main/CONTEXT.md)：卡片、记忆条目、reconcile 这些词的确切含义
 
 ## 许可证
 
