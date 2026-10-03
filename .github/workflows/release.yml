@@ -136,6 +136,9 @@ jobs:
       - name: 创建 / 更新 GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          # 本 job 不 checkout，gh 必须靠 GH_REPO 定位仓，否则会先跑
+          # git 探测并死于 "not a git repository"
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           COMPONENT="${{ needs.build.outputs.component }}"
