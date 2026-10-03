@@ -23,9 +23,9 @@ jobs:
       run:
         working-directory: packages/agenote
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -39,8 +39,8 @@ jobs:
     name: spec 单一真相源（codegen 漂移 + 契约校验）
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
         with:
           python-version: "3.12"
           # 本 job 只用 uv 提供 python，不跑任何 uv 命令；默认开缓存时
@@ -66,7 +66,7 @@ jobs:
     name: 适配器语法（elisp / node / python / bash）
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # zcode / pi / dsh 是 JS/TS 宿主插件。node --check 只做语法解析，
       # 不执行，故无需 npm install（三个包都是零依赖）。
@@ -103,12 +103,12 @@ jobs:
     name: 注入器离线自测（30 项断言）
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
         with:
           python-version: "3.12"
           enable-cache: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -128,11 +128,11 @@ jobs:
     name: 发布产物可构建（7 个组件）
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -145,7 +145,7 @@ jobs:
             python3 tools/release/build.py --component "$c"
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/

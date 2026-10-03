@@ -42,16 +42,16 @@ jobs:
     outputs:
       component: ${{ steps.sel.outputs.component }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
           # 完整历史，用于构建 CHANGELOG 段落与 git ls-files
           fetch-depth: 0
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -72,7 +72,7 @@ jobs:
       - name: 构建产物 + 校验版本
         run: python3 tools/release/build.py --component "${{ steps.sel.outputs.component }}" --tag "$TAG"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-${{ steps.sel.outputs.component }}
           path: dist/${{ steps.sel.outputs.component }}/
@@ -88,7 +88,7 @@ jobs:
       # trusted publishing：无需在仓库存 API token
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: dist-${{ needs.build.outputs.component }}
           path: dist
@@ -107,11 +107,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: dist-${{ needs.build.outputs.component }}
           path: dist
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
@@ -128,7 +128,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: dist-${{ needs.build.outputs.component }}
           path: dist
