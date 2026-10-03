@@ -48,7 +48,7 @@ jobs:
           # 完整历史，用于构建 CHANGELOG 段落与 git ls-files
           fetch-depth: 0
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
       - uses: actions/setup-node@v7
