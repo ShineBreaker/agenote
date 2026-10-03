@@ -11,7 +11,7 @@ name: Release
 #   agenote-hermes-v0.1.0 → tar.gz + GitHub Release
 #   agenote-skills-v0.1.0 → tar.gz + GitHub Release
 #
-# ⚠️ 历史遗留的 `v*` tag（v0.1.5 … v0.2.0.2，共 14 个）仍有效可引用，
+# ⚠️ 历史遗留的 `v*` tag（v0.1.5 … v0.2.0.2，远端共 12 个）仍有效可引用，
 #    但**新发版一律用 `<component>-v*`**。
 on:
   push:

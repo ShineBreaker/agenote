@@ -43,6 +43,9 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+          # 本 job 只用 uv 提供 python，不跑任何 uv 命令；默认开缓存时
+          # 空缓存目录会让 Post 步骤直接 fail（实测 run 37080088977）。
+          enable-cache: false
 
       # 这两条命令把「改信号需同步 6 处」的手工纪律换成机器保障：
       #   --check  重新生成后应无差异（有则说明有人手改了生成块）
@@ -101,12 +104,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: false
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
 
       # 覆盖 claude/codex 的 bash 注入器、zcode 的 mjs 注入器、hermes 的
       # python 插件导入级行为。全部离线（mock stdin + 临时 KB + spy PATH）。
+      # selftest 依赖 .venv 里的 agenote（context 子命令）spawn 真 CLI，
+      # zcode/hermes 实装直接取本仓 packages/ 下的包。
+      - name: 安装 CLI（selftest 需要 spawn 真 agenote）
+        working-directory: packages/agenote
+        run: uv sync
+
       - name: bash injectors/selftest.sh
         working-directory: packages/agenote
         run: bash injectors/selftest.sh

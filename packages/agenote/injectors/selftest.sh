@@ -8,17 +8,18 @@
 # 构造临时 KB（agenote 域布局）+ spy agenote 包装器（计数 CLI spawn）+
 # mock hook stdin，断言：正常输出合法 JSON、CLI 缺失静默 0、指纹缓存二次
 # 调用零 spawn、累计预算触顶停 recall、三件套各门槛生效。
-# zcode(mjs)/hermes(py) 实装在 Guix-configs 插件内，路径存在即一并验证，
-# 缺失则跳过（本仓库外的实装物）。
+# zcode(mjs)/hermes(py) 实装就在本仓 packages/ 下，合仓后默认直接验证
+# 仓内源码（CI 也跑这两个 section）；要验部署副本时用 env 覆盖路径。
 #
 # 用法：bash injectors/selftest.sh
-# 可调：AGENOTE_BIN=路径（默认找仓库 .venv/bin/agenote 或 PATH 下含 context
+# 可调：AGENOTE_BIN=路径（默认找包内 .venv/bin/agenote 或 PATH 下含 context
 #       子命令的 agenote）；AGENOTE_ZCODE_PLUGIN_SRC / AGENOTE_HERMES_PLUGIN_SRC
 
 set -uo pipefail
 
 INJ_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$INJ_DIR/.." && pwd)"
+PKG_ROOT="$(cd "$INJ_DIR/.." && pwd)"          # packages/agenote（本包）
+MONOREPO_ROOT="$(cd "$PKG_ROOT/../.." && pwd)" # monorepo 根
 PASS=0 FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ✓ %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  ✗ %s\n' "$1"; }
@@ -26,7 +27,7 @@ section() { printf '\n== %s\n' "$1"; }
 
 # ── 定位含 context 子命令的 agenote（旧版 CLI 无此子命令）───────────────────
 BIN=""
-for cand in "${AGENOTE_BIN:-}" "$REPO_ROOT/.venv/bin/agenote"; do
+for cand in "${AGENOTE_BIN:-}" "$PKG_ROOT/.venv/bin/agenote"; do
   if [[ -n "$cand" && -x "$cand" ]] && "$cand" context --help >/dev/null 2>&1; then
     BIN="$cand"
     break
@@ -200,8 +201,8 @@ assert d["hookEventName"] == "UserPromptSubmit" and "mode=recall" in d["addition
 ' 2>/dev/null && ok "codex recall 通道协议形状 ✓" \
   || bad "codex recall 通道应输出合法 JSON"
 
-# ═══ zcode 插件（Guix-configs 实装，存在才验）════════════════════════════════
-ZZ_SRC="${AGENOTE_ZCODE_PLUGIN_SRC:-$HOME/Projects/Config/Guix-configs/dotfiles/mutable/agenote/.zcode/plugins/agenote-zcode}"
+# ═══ zcode 插件（本仓实装，env 可覆盖为部署副本）══════════════════════════════
+ZZ_SRC="${AGENOTE_ZCODE_PLUGIN_SRC:-$MONOREPO_ROOT/packages/agenote-zcode}"
 section "zcode agenote-zcode 插件（mjs）"
 if [[ -d "$ZZ_SRC" ]] && command -v node >/dev/null 2>&1; then
   HOOKS="$ZZ_SRC/hooks"
@@ -245,8 +246,8 @@ else
   printf '  - 跳过（node 不可用）\n'
 fi
 
-# ═══ hermes 插件（Guix-configs 实装，存在才验）═══════════════════════════════
-HZ_SRC="${AGENOTE_HERMES_PLUGIN_SRC:-$HOME/Projects/Config/Guix-configs/dotfiles/mutable/agenote/.local/share/hermes/plugins/agenote}"
+# ═══ hermes 插件（本仓实装，env 可覆盖为部署副本）═════════════════════════════
+HZ_SRC="${AGENOTE_HERMES_PLUGIN_SRC:-$MONOREPO_ROOT/packages/agenote-hermes}"
 section "hermes agenote 插件（python）"
 if [[ -f "$HZ_SRC/__init__.py" ]]; then
   python3 -c "import ast; ast.parse(open('$HZ_SRC/__init__.py').read())" 2>/dev/null \
