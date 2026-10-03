@@ -106,7 +106,16 @@ jobs:
     if: needs.build.outputs.component == 'dsh-agenote'
     runs-on: ubuntu-latest
     environment: npm
+    permissions:
+      # --provenance 走 OIDC，需要 id-token；顶层默认只有 contents:write
+      id-token: write
     steps:
+      # npm --provenance 在 cwd 探测 git 仓取 commit 信息，不 checkout
+      # 会死于 "Could not read from remote repository"（exit 128）
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+
       - uses: actions/download-artifact@v7
         with:
           name: dist-${{ needs.build.outputs.component }}

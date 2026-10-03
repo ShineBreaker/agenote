@@ -198,6 +198,11 @@ LLM 参与的提交按**实际宿主与模型**附加 `Co-authored-by`，多个�
 跑，而**本地 tag / commit / CHANGELOG 一切正常、极具迷惑性**。该坑在 tag 漏推
 上已连续复发多次。**每次发版必做第 6 步。**
 
+**一次 push 最多 3 个 tag**：GitHub 官方限制，单次 push 推超过 3 个 tag 时不产
+生任何 push 事件、workflow 全部不触发（tag 本身推成功了，极具迷惑性）。多组件
+发版分批推（每批 ≤3），或逐个推。已中招时无需动 tag，用 workflow_dispatch
+回填：`gh workflow run release.yml -f tag=<pkg>-v<ver>`。
+
 本地 tag 可能因 amend/rebase 残留指向悬空提交（`git branch -a --contains <tag>`
 无输出即为悬空）。远端 tag 以 `git ls-remote --tags origin` 为准，不要只看本地
 `git tag -l`。
