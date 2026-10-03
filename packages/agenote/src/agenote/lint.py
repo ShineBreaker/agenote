@@ -128,6 +128,11 @@ def _lint_file(filepath: str, do_fix: bool, formal_types: set[str]) -> list[tupl
 
     # ── 格式问题：调 format_org 做 diff ──
     new_text, fmt_changes = format_org(text, strict=True)
+    if new_text == text:
+        # 幂等守卫：format_org 多个 pass 的 changes 与实际文本变更脱钩
+        # （省略号每轮重复命中、inline marker 对 CJK 边界反复插入），
+        # 文本已收敛时不得再报 format issue，否则 lint --fix 每轮重改同一批文件
+        fmt_changes = []
     if fmt_changes:
         # 去重格式变更说明（format_org 可能重复报告同类问题）
         seen = set()

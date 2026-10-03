@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+## [0.2.0.4] - 2026-10-03
+
+`agenote lint --fix` 幂等性修复：全量跑两轮仍在改同一批文件的振荡根因。
+
+### Fixed
+
+- **`lint --fix` 不幂等，每轮重改同一批文件**（`orgfmt.py` `_fix_ellipsis` + `_zh_style` 阶段顺序，`lint.py` `cmd_lint`）。两处缺陷互相咬合：
+  - `_fix_ellipsis` 的正则 `…+` 把上一轮产物「……」整体再匹配一次并重复报变更，文本却不变——`changes` 与实际文本修改脱钩。
+  - R5 原先排在 R2/R3 **之后**：ASCII「...」转成「……」后，两侧空格已无规则收尾，永久残留；下一轮 R2 再删、R5 再命中旧产物，形成两轮一循环的振荡。
+  - `cmd_lint` 只检查 `fmt_changes` 非空即报 format issue，不校验文本是否真的变了。
+  - 修法：R5 提前到 R2/R3 之前（省略号归一化先于空格规则）、已是「……」的形态不再报变更、`cmd_lint` 增加 `new_text == text` 时清空 `fmt_changes` 的幂等守卫。
+- 实测（541 张卡 + MEMORY.org + 记忆文件共 550 个 .org）：修复前 `lint --fix` 连跑两轮各改 348 个文件、3614 处 issue；修复后第二轮零变更，仅 MEMORY.org 因历史上首次格式化需 3 轮收敛。
+- 受影响的行为变化：ASCII 省略号转换后两侧空格一并收尾（`so...that...` → `so……that……`，原先保留一个空格）。中文标点旁禁空格本就是上游规范，旧期望是振荡中间态；elisp 侧与 golden 快照均不依赖该空格。
+- 测试新增 4 项省略号幂等回归（`tests/test_orgfmt_zh_style.py`），总数 489 全绿；注入器 selftest 30/30、codegen --check、release build 均通过。
+
 ## [0.2.0.3] - 2026-09-29
 
 orgfmt 两条主线：中文技术文档规范阶段（`_zh_style`）落地——8 项自动修复 + 4 项只报不改；内联标记在 Emacs 中的渲染修复——外侧全角紧贴、内侧边界空格、Markdown 双星混写与富文本块漏修根因。

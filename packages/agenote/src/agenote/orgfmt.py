@@ -1011,13 +1011,16 @@ def _zh_style(text: str) -> tuple[str, list[str]]:
         # 若先跑 R2，R7 只能得到「3.行政」而非「3. 行政」。
         new_line, c7 = _fix_ordinal_dun(new_line, idx)
         new_line, c1 = _fix_fullwidth_space(new_line, idx)
+        # R5 必须在 R2/R3 之前：ASCII「...」转成「……」后，「……」两侧的
+        # 空格要由 R2/R3 收尾；放到 R2/R3 之后跑，空格会永久留下，且下一轮
+        # R2 再删、R5 再命中旧产物，lint 每轮都报「有变更」。
+        new_line, c5 = _fix_ellipsis(new_line, idx)
         new_line, c2 = _fix_punct_spacing(new_line, idx)
         new_line, c3 = _fix_zh_latin_spacing(new_line, idx)
         new_line, c4 = _fix_dash_spacing(new_line, idx)
-        new_line, c5 = _fix_ellipsis(new_line, idx)
         new_line, c6 = _fix_repeated_bang(new_line, idx)
         new_line, c8 = _fix_unit_spacing(new_line, idx)
-        changes += c7 + c1 + c2 + c3 + c4 + c5 + c6 + c8
+        changes += c7 + c1 + c5 + c2 + c3 + c4 + c6 + c8
         changes += _zh_lint(new_line, idx)
         result.append(new_line)
 
@@ -1143,8 +1146,11 @@ def _fix_ellipsis(line: str, idx: int) -> tuple[str, list[str]]:
     技术内容；`so...that...` 这类英文句型省略两侧是单词，仍要转。
     表格截断标记（行首 | 时整行不动，见 _zh_style 守卫）。
     与 tools/doc-punct.py 的同名规则保持同样口径。
+
+    幂等：已是「……」的形态直接返回——正则 `…+` 会匹配两个 U+2026 组成的
+    旧产物并重复报变更，而文本每轮都相同，lint 于是永不收敛。
     """
-    if "..." not in line and "…" not in line:
+    if not re.search(r"\.{3,}|(?!……)…", line):
         return line, []
     changes: list[str] = []
     out: list[str] = []
@@ -1153,8 +1159,10 @@ def _fix_ellipsis(line: str, idx: int) -> tuple[str, list[str]]:
         s, e = m.span()
         before = line[s - 1] if s > 0 else " "
         after = line[e] if e < len(line) else " "
-        if before.isdigit() or after.isdigit():
-            out.append(line[pos:e])  # 版本号/范围：原样
+        # 版本号与范围除外；已是中文省略号的形态没有可转换内容，不报变更
+        if (before.isdigit() or after.isdigit()
+                or m.group() == "……"):
+            out.append(line[pos:e])
         else:
             out.append(line[pos:s])
             out.append("……")

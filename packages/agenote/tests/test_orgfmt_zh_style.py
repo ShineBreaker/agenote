@@ -86,7 +86,9 @@ def test_r4_dash_spacing():
 
 
 def test_r5_ellipsis():
-    assert _zh("使用 so...that... 句型") == "使用 so……that…… 句型"
+    # ASCII 三点转换后，两侧空格由 R2/R3 收尾：中文标点旁空格本就该删，
+    # Latin 侧也不补（R3 只认汉字边界，`……` 不是 Latin 字符）
+    assert _zh("使用 so...that... 句型") == "使用 so……that……句型"
 
 
 def test_r5_spares_version_numbers():
@@ -259,3 +261,52 @@ def test_full_pipeline_fence_no_blank_insertion():
     # 回归：markdown 围栏内容不得被插入空行
     src = "```bash\necho hi\n```\n"
     assert format_org(src)[0] == src
+
+
+# ── 回归：省略号幂等（2026-10-03 实测 lint --fix 每轮重改 348 个文件） ──────
+#
+# 症状：`agenote lint --fix` 连跑两轮都在改同一批文件、报「全角标点旁多余
+# 空格」+「英文省略号 → 中文省略号」。根因：`_fix_ellipsis` 的正则 `…+` 把
+# 上一轮产物「……」整体再匹配一次并重复 append changes，而 `_fix_punct_spacing`
+# 每轮再删一处 `……` 左侧空格——文本每轮都不同，lint 永不收敛。
+
+
+def test_r5_ellipsis_idempotent():
+    """已是中文省略号 + 两侧空格正确时，不得再产生任何变更。"""
+    # 规范上中文标点旁禁半角空格，故合法形态是「……」紧邻两侧内容
+    src = "参考 ~path/to/file……~ 用法。"
+    once = _zh(src)
+    assert once == src
+    assert _zh(once) == once
+
+
+def test_r5_ellipsis_punct_space_collapses_once():
+    """「…… 」带空格的形态第一轮删空格，第二轮零变更（振荡回归）。"""
+    src = "参考 ~path/to/file ……~ 用法。"
+    once = _zh(src)
+    assert once == "参考 ~path/to/file……~ 用法。"
+    assert _zh(once) == once
+
+
+def test_r5_ellipsis_ascii_still_converts():
+    """ASCII 三点仍要转，转换后空格一并收尾且幂等。"""
+    src = "参考 path/to/file ... 用法。"
+    once = _zh(src)
+    assert once == "参考 path/to/file……用法。"
+    assert _zh(once) == once
+
+
+def test_r5_ellipsis_version_range_untouched():
+    src = "版本范围 v1...v2 与 v1.2.3 不动。"
+    assert _zh(src) == src
+
+
+def test_full_pipeline_ellipsis_no_change_on_second_run():
+    """整管线第二次跑必须零变更（含省略号 + 全角标点空格的组合行）。"""
+    src = (
+        "commit 被拦截时用 ~HTTPConnection(\"127.0.0.1\", port, ……)~ 硬编码主机，"
+        "另见 ~mount(8)~ 与 ~(options ……)~。\n"
+    )
+    once, ch1 = format_org(src, strict=True)
+    twice, ch2 = format_org(once, strict=True)
+    assert twice == once, f"第二轮仍产生文本变更: {ch2[:3]}"
