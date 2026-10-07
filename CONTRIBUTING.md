@@ -66,6 +66,20 @@ uv tool install --editable .  # 本地体验 CLI（改源即生效，在本目�
 > 注意：仓库 2026-08 之前的历史提交使用 `FEATURE:` / `REFACTOR:` 等
 > 大写前缀，现已废弃，新提交一律用小写标准格式。
 
+## LLM 署名
+
+LLM 参与的提交按**实际宿主与模型**附加 `Co-authored-by`，多个作者各占一行。
+这张表是署名约定的唯一真相源（`~/.config/git/gitmessage` 里只有 type 清单）：
+
+| 宿主 | 写法 |
+| --- | --- |
+| minimax Code | `minimax Code (MiniMax-M3.1-Flash-Preview) <noreply@minimax.io>` |
+| ZCode | `ZCode (GLM-5.3) <noreply@z.ai>` |
+| DSH | `DeepSeek (step-5-preview) <noreply@deepseek.com>` |
+| Hermes | `Hermes (<model>) <noreply@nousresearch.com>` |
+
+模型名照实际运行的那个填，不要照抄本表。
+
 ## 提交 PR
 
 1. fork 仓库并从 `main` 切出特性分支；

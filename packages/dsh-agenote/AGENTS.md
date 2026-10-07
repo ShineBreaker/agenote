@@ -28,11 +28,15 @@ DeepSeek Harness（DSH）的 agenote 集成插件：Cordis bundle，纯 ESM、�
 
 ## 发布
 
-单包、无构建、不发 npm（纯 ESM 零依赖，git 安装即用；awesome 收录与 npm 发布无关）。流程对齐 agenote CLI 仓库先例：
+发布流程（版本号、CHANGELOG、tag、推送自查）由 monorepo 统一规定，见根
+[CODING_STANDARDS.md §发版](../../CODING_STANDARDS.md#发版)。**tag 前缀即包名**，本包
+用 `dsh-agenote-vX.Y.Z`；渠道是 **npm + GitHub Release**（`release.yml` 的
+`publish-npm` job 跑 `npm publish dist/*.tgz`），版本声明在 `package.json`。
 
-1. 行为改动按 semver 定性：**patch** = 不改行为的修复（可攒批），**minor** = 新能力或行为变化（单独发）。
-2. `chore(release): 发布 vX.Y.Z`：**版本号 + `CHANGELOG.md`**（Keep a Changelog，新增 `## [X.Y.Z] - 日期` 段，并把 CHANGELOG 登记进 `package.json` 的 `files`）同一个 commit，tag 锚定该 commit。manifest 类变更（如 peer cohort）走独立 `feat(manifest)` commit，不发版也要能被装。
-3. annotated tag：`git tag -a vX.Y.Z -m ...`，**推送前核对指向**：`git log --oneline -1 <tag>` 是目标 release commit，且 `git branch -a --contains <tag>` 有输出（无输出即为悬空，删了重打）。
-4. 推送前按「验证」第 4 步冷启动一遍（新 manifest 也要过：确认无 `failed to import`、无 `incompatible-version`、行未 disabled）。
-5. `git push origin main vX.Y.Z` → `gh release create vX.Y.Z --notes-file <CHANGELOG 对应段>`。
-6. **DSH 出新 cohort 时必须同步抬 `peerDependencies["@deepseek-ai/dsh"]` 与 `dsh.engines.dsh` 下限，两条保持一致**。0.1.7-rc.1 起安装前与启动时按该范围强制校验（`evaluatePluginCompatibility`，可在本地 app-boot 实测）：不声明则跳过检查（现状安全但无保护），声明了不匹配则安装抛 `incompatible-version`、启动整行 disabled，豁免需 `dsh plugin allow-version`。peer 是兼容性声明不是 import，不触犯禁 import 硬禁令；profile 侧 `autoInstallPeers: false` 保证它不会被平铺成第二份核心包。
+本包独有的三条约束：
+
+- **新增源文件必须登记进 `package.json` 的 `files`。** npm tarball 只含那 8 个条目，
+  没登记的文件不会随包发布——`build.py` 的打包产物直接来自这份列表。
+- **推送前按「验证」第 4 步冷启动一遍**（新 manifest 也要过：确认无 `failed to import`、
+  无 `incompatible-version`、行未 disabled）。运行中进程持有旧模块图，冷启动才是判据。
+- **DSH 出新 cohort 时必须同步抬 `peerDependencies["@deepseek-ai/dsh"]` 与 `dsh.engines.dsh` 下限，两条保持一致**。0.1.7-rc.1 起安装前与启动时按该范围强制校验（`evaluatePluginCompatibility`，可在本地 app-boot 实测）：不声明则跳过检查（现状安全但无保护），声明了不匹配则安装抛 `incompatible-version`、启动整行 disabled，豁免需 `dsh plugin allow-version`。peer 是兼容性声明不是 import，不触犯禁 import 硬禁令；profile 侧 `autoInstallPeers: false` 保证它不会被平铺成第二份核心包。
