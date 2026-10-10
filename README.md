@@ -2,12 +2,57 @@
 
 > One memory, all agents sharing it. / 一个知识库，所有 agent 共享。
 
-Agent 不共享记忆：你在 Claude Code 踩过的坑，到 Codex 还得再踩一次——每个宿主
-都把记忆存成只有自己能读的私有格式。agenote 把这些经验收进一个 Org 目录，
-人与 agent 读写同一批文件。领域术语见 [CONTEXT.md](CONTEXT.md)。
+[![CI](https://github.com/ShineBreaker/agenote/actions/workflows/ci.yml/badge.svg)](https://github.com/ShineBreaker/agenote/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-本仓库是 monorepo（[ADR 0005](docs/adr/0005-monorepo-unify-seven-components.md)），
-7 个组件共用一套语义真相源，各自独立发版：
+你在 Claude Code 踩过的坑，到 Codex 还得再踩一次——每个宿主都把记忆锁进只有
+自己能读的私有格式：Markdown 碎片、SQLite、JSONL。换个宿主就失忆，你辛苦喂
+出来的经验永远带不走。
+
+agenote 把所有 agent 的经验收进**一个 Org 目录**：纯文本、人可读、git 友好，
+人与 agent 读写同一批文件——没有数据库，没有服务端。开工时相关经验自动注入
+会话，任务结束时教训自动沉淀成卡片。你的 agent 越用越顺手，而这份积累属于
+你，不属于任何一家工具。
+
+## 为什么不是又一个记忆插件
+
+| | 宿主内置记忆 | agenote |
+| --- | --- | --- |
+| 范围 | 单宿主私有 | zcode / Claude Code / Codex / oh-my-pi / opencode / Hermes / DSH 共享一个库 |
+| 存储 | 私有格式，你读不了也改不了 | 统一 Org 纯文本：Emacs 直接打开，diff 一目了然 |
+| 写入 | 各宿主各写各的 | 宿主只读，CLI 独占写入——flock + 原子写，多 agent 并发不冲突 |
+| 检索 | 宿主内逐条匹配 | 全局 BM25，中文句子里嵌英文命令名照样命中 |
+| 策展 | 无 | 健康报告 / 去重 / 降级 / 归档：agent 提建议，CLI 给证据 |
+| 泄露 | — | secret 扫描默认开启；敏感条目只留本地，永不注入会话 |
+
+还有两件事内置记忆做不到：**每条经验都能溯源**到原始对话（完整工具调用与
+推理，不是一句转述摘要）；`agenote viz` 把整个知识库渲染成单个可搜索的 HTML。
+
+## 30 秒上手
+
+```bash
+uv tool install agenote
+agenote init                  # 建知识库，默认 ~/Documents/Org
+agenote add "标题" --body "一条经验" --category debug
+agenote search "关键词"       # 跨域搜索
+```
+
+装上对应宿主的插件（见下表）之后就是全自动：会话开始注入简报，任务完成
+触发记卡。你随时可以用 Emacs 打开知识库直接改——`org agenda` 按状态列卡片，
+`org-refile` 移动它们。它是你的文件，不是 agent 的黑盒。
+
+## 适合谁 / 不适合谁
+
+**适合**：同时用多个 agent 宿主；已经在用 org-mode 记笔记，想让 AI 加入同一套
+系统；想要一份自己拥有、可 git 版本化的 agent 记忆。
+
+**不适合**：只用一个宿主（内置记忆够用）；已经有一套不想让 AI 读写的笔记系统；
+需要团队共享或实时协作（agenote 是单机 git 仓库）。
+
+## 组件
+
+monorepo，7 个组件共用一套语义真相源，各自独立发版
+（[ADR 0005](docs/adr/0005-monorepo-unify-seven-components.md)）：
 
 | 组件 | 是什么 | 发布渠道 |
 | --- | --- | --- |
@@ -19,32 +64,13 @@ Agent 不共享记忆：你在 Claude Code 踩过的坑，到 Codex 还得再踩
 | [`packages/dsh-agenote`](packages/dsh-agenote/) | DSH cordis bundle（npm） | npm `dsh-agenote` |
 | [`packages/agenote-skills`](packages/agenote-skills/) | 3 个 agent skill（base / curator / review），行为规范的载体 | Release tar.gz |
 
-## 快速开始（CLI）
-
-```bash
-uv tool install agenote
-agenote add "标题" --body "一条经验" --category debug   # 记一张卡
-agenote search "关键词"                                 # 跨域搜索
-```
-
-CLI 的安装与用法详见 [packages/agenote](packages/agenote/)；Emacs 端装
-`agenote-el`，其余宿主按上表对应包的 README 安装。
-
-## 架构约定
-
-- **单一实现层**：一切落盘逻辑只在 CLI；各宿主插件只做「事件触发 + 命令入口」，
-  不重复实现知识库逻辑。
-- **单一真相源**：跨组件复用的信号 / 预算 / 时序在 [`spec/`](spec/)，由
-  `tools/codegen` 生成进各包（生成物随仓提交，CI 拦截漂移）；行为规范写在
-  `agenote-skills` 的 SKILL.md，改策略不发版。
-- **tag 前缀即包名**：`agenote-v0.3.0`、`agenote-el-v0.1.0`……一个提交可携带
-  多个 tag，组件版本互不牵制。
-
 ## 文档
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) — 开发环境、commit 规范、各包验证入口
+- [使用指南](packages/agenote/docs/usage.md) — 安装、命令全集、配置、架构
+- [CONTRIBUTING.md](CONTRIBUTING.md) — 开发环境与 commit 规范
 - [AGENTS.md](AGENTS.md) — monorepo 规范本体（改代码前必读）
-- [docs/adr/](docs/adr/) — 跨组件架构决策（0005 起；各包内 ADR 见各自目录）
+- [docs/adr/](docs/adr/) — 跨组件架构决策
+- [CONTEXT.md](CONTEXT.md) — 领域术语：卡片、记忆条目、reconcile 是什么
 
 ## License
 

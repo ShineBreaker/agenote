@@ -134,12 +134,37 @@ python3 tools/codegen/check.py              # 校验 JSON 正则 / Markdown 散�
 流程：
 
 1. 改版本（包内版本声明处）
-2. **更新该包的 `CHANGELOG.md`**（Keep a Changelog 格式，新增 `## [X.Y.Z] - 日期` 段；
-   漏记需事后补）
+2. **更新该包的 `CHANGELOG.md`**（Keep a Changelog 格式 + 下方「release 文案结构」，
+   新增 `## [X.Y.Z] - 日期` 段；漏记需事后补）
 3. 提交
 4. annotated tag 打在 release commit 上 → `git log --oneline -1 <tag>` 核对指向
 5. `git push origin main <pkg>-vX.Y.Z`（main 与 tag **一并**推送）
 6. push 后 `git ls-remote --tags origin | grep <tag>` 自查远端 tag 确实存在
+
+### release 文案结构
+
+GitHub Release 的正文就是该版本 CHANGELOG 段落——`build.py` 的 `release_notes()`
+原样抽取，workflow 用 `--notes-file` 发布。所以段落结构按访客第一屏设计：
+
+```markdown
+## [X.Y.Z] - 日期
+
+<一两句营销短段：这次发布给用户带来了什么。面向使用者，不展开实现>
+
+---
+
+### Added / Fixed / Changed
+
+- 大概做了什么（abc1234）
+- 大概做了什么（def5678）
+```
+
+- **首段只做营销**：一两句话概括本次全部改动的价值，读完知道"值不值得升级"。
+- **分割线之后是正文**：每条一句话讲做了什么；细节**不描述**，直接引用对应
+  commit 短 hash（GitHub 自动渲染成链接，点进去看根因与修法）。
+- Keep a Changelog 分类小节保留。2026-10 起的新段落按此结构，历史段落不回改。
+
+### tag 陷阱处置
 
 两个 tag 陷阱的**症状**写在 [AGENTS.md §4 静默失败](AGENTS.md#4-静默失败)（它们必须在
 动手发版前就看见）。这里是处置细节：
