@@ -70,6 +70,8 @@ EOF
 
 **type 门禁**：`--type` 只用正式 type（`agenote fields --type` 查看；种子 6 类 debug/refactor/research/workflow/feature/config 免检，其余需非归档 ≥10 张才晋升正式）；非正式 type 会被 CLI 拒绝，确需延续/新建才加 `--force`（新 type 持续写到 10 张后自动转正免检）。
 
+**内联正文陷阱（Hermes 会话）**：`--stdin <<EOF` 把卡片正文内联进命令时，正文含「git commit」字样（如记录 commit 相关经验）会触发命令 gate，整条命令在执行前被拒（error: git commit 必须使用 -m 指定提交信息；无副作用、无部分执行）。对策：正文先写临时文件，再 `--stdin < /tmp/card.org` 传入——文件内容不参与命令文本扫描，实测通过。引号参数（--title/--summary）中的同样字样较短时不触发，但别赌长文本。
+
 ### 管理
 
 ```
