@@ -72,6 +72,8 @@ EOF
 
 **出处溯源（U3）**：`add` / `memory --add` 支持 `--source <出处>`（自由文本，如 URL/文档名；空则不写）与 `--added YYYY-MM-DD`（录入日期，缺省当日）。卡片与记忆条目用同名属性 `SOURCE` / `ADDED` 落盘；`update <ID> --source/--added` 可改写卡片出处；`search [--json]` 回显 `source` / `added`。旧卡片缺这两项时显空，不回填。
 
+**内联正文陷阱（Hermes 会话）**：`--stdin <<EOF` 把卡片正文内联进命令时，正文含「git commit」字样（如记录 commit 相关经验）会触发命令 gate，整条命令在执行前被拒（error: git commit 必须使用 -m 指定提交信息；无副作用、无部分执行）。对策：正文先写临时文件，再 `--stdin < /tmp/card.org` 传入——文件内容不参与命令文本扫描，实测通过。引号参数（--title/--summary）中的同样字样较短时不触发，但别赌长文本。
+
 ### 管理
 
 ```
