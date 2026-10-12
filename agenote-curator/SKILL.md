@@ -1,6 +1,6 @@
 ---
 name: agenote-curator
-description: agenote KB 例行策展与健康度维护。触发：每周/长会话后 / 卡片 >50 张 / 检索质量下降 / `/agenote-curate` / 发现重复或矛盾卡片 / 新增对话抽取源或记忆源——任一出现即调用。流程由 agent 主导编排（诊断、状态重整、去重归档、reconcile、agent 记忆库巡检导入、dream 综合），CLI 只提供检测报告与原子命令。基础用法见 agenote-base；会话中单次经验记录见 agenote-review。
+description: agenote KB 例行策展与健康度维护。触发：每周/长会话后 / 卡片 >50 张 / 检索质量下降 / `/agenote-curate` / 发现重复或矛盾卡片 / 新增对话抽取源或记忆源——任一出现即调用。流程由 agent 主导编排（诊断、漏斗清理、去重归档、reconcile、agent 记忆库巡检导入、dream 综合），CLI 只提供检测报告与原子命令。基础用法见 agenote-base；会话中单次经验记录见 agenote-review。
 ---
 
 # agenote-curator — 跨 agent 自动策展
@@ -40,19 +40,19 @@ agenote gaps --stale-days 60            # 类别×类型矩阵 + 缺失组合 + 
 
 指标含义、阈值与红灯组合的解读见 [references/health-assessment.md](references/health-assessment.md)（含修复动作对照表）。
 
-### Step 2 — 状态重整（agent 审查后显式执行）
+### Step 2 — 漏斗清理（孤立即归档，不复核）
+
+维护口径是漏斗制：唯一健康指标是**复用率**（孤立率红线保留，但达标手段是丢弃而非抢救）——搜索与链接都触达不到的卡，复核是在为它付第二次成本，`archive` 可 restore，误伤代价低于复核成本。
 
 ```bash
-agenote list --unused-days 30 --all     # 降级候选（>30 天未使用，只读）
-agenote get <id>                        # 抽查候选内容，判断是否真过时
-agenote update <id> --status stale      # 确认过时 → 降级
-agenote update <id> --status stable     # done >30 天且质量合格 → 转 stable
-agenote touch <id>                      # 仍有效 → 刷新 LAST_VERIFIED
+agenote list --unused-days 60 --all     # 久未使用清单（只读）
 agenote archive --stale                 # 归档候选清单（stale 且 >90 天未验证，只读）
-agenote archive <id...> --reason "策展: >90天未验证"   # 审查后批量归档
+agenote archive <id...> --reason "策展: 孤立无复用"   # 命中条件即批量归档
 ```
 
-**逐项判断，不要看天数就批量降级**——LAST_USED 超期只说明没人用，语义是否过时要读卡判断。
+- **直接归档**：`USAGE_COUNT=0` 且无 `[[file:]]` 入链的久置卡 → 归档，不读正文、不抢救。
+- **仅两类例外读卡**：近 30 天新写入（还没机会被用），或命中当前任务域——`agenote touch` 刷新即可。
+- done → stable 的语义维护不做批量扫描，只在被点名卡片上顺手 `update --status stable`。
 
 ### Step 3 — type 聚拢（agent 判断）
 
@@ -89,17 +89,17 @@ agenote get <id_a> && agenote get <id_b>   # 核实是否真重复
 agenote merge <primary> <secondary> --desc "合并原因"   # secondary 自动归档
 ```
 
-### Step 4.5 — KB→skill 晋升（WikiSkill 管道，agent 判断）
+### Step 4.5 — 高频卡沉淀为机制（agent 判断）
 
-审查 mistake/ascended 卡片时，挑出**同一主题证据 ≥3 次**的候选晋升为 skill（对应 `correction-funnel` Step 5.5；那边的触发端每次会话生效，本步是策展时的批量执行端）：
+高频复用的经验不该一直当卡养着——`USAGE_COUNT ≥5` 或**同一主题证据 ≥3 次**的候选，沉淀为 skill 或机器机制（git hook / 校验器 / CI）后**归档原卡**（对应 `correction-funnel` Step 5.5；那边的触发端每次会话生效，本步是策展时的批量执行端）：
 
 1. **先读审计簿** `~/.local/share/hermes/skills/skill-impact.md`——候选方向如有被拒记录（Rejected 条目），提案必须回应拒绝原因，不得原样重提
-2. 每轮策展最多晋升 **1 个** skill（原子提案，防批量改动无法归因）；候选多于 1 个时挑 Evidence 最厚的
-3. skill 本体按 `skill-authoring` §9 分类树放置（`<category>/<skill-name>/`，保证 skills_list 可发现、skill_view 可加载）；SKILL.md frontmatter 后加 `来源: agenote <卡片ID>` 反向链接
+2. 每轮策展最多晋升 **1 个**（原子提案，防批量改动无法归因）；候选多于 1 个时挑复用最厚的
+3. skill 本体按 `skill-authoring` §9 分类树放置（`<category>/<skill-name>/`，保证 skills_list 可发现、skill_view 可加载）；SKILL.md frontmatter 后加 `来源: agenote <卡片ID>` 反向链接。机器机制（hook/校验器）落到对应受管配置区，同样回注来源 ID
 4. 用户过目拍板 → 落地 → 登记审计簿（Accepted/Rejected 一行，格式见簿头）
-5. 源卡片 `--status done` + 正文补 `→ 已晋升为 skill <名字> (日期)`
+5. 源卡片 `agenote archive <id> --reason "已沉淀为 skill/机制 <名字>"` 退役归档
 
-零候选（无卡片达 3 次门槛）即跳过本步，属正常。
+零候选即跳过本步，属正常。
 
 ### Step 5 — 矛盾调和与传播联动
 
