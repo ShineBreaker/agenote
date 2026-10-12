@@ -216,6 +216,25 @@ SCHEMA: dict[str, dict[str, Key]] = {
             "", env="AGENOTE_HERMES_SUGGEST_DIR", comment="hermes 待录入清单目录（§切分，需手动调 memory 工具录入）"
         ),
     },
+    "memory": {
+        # U1 MEMORY 入口预算：单条目行数/字符数上限；超限只告警（doctor）+
+        # 截断（context session），由 agent 按 curator SKILL 超限节手工拆分
+        # （ADR-0004：CLI 不自动修）。
+        "max_entry_lines": Key(
+            120, env="AGENOTE_MEMORY_MAX_ENTRY_LINES",
+            comment="MEMORY.org 单条目最大行数（超限只报告不自动修）",
+        ),
+        "max_entry_chars": Key(
+            6000, env="AGENOTE_MEMORY_MAX_ENTRY_CHARS",
+            comment="MEMORY.org 单条目最大字符数（超限只报告不自动修）",
+        ),
+    },
+    "context": {
+        "session_entry_budget_chars": Key(
+            2000, env="AGENOTE_CONTEXT_SESSION_ENTRY_BUDGET_CHARS",
+            comment="context session 模式单个条目行长度预算（超限截断并标记）",
+        ),
+    },
     "injection": {
         # C 线注入架构（AGENOTE_INJECTION_DESIGN.md §3 C2）：宿主插件/hook 实时调
         # `agenote context` 取记忆注入会话；开关真相源在本节，任一粒度关闭时

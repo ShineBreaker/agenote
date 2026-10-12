@@ -212,6 +212,9 @@ def _cross_domain_search(
                 "weight": weight,
                 "title": title,
                 "file": str(filepath),
+                # U3 出处溯源：与 memory --list 同键名；旧卡缺失 → 空串，不回填
+                "source": (parse_org_prop(content, "SOURCE") or "").strip(),
+                "added": re.sub(r"[\[\]]", "", parse_org_prop(content, "ADDED") or "").split()[0] if parse_org_prop(content, "ADDED") else "",
                 "_snippet": _make_search_snippet(
                     {"content": content}, normalized_terms, case_sensitive
                 ),
@@ -239,6 +242,7 @@ def _cross_domain_search(
                 "_key": key,
                 "domain": "reconcile",
                 "source": fact.get("source", ""),
+                "added": "",
                 "weight": fact.get("weight", RECONCILE_DEFAULT_WEIGHT),
                 "title": title,
                 "file": "",
@@ -286,6 +290,9 @@ def _cmd_cross_domain_search(args: argparse.Namespace) -> None:
             domain_tag = f"[{r['domain']}:{r['source']}]"
         fresh = f" {r['freshness']}" if r.get("freshness") else ""
         print(f"{domain_tag} {r['title']}  score={r['score']}  {r.get('file', r.get('id', ''))}{fresh}")
+        # U3 出处溯源：命中文本回显；缺失显空，不回填
+        if r.get("source") or r.get("added"):
+            print(f"  source: {r.get('source', '')} added: {r.get('added', '')}".rstrip())
         if r.get("snippet"):
             for line in r["snippet"].splitlines():
                 print(f"  | {line}")
@@ -387,6 +394,9 @@ def cmd_search(args: argparse.Namespace, ctx=None) -> None:
                 "id": card_id,
                 "title": match["title"],
                 "score": match["score"],
+                # U3 出处溯源：与 memory --list 同键名；旧卡缺失 → 空串，不回填
+                "source": (parse_org_prop(match["content"], "SOURCE") or "").strip(),
+                "added": re.sub(r"[\[\]]", "", parse_org_prop(match["content"], "ADDED") or "").split()[0] if parse_org_prop(match["content"], "ADDED") else "",
                 "snippet": _make_search_snippet(
                     match, normalized_terms, args.case_sensitive
                 ),
@@ -416,6 +426,12 @@ def cmd_search(args: argparse.Namespace, ctx=None) -> None:
         )
         if match["title"] != "unknown":
             print(f"title: {match['title']}")
+        # U3 出处溯源：命中文本回显；旧卡缺失显空，不回填
+        _src = (parse_org_prop(match["content"], "SOURCE") or "").strip()
+        _added_raw = parse_org_prop(match["content"], "ADDED") or ""
+        _added = re.sub(r"[\[\]]", "", _added_raw).split()[0] if _added_raw else ""
+        if _src or _added:
+            print(f"source: {_src} added: {_added}".rstrip())
 
         lines = match["content"].splitlines()
         hit_indexes = [

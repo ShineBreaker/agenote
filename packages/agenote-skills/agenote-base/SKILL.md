@@ -70,6 +70,8 @@ EOF
 
 **type 门禁**：`--type` 只用正式 type（`agenote fields --type` 查看；种子 6 类 debug/refactor/research/workflow/feature/config 免检，其余需非归档 ≥10 张才晋升正式）；非正式 type 会被 CLI 拒绝，确需延续/新建才加 `--force`（新 type 持续写到 10 张后自动转正免检）。
 
+**出处溯源（U3）**：`add` / `memory --add` 支持 `--source <出处>`（自由文本，如 URL/文档名；空则不写）与 `--added YYYY-MM-DD`（录入日期，缺省当日）。卡片与记忆条目用同名属性 `SOURCE` / `ADDED` 落盘；`update <ID> --source/--added` 可改写卡片出处；`search [--json]` 回显 `source` / `added`。旧卡片缺这两项时显空，不回填。
+
 ### 管理
 
 ```

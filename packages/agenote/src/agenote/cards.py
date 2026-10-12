@@ -119,6 +119,11 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
     entry_type = args.entry or ""
     summary = args.summary or ""
     use_stdin = args.stdin
+    # U3 出处溯源：--source 自由文本（空则不写），--added 录入日期（缺省当日）
+    source = (getattr(args, "source", None) or "").strip()
+    added = (getattr(args, "added", None) or "").strip() or today()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", added):
+        die(f"--added 仅支持 YYYY-MM-DD（收到: {added}）")
 
     if not title:
         die("必须指定 --title")
@@ -211,6 +216,10 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
     # source_agent：agent 域写入者溯源；人类域留空（不写该行，区分人/agent）
     if source_agent:
         lines.append(f":SOURCE_AGENT: {source_agent}")
+    # U3 出处溯源：与 memory.py 同属性名；ADDED 缺省当日，旧卡缺失不回填
+    if source:
+        lines.append(f":SOURCE: {source}")
+    lines.append(f":ADDED: [{added}]")
     lines.append(":USAGE_COUNT: 0")
     lines.append(":END:")
     lines.append(tags_line)
@@ -712,6 +721,18 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
     if args.owner:
         content = set_org_prop(content, "OWNER", args.owner)
         reclassify = True
+    # U3 出处溯源：--source 改 SOURCE（空视为未提供，不清零）；--added 改 ADDED
+    _new_source = (getattr(args, "source", None) or "").strip()
+    _meta_changed = False
+    if _new_source:
+        content = set_org_prop(content, "SOURCE", _new_source)
+        _meta_changed = True
+    _new_added = (getattr(args, "added", None) or "").strip()
+    if _new_added:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", _new_added):
+            die(f"--added 仅支持 YYYY-MM-DD（收到: {_new_added}）")
+        content = set_org_prop(content, "ADDED", f"[{_new_added}]")
+        _meta_changed = True
 
     if reclassify:
         content = _rebuild_fingerprint_line(content)
@@ -753,7 +774,7 @@ def cmd_update(args: argparse.Namespace, ctx=None) -> None:
             if new_path != card and not new_path.exists():
                 card.rename(new_path)
                 updated = new_path
-        if reclassify:
+        if reclassify or _meta_changed:
             _upsert_card(index, updated, ctx)
             _save_index(index, ctx)
     except BaseException as exc:

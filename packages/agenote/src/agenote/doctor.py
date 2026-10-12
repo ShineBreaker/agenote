@@ -190,12 +190,98 @@ def _check_kb_secrets() -> dict:
     }
 
 
+def _memory_budget_int(section: str, key: str) -> int | None:
+    """预算键取值；env/文件覆盖非法时返回 None（doctor 只报告不退出）。"""
+    try:
+        return int(str(config.get(section, key)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _iter_memory_blocks(text: str) -> list[tuple[str, int, int]]:
+    """按 `**` 条目切块（与 memory._iter_memory_entries 同一切分口径）。
+
+    返回 [(标题, 行数, 字符数)]；`*` 顶级节行是块边界。
+    """
+    lines = text.split("\n")
+    blocks: list[tuple[str, int, int]] = []
+    i, n = 0, len(lines)
+    while i < n:
+        m = re.match(r"^\*\*\s+(.+)", lines[i])
+        if not m:
+            i += 1
+            continue
+        j = i + 1
+        while j < n and not re.match(r"^\*\*?\s+", lines[j]):
+            j += 1
+        chunk = "\n".join(lines[i:j])
+        blocks.append((m.group(1).strip(), j - i, len(chunk)))
+        i = j
+    return blocks
+
+
+def _check_memory_entry_budget(ctxs=None) -> dict:
+    """MEMORY 入口预算（U1）：单条目行数/字符数超限只报告。
+
+    ADR-0004 约束：CLI 不自动修——超限条目由 agent 按 agenote-curator
+    SKILL「超限处理」节手工拆分；context session 简报侧已按
+    [context].session_entry_budget_chars 截断注入。
+    """
+    max_lines = _memory_budget_int("memory", "max_entry_lines")
+    max_chars = _memory_budget_int("memory", "max_entry_chars")
+    if max_lines is None or max_chars is None:
+        return {
+            "name": "memory-entry-budget",
+            "status": "warn",
+            "detail": "预算配置非法（[memory].max_entry_lines/max_entry_chars 需为数值）",
+            "affects": "用 agenote config show 核对后修正",
+        }
+    if ctxs is None:
+        ctxs = (default_context(), agenote_context())
+    over: list[str] = []
+    total = 0
+    for ctx in ctxs:
+        p = ctx.memory_org
+        if not p.exists() or p.is_symlink():
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        domain = getattr(ctx, "name", "?")
+        for title, nlines, nchars in _iter_memory_blocks(text):
+            total += 1
+            if nlines > max_lines or nchars > max_chars:
+                over.append(f"{domain}:{title}（{nlines}行/{nchars}字）")
+    if not over:
+        return {
+            "name": "memory-entry-budget",
+            "status": "ok",
+            "detail": (
+                "两域 MEMORY.org 均未创建（无条目可查）"
+                if total == 0
+                else f"{total} 条在预算内（行≤{max_lines}/字≤{max_chars}）"
+            ),
+        }
+    preview = "；".join(over[:5]) + ("…" if len(over) > 5 else "")
+    return {
+        "name": "memory-entry-budget",
+        "status": "warn",
+        "detail": f"{len(over)} 条超限：{preview}"
+        f"（预算行≤{max_lines}/字≤{max_chars}）",
+        "affects": "超限条目在 context session 简报中被截断；"
+        "按 agenote-curator SKILL 超限节手工拆分（doctor 只报告不自动修）",
+    }
+
+
+
 def run_checks() -> list[dict]:
     checks = [_check_python(), _check_sqlite(), _check_config()]
     checks.extend(_check_external_tools())
     checks.append(_check_kb(default_context()))
     checks.append(_check_kb(agenote_context()))
     checks.append(_check_kb_secrets())
+    checks.append(_check_memory_entry_budget())
     checks.extend(_host_memory_checks())
     return checks
 

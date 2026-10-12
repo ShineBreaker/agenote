@@ -459,6 +459,8 @@ def _memory_list(args: argparse.Namespace, ctx=None) -> None:
             {"id": e["id"], "title": e["title"], "type": e["type"],
              "kind": e["kind"], "section": e["section"], "scope": e["scope"],
              "hook": e["hook"], "validated_at": e["validated_at"],
+             "source": (e["props"].get("SOURCE") or "").strip(),
+             "added": (e["props"].get("ADDED") or "").strip("[] "),
              "orphan": e["orphan"],
              "sensitive": bool((e["props"].get("SENSITIVITY") or "").strip()),
              "deprecated": e.get("section", "").lower() == "deprecated",
@@ -477,6 +479,12 @@ def _memory_list(args: argparse.Namespace, ctx=None) -> None:
             details.append(f"scope={e['scope']}")
         if e["validated_at"]:
             details.append(f"validated={e['validated_at']}")
+        _src = (e["props"].get("SOURCE") or "").strip()
+        if _src:
+            details.append(f"source={_src}")
+        _added = (e["props"].get("ADDED") or "").strip("[] ")
+        if _added:
+            details.append(f"added={_added}")
         if (e["props"].get("SENSITIVITY") or "").strip():
             details.append("sensitive")
         if e["orphan"]:
@@ -561,6 +569,14 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
     title = getattr(args, "title", "") or ""
     use_stdin = getattr(args, "stdin", False)
     project_name = getattr(args, "project", None)
+    # U3 source溯源：--source 自由文本出处（空则不写），--added 录入日期（缺省当日）
+    _raw_source = getattr(args, "source", None)
+    source = (_raw_source or "").strip()
+    if source.lower() == "all":
+        source = ""  # --source 复用 import 参数（默认 all）：--add 下视为未提供
+    added = (getattr(args, "added", None) or "").strip() or today()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", added):
+        die(f"--added 仅支持 YYYY-MM-DD（收到: {added}）")
 
     body = ""
     if use_stdin and not sys.stdin.isatty():
@@ -637,6 +653,9 @@ def _memory_add(args: argparse.Namespace, ctx=None) -> None:
         entry_lines.append(f"   :SENSITIVITY: {sensitivity}")
     if mem_type == "F" and getattr(args, "ref", None):
         entry_lines.append(f"   :REF:      {args.ref}")
+    if source:
+        entry_lines.append(f"   :SOURCE:   {source}")
+    entry_lines.append(f"   :ADDED:    [{added}]")
     entry_lines.append("   :END:")
     entry_lines.append(f"# {build_memory_hook(title, body)}")
     if body.strip():

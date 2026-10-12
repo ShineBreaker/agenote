@@ -114,6 +114,19 @@ agenote memory --project <name>         # 项目记忆检索 + PATH/UPDATED 健�
 agenote memory --project-touch <name>   # 确认活跃的项目刷新 LAST_ACTIVE
 ```
 
+**MEMORY 单条目超限处理**（U1 入口预算）：`agenote doctor` 的
+`memory-entry-budget` 项发现行数 > `[memory].max_entry_lines`（默认 120）
+或字符数 > `[memory].max_entry_chars`（默认 6000）的条目时，只报告不自动修
+（CLI 自动修是 ADR-0004 明确禁止的语义决策）。session 简报侧已按
+`[context].session_entry_budget_chars`（默认 2000）截断超限条目并打行内标记
+`…[单条超预算已截断]`（json `truncated=true`）。处理流程：
+
+1. 读超限条目全文，按主题拆成 2+ 条小条目（`memory --add` 逐条写，每条回落预算内）；
+2. 原条目确认被覆盖后归档或删除；
+3. 重跑 `agenote doctor` 确认该项回 `ok`。
+
+禁止把超限条目整块搬进卡片正文绕过预算。
+
 ### Step 7 — 跨 agent reconcile + dream 综合
 
 **reconcile**：按注册顺序跑全部 source，结果写到 `.reconcile/index.json`（写入层自动过滤 harness 注入的元消息噪声）。首次跑新 source 先 `--dry-run` 试跑。行为细节（三重只读、KB 优先、按 id 去重、0-fact 警告）见 [references/curation-guide.md](references/curation-guide.md)「reconcile 行为细节」。

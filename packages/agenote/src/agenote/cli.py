@@ -525,7 +525,8 @@ def print_help() -> None:
   add       添加经验卡片
             agenote add --title "标题" [--category 类别] [--tech 技术栈]
                     [--type 类型] [--owner 执行者] [--entry 条目语义]
-                    [--summary 总结] [--stdin] [--force] [--allow-secret]
+                    [--summary 总结] [--source 出处] [--added YYYY-MM-DD]
+                    [--stdin] [--force] [--allow-secret]
                     写入侧 secret 门禁默认开启（高置信密钥前缀即拒写）
 
   get       读取卡片详情
@@ -552,7 +553,7 @@ def print_help() -> None:
             agenote memory --project <名称|路径|.>   检索项目记忆（含 PATH/UPDATED 健康提示）
             agenote memory --add --type <类型> --title "标题" --stdin  添加记忆
                     [--project 名称] 项目分区（任意类型）  [--sensitivity private] 不注入不投影
-                    [--allow-secret] 豁免写入侧 secret 门禁
+                    [--source 出处] [--added YYYY-MM-DD]  [--allow-secret] 豁免写入侧 secret 门禁
             agenote memory --list [--type U|F|P|E|R] [--scope S] [--json]  只读列出条目
             agenote memory --stale                   列出陈旧记忆
             agenote memory --revalidate             只读列出待重验条目
@@ -600,8 +601,8 @@ def print_help() -> None:
 
   update   更新已有卡片
             agenote update <卡片ID> [--status STATUS] [--category 类别] [--tech 技术]
-                     [--type 类型] [--owner 执行者] [--append-to 章节 --append-text 内容] [--stdin]
-                     [--force]
+                     [--type 类型] [--owner 执行者] [--source 出处] [--added YYYY-MM-DD]
+                     [--append-to 章节 --append-text 内容] [--stdin] [--force]
 
   init     初始化知识库
             agenote init            创建目录结构 + git 仓库 + 初始 commit
@@ -757,6 +758,9 @@ def _main() -> None:
         help="条目语义（mistake|note|ascended）",
     )
     add_parser.add_argument("--summary", help="一句话总结")
+    # U3 出处溯源：--source 自由文本（空则不写），--added 录入日期（缺省当日）
+    add_parser.add_argument("--source", default=None, help="出处（如 URL/文档名；空则不写）")
+    add_parser.add_argument("--added", default=None, help="录入日期 YYYY-MM-DD（缺省当日）")
     add_parser.add_argument(
         "--stdin", action="store_true", help="从标准输入读取详细内容"
     )
@@ -894,7 +898,12 @@ def _main() -> None:
     )
     memory_parser.add_argument(
         "--source", default="all",
-        help="import 来源（zcode|claude|codex|pi|reasonix|hermes|all，默认 all）",
+        help="import 来源（zcode|claude|codex|pi|reasonix|hermes|all，默认 all）；--add 下复用为自由文本出处（all 视为未提供）",
+    )
+    # U3 出处溯源：--add 写 ADDED（缺省当日，YYYY-MM-DD）
+    memory_parser.add_argument(
+        "--added", default=None,
+        help="--add 录入日期 YYYY-MM-DD（缺省当日）",
     )
     memory_parser.add_argument(
         "--dry-run", action="store_true", help="只预览不落盘（import 用）",
@@ -1039,6 +1048,9 @@ def _main() -> None:
         "--type", dest="type_", help="新类型（重分类：同步属性/标签/文件名/索引）"
     )
     update_parser.add_argument("--owner", help="新执行者")
+    # U3 出处溯源：--source 改 SOURCE，--added 改 ADDED（YYYY-MM-DD）
+    update_parser.add_argument("--source", default=None, help="新出处（空视为未提供）")
+    update_parser.add_argument("--added", default=None, help="新录入日期 YYYY-MM-DD")
     update_parser.add_argument("--append-to", help="追加内容到指定章节")
     update_parser.add_argument("--append-text", help="要追加的内容")
     update_parser.add_argument(

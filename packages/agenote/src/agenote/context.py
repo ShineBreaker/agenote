@@ -54,6 +54,8 @@ LINE_MAX_CHARS = 160
 RECALL_SUMMARY_CHARS = 200
 # 简报末尾固定指引（T8 先目录后正文；仅 session 模式附加）
 MORE_GUIDE = "更多：agenote memory --list --type X / agenote search <kw>"
+# 单条目 session 行超预算标记（行内告警；json 侧 truncated 同步置位，U1）
+ENTRY_BUDGET_MARK = "…[单条超预算已截断]"
 
 
 def _cfg_bool(section: str, key: str) -> bool:
@@ -315,11 +317,27 @@ def _first_line(e: dict) -> str:
     return text.split("\n")[0].strip()
 
 
-def _session_line(e: dict) -> str:
+def _session_line(e: dict) -> tuple[str, bool]:
+    """session 单行渲染。返回 (行文本, 是否因单条目预算被截断)。
+
+    [context].session_entry_budget_chars 约束单个条目在 session 简报中的
+    行长度（默认 2000；标题无长度上限是唯一的现实超限源，正文首行恒被
+    LINE_MAX_CHARS 封顶）。超限截断行尾并打行内告警标记（U1）。
+    """
     body = _first_line(e)
     if len(body) > LINE_MAX_CHARS:
         body = body[: LINE_MAX_CHARS - 1] + "…"
-    return f"[{e['type']}|{_entry_scope(e)}] {e['title']} — {body}".rstrip()
+    line = f"[{e['type']}|{_entry_scope(e)}] {e['title']} — {body}".rstrip()
+    budget = _cfg_num("context", "session_entry_budget_chars", int)
+    if budget < 1:
+        die("[context].session_entry_budget_chars 需为正整数")
+    if len(line) <= budget:
+        return line, False
+    cut = max(0, budget - len(ENTRY_BUDGET_MARK))
+    line = line[:cut] + ENTRY_BUDGET_MARK
+    if len(line) > budget:  # 预算小于标记长度的极端情形：保预算，标记能留多少留多少
+        line = line[: budget - 1] + "…" if budget >= 1 else ""
+    return line, True
 
 
 def _recall_block(e: dict, score: float) -> list[str]:
@@ -407,12 +425,20 @@ def _session_brief(ctx, args) -> dict:
                              _cfg_num("injection", "session_f_topk", int))
     if not groups:
         return _result("empty", "session", budget, args.host)
-    rendered = [(t, [(e, [_session_line(e)]) for e in rows]) for t, rows in groups]
+    rendered = []
+    entry_truncated = False
+    for t, rows in groups:
+        items = []
+        for e in rows:
+            line, over = _session_line(e)
+            entry_truncated = entry_truncated or over
+            items.append((e, [line]))
+        rendered.append((t, items))
     text, truncated, kept = _assemble(_marker_of("session", budget), rendered,
                                       MORE_GUIDE, budget)
     return _result("ok", "session", budget, args.host,
                    text=text, entries=[_entry_json(e) for e in kept],
-                   truncated=truncated)
+                   truncated=truncated or entry_truncated)
 
 
 def _recall_brief(ctx, args) -> dict:

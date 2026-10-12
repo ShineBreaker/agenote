@@ -37,6 +37,7 @@ from agenote.index import (
     _upsert_card,
 )
 from agenote.safeio import atomic_write, restore_text_files
+from agenote.linkcheck import extract_links, resolve_link
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -322,3 +323,21 @@ def cmd_review(args: argparse.Namespace, ctx=None) -> None:
         print("修复用: agenote update <id> --category <值> / --tech <值> / connect 建关联")
     else:
         print("质量检查: ✅ 全部通过")
+    # ── 链接完整性（U2 只读展示，不写盘；零引用时单行带过）─────────────
+    mem_root = getattr(ctx, "memories", None) or card.parent
+    links = extract_links(content)
+    if not links:
+        print("链接完整性: 无 [[路径]] 引用")
+    else:
+        print("链接完整性:")
+        for link in links:
+            target = resolve_link(mem_root, link)
+            try:
+                show = target.relative_to(mem_root)
+            except ValueError:
+                show = target
+            try:
+                ok = target.is_file() and not target.is_symlink()
+            except OSError:
+                ok = False
+            print(f"  {'✅' if ok else '❌ 坏链'} [[{link}]] -> {show}")

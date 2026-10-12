@@ -60,6 +60,10 @@ def _card_dict(filepath: Path, ctx: "KBContext | None" = None) -> dict | None:
     entry_type = parse_org_prop(content, "ENTRY_TYPE") or None
     # source_agent：记录卡片写入者。旧卡片无此属性 → 空串（迁移时补 pi）。
     source_agent = parse_org_prop(content, "SOURCE_AGENT") or ""
+    # U3 出处溯源：与 memory.py 同属性名；旧卡缺失 → 空串，不回填（不改 authority 判定）。
+    source = parse_org_prop(content, "SOURCE") or ""
+    added_raw = parse_org_prop(content, "ADDED") or ""
+    added = re.sub(r"[\[\]]", "", added_raw).split()[0] if added_raw else ""
 
     # ── 解析 tags 行 ─────────────────────────────────────────────────────
     # tags 行格式: ":category:type:owner:tech::"（冒号分隔，尾部双冒号）
@@ -101,6 +105,8 @@ def _card_dict(filepath: Path, ctx: "KBContext | None" = None) -> dict | None:
         "owner": parse_org_prop(content, "OWNER") or DEFAULT_OWNER,
         "entry_type": entry_type,
         "source_agent": source_agent,
+        "source": source,
+        "added": added,
         "status": parse_org_prop(content, "STATUS") or "done",
         "last_used": last_used_raw,
         "last_verified": parse_org_prop(content, "LAST_VERIFIED"),
@@ -120,7 +126,7 @@ def _valid_index_card(card: object) -> bool:
     string_fields = ("category", "type", "owner", "status", "title", "file")
     if not all(isinstance(card.get(key), str) for key in string_fields):
         return False
-    optional_string_fields = ("tech", "source_agent", "last_used", "last_verified", "created")
+    optional_string_fields = ("tech", "source_agent", "source", "added", "last_used", "last_verified", "created")
     if not all(
         key not in card or isinstance(card[key], str)
         for key in optional_string_fields
