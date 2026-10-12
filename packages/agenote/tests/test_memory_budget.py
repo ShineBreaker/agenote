@@ -106,6 +106,15 @@ def test_doctor_check_registered():
     assert "memory-entry-budget" in [c["name"] for c in run_checks()]
 
 
+def test_doctor_deprecated_section_excluded(tmp_path):
+    # session 简报本来就排除 deprecated，预算检查同口径：只归档不清块也回绿
+    body = "\n".join(f"   正文第{i}行" for i in range(130))
+    text = OK_TEXT + f"* deprecated\n** U099 已归档大块\n{body}\n"
+    res = _check_memory_entry_budget([_mem(tmp_path, text)])
+    assert res["status"] == "ok"
+    assert "1 条在预算内" in res["detail"]
+
+
 # ── session 截断 + 告警 ──────────────────────────────────────────────────────
 
 

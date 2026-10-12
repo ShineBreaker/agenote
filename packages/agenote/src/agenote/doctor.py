@@ -202,11 +202,19 @@ def _iter_memory_blocks(text: str) -> list[tuple[str, int, int]]:
     """按 `**` 条目切块（与 memory._iter_memory_entries 同一切分口径）。
 
     返回 [(标题, 行数, 字符数)]；`*` 顶级节行是块边界。
+    `* deprecated` 节下的归档条目不计入——session 简报侧本来就排除
+    它们（见 context._read_typed_entries），只归档不清块永不回绿。
     """
     lines = text.split("\n")
     blocks: list[tuple[str, int, int]] = []
     i, n = 0, len(lines)
+    section = ""
     while i < n:
+        # 顶级节（`* ` 后跟非 `*`，故 `**` 条目行不会误判）
+        if lines[i].startswith("* ") and not lines[i].startswith("**"):
+            section = lines[i][2:].strip()
+            i += 1
+            continue
         m = re.match(r"^\*\*\s+(.+)", lines[i])
         if not m:
             i += 1
@@ -214,8 +222,9 @@ def _iter_memory_blocks(text: str) -> list[tuple[str, int, int]]:
         j = i + 1
         while j < n and not re.match(r"^\*\*?\s+", lines[j]):
             j += 1
-        chunk = "\n".join(lines[i:j])
-        blocks.append((m.group(1).strip(), j - i, len(chunk)))
+        if section.lower() != "deprecated":
+            chunk = "\n".join(lines[i:j])
+            blocks.append((m.group(1).strip(), j - i, len(chunk)))
         i = j
     return blocks
 
