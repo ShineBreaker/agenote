@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-12
+
+记忆质量门禁三件套：出处溯源、KB 链接完整性检查、记忆条目预算控制——参照 Cognition agent-memory-repo，把记忆质量押在读写纪律而非检索算法。
+
+---
+
+### Added
+
+- **`--source` / `--added` 出处溯源**：`add` 与 `memory --add` 接受自由文本出处与录入日期，落盘为 `SOURCE` / `ADDED` 属性；`update --source/--added` 可改写，`search [--json]` 回显，旧卡缺省显空不回填（a308a46）
+- **`agenote doctor` 两项新检查**：`memory-entry-budget` 发现超预算条目（行数/字符数阈值走 `[memory]` 配置，只报告不自动修——自动修是 ADR-0004 禁止的语义决策）；新模块 `linkcheck.py` 做条目级链接完整性检查（a308a46）
+- **session 简报预算截断**：超限记忆条目按 `[context].session_entry_budget_chars`（默认 2000）截断并打行内标记 `…[单条超预算已截断]`，`--json` 输出 `truncated=true`（a308a46）
+
+### Fixed
+
+- **`doctor` 预算检查误报**：跳过 deprecated 节归档条目，与 session 简报排除口径一致——只归档不清块不再挡住回绿（2d6d4b2）
+
 ## [0.2.0.4] - 2026-10-03
 
 `agenote lint --fix` 幂等性修复：全量跑两轮仍在改同一批文件的振荡根因。
