@@ -150,12 +150,17 @@ jobs:
           mkdir -p pkg
           tar xzf dist/*.tgz -C pkg --strip-components=1
 
+      # 必须进包目录再发布：npm 在 cwd 找不到包定义时会把参数字符串当作
+      # 包名（曾把 `npm publish pkg` 推成 registry.npmjs.org/pkg）。进目录后
+      # package.json 就在眼前，包名、repository 与 files 白名单都按它来。
+      #
       # 需要仓内存 NPM_TOKEN secret。首版只能用 granular token：新包在 npm
-      # 上还没有包页，配置不了 trusted publisher（OIDC）。
-      # 首版发布后请到包页 Settings → Trusted publishing 配上 GitHub Actions
+      # 上还没有包页，配置不了 trusted publisher（OIDC）。令牌须勾选
+      # 「Bypass 2FA」，否则推送 403（Two-factor authentication … required）。
+      # 首版发布后到包页 Settings → Trusted publishing 配上 GitHub Actions
       # （Organization or user / Repository / Workflow filename = release.yml），
-      # 再把下面的 env 去掉（否则 npm 会优先用令牌、静默绕过 OIDC），最后删掉 secret。
-      - run: npm publish pkg --provenance --access public
+      # 再去掉下面的 env（否则 npm 会优先用令牌、静默绕过 OIDC），最后删 secret。
+      - run: cd pkg && npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
