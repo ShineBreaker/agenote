@@ -122,11 +122,13 @@ jobs:
       # --provenance 走 OIDC，需要 id-token；顶层默认只有 contents:write
       id-token: write
     steps:
-      # npm --provenance 在 cwd 探测 git 仓取 commit 信息，不 checkout
-      # 会死于 "Could not read from remote repository"（exit 128）
+      # npm --provenance 需要 git 元数据：cwd 无仓库或浅克隆（无 tag）
+      # 都会让它误推断包来源，因此拉完整历史与 tags。
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: actions/download-artifact@v7
         with:
@@ -137,13 +139,23 @@ jobs:
           node-version: "22"
           registry-url: https://registry.npmjs.org
 
+      # 直接 `npm publish dist/*.tgz` 会让 --provenance 去推断包的源仓库：
+      # cwd 里没有 package.json，npm 把 tgz 路径当仓库地址去 SSH 探测，
+      # 死于 `git@github.com: Permission denied (publickey)`（exit 128）。
+      # 先把 tgz 解开、在包目录里发布：那里有 package.json 的 repository
+      # 字段，provenance 由此对上本仓，不再瞎猜。
+      - name: 解包 tgz 到满足 provenance 的目录
+        run: |
+          set -euo pipefail
+          mkdir -p pkg
+          tar xzf dist/*.tgz -C pkg --strip-components=1
+
       # 需要仓内存 NPM_TOKEN secret。首版只能用 granular token：新包在 npm
       # 上还没有包页，配置不了 trusted publisher（OIDC）。
       # 首版发布后请到包页 Settings → Trusted publishing 配上 GitHub Actions
       # （Organization or user / Repository / Workflow filename = release.yml），
-      # 再把下行换成 `npm publish dist/*.tgz --access public`（去掉 env 里的
-      # NODE_AUTH_TOKEN，否则 npm 会优先用令牌、静默绕过 OIDC），最后删掉本 secret。
-      - run: npm publish dist/*.tgz --provenance --access public
+      # 再把下面的 env 去掉（否则 npm 会优先用令牌、静默绕过 OIDC），最后删掉 secret。
+      - run: npm publish pkg --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
