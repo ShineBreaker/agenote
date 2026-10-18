@@ -100,6 +100,14 @@ jobs:
       # 需在 PyPI 后台一次性配置 trusted publisher：
       #   项目 pypi 下的 agenote + 仓 ShineBreaker/agenote + workflow release.yml
       # 未配置时本 job 失败；此时改用 PYPI_API_TOKEN secret 亦可（见 README）。
+      # 本 action 把整个目录交给 twine check / attestations.py / twine upload
+      # （脚本里写的是 "${PACKAGES_DIR}"/*），目录里任何非发行包文件都会
+      # 被当成包解析——dist/ 里还有 SHA256SUMS 与 release_notes.md，
+      # 会死于 `Unknown distribution format: 'SHA256SUMS'`。故先清掉它们。
+      # 这两个文件已随 dist/ 上传到 artifact，Release 侧不受影响。
+      - name: 清掉 dist/ 里的非发行包文件
+        run: rm -rf dist/SHA256SUMS dist/release_notes.md
+
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
@@ -129,9 +137,12 @@ jobs:
           node-version: "22"
           registry-url: https://registry.npmjs.org
 
-      # 需要仓内存 NPM_TOKEN secret（automation token）。
-      # 另注：package.json 此前是 "private": true（发不了 npm），
-      # 已在本仓改为正式可发布包，见该仓 CHANGELOG。
+      # 需要仓内存 NPM_TOKEN secret。首版只能用 granular token：新包在 npm
+      # 上还没有包页，配置不了 trusted publisher（OIDC）。
+      # 首版发布后请到包页 Settings → Trusted publishing 配上 GitHub Actions
+      # （Organization or user / Repository / Workflow filename = release.yml），
+      # 再把下行换成 `npm publish dist/*.tgz --access public`（去掉 env 里的
+      # NODE_AUTH_TOKEN，否则 npm 会优先用令牌、静默绕过 OIDC），最后删掉本 secret。
       - run: npm publish dist/*.tgz --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

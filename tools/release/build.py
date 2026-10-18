@@ -16,7 +16,9 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
+import io
 import json
 import re
 import shutil
@@ -149,18 +151,74 @@ def _write_checksums(out: Path, artifacts: list[Path]) -> None:
     """写 SHA256SUMS。
 
     dotfiles 侧的 `sync-agenote.sh` 靠它校验下载的 tarball——固定 tag 的
-    产物理论上不可变，但 GitHub Release 资产可以被手动替换，校验和是唯一
-    能把「拉到的就是发出来的那个」变成可验证事实的手段。
+    产物必须真的不变，否则锁文件里的校验和会在下次重建时失效。但 GitHub
+    Release 资产可以被手动替换，校验和是唯一能把「拉到的就是发出来的那个」
+    变成可验证事实的手段，所以打包必须走 `_add_to_tar` 规范化元数据。
     """
     lines = [f"{hashlib.sha256(a.read_bytes()).hexdigest()}  {a.name}" for a in artifacts]
     (out / "SHA256SUMS").write_text("\n".join(lines) + "\n")
+
+
+def _git(*args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=REPO_ROOT, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _deterministic_mtime(tag: str | None) -> int:
+    """tar 条目与 gzip 头共用的时间戳。
+
+    取 release tag 指向提交的时间：同一 tag 无论谁在何时构建都得到同一个值，
+    而 build.py 的 `--tag` 只是可选参数，退回 HEAD 提交时间同样确定。
+    """
+    rev = tag or "HEAD"
+    if tag is not None and not tag.startswith("refs/"):
+        rev = f"refs/tags/{tag}"
+    try:
+        return int(_git("log", "-1", "--format=%ct", rev))
+    except (subprocess.CalledProcessError, ValueError):
+        die(f"取不到 {rev} 的提交时间——发版构建必须在 git 仓库内针对真实 tag")
+
+
+def _add_to_tar(tf: tarfile.TarFile, f: Path, arcname: str, mtime: int) -> None:
+    """把 f 以规范化元数据加进 tar。
+
+    uid/gid、属主名、非 ASCII pax 头都随构建环境而变，一个都不能进产物：
+    它们只影响 sha256，不影响解包结果，却足以让同一 commit 产出两份不同
+    校验和的 tarball。mtime 同理——不是「谁构建的」，是「哪个 commit」。
+    """
+    ti = tf.gettarinfo(str(f), arcname=arcname)
+    ti.mtime = mtime
+    ti.uid = ti.gid = 0
+    ti.uname = ti.gname = ""
+    if getattr(ti, "pax_headers", None):
+        ti.pax_headers = {}
+    with f.open("rb") as fh:
+        tf.addfile(ti, fh)
+
+
+def _add_tree_to_tar(tf: tarfile.TarFile, src: Path, arcname: str, mtime: int) -> None:
+    """递归加目录，目录自身也用同一个 mtime。"""
+    ti = tf.gettarinfo(str(src), arcname=arcname)
+    ti.mtime = mtime
+    ti.uid = ti.gid = 0
+    ti.uname = ti.gname = ""
+    if getattr(ti, "pax_headers", None):
+        ti.pax_headers = {}
+    tf.addfile(ti)
+    for child in sorted(src.iterdir()):
+        sub = f"{arcname}/{child.name}"
+        if child.is_dir():
+            _add_tree_to_tar(tf, child, sub, mtime)
+        elif child.is_file():
+            _add_to_tar(tf, child, sub, mtime)
 
 
 def _run(cmd: list[str], cwd: Path) -> None:
     subprocess.run(cmd, cwd=cwd, check=True)
 
 
-def build_agenote(pkg: str, version: str, out: Path) -> list[Path]:
+def build_agenote(pkg: str, version: str, out: Path, mtime: int) -> list[Path]:
     """PyPI：wheel + sdist。由 uv build 产出，直接可 twine upload。"""
     _need("agenote", "uv")
     src = REPO_ROOT / "packages" / "agenote"
@@ -168,7 +226,7 @@ def build_agenote(pkg: str, version: str, out: Path) -> list[Path]:
     return _artifacts(out)
 
 
-def build_agenote_el(pkg: str, version: str, out: Path) -> list[Path]:
+def build_agenote_el(pkg: str, version: str, out: Path, mtime: int) -> list[Path]:
     """Emacs package（ELPA 格式 tar）。
 
     ELPA 要求包内所有文件带 `;; Version:` 头，且有 `<name>-pkg.el` 声明
@@ -183,23 +241,19 @@ def build_agenote_el(pkg: str, version: str, out: Path) -> list[Path]:
             die(f"agenote-el/{e.name} 缺 `;; Version:` 头，ELPA 会拒绝打包")
 
     top = f"agenote-{version}"
-    stage = out / top
-    stage.mkdir()
-    for e in els:
-        shutil.copy2(e, stage / e.name)
-    for extra in ("README.md", "README.zh.md", "LICENSE"):
-        if (src / extra).exists():
-            shutil.copy2(src / extra, stage / extra)
     archive = out / f"{top}.tar"
     # ELPA 惯例：tar 不压缩、不带目录条目。
     with tarfile.open(archive, "w") as tf:
-        for f in sorted(stage.iterdir()):
-            tf.add(f, arcname=f"{top}/{f.name}")
-    shutil.rmtree(stage)
+        for e in els:
+            _add_to_tar(tf, e, arcname=f"{top}/{e.name}", mtime=mtime)
+        for extra in ("README.md", "README.zh.md", "LICENSE"):
+            f = src / extra
+            if f.exists():
+                _add_to_tar(tf, f, arcname=f"{top}/{extra}", mtime=mtime)
     return [archive]
 
 
-def build_dsh_agenote(pkg: str, version: str, out: Path) -> list[Path]:
+def build_dsh_agenote(pkg: str, version: str, out: Path, mtime: int) -> list[Path]:
     """npm：`npm pack` 产出 tgz，字段已由 package.json 的 files 白名单收敛。"""
     _need("dsh-agenote", "npm")
     src = REPO_ROOT / "packages" / "dsh-agenote"
@@ -213,7 +267,7 @@ def build_dsh_agenote(pkg: str, version: str, out: Path) -> list[Path]:
     return [out / tgz[-1].strip()]
 
 
-def build_tarball(pkg: str, version: str, out: Path) -> list[Path]:
+def build_tarball(pkg: str, version: str, out: Path, mtime: int) -> list[Path]:
     """通用 tar.gz：pi / zcode / hermes / skills。
 
     这四个组件由宿主直接加载目录（omp 自动扫描、ZCode 插件目录、hermes
@@ -230,9 +284,21 @@ def build_tarball(pkg: str, version: str, out: Path) -> list[Path]:
     if not tracked:
         die(f"packages/{pkg} 下没有 git 跟踪的文件")
     archive = out / f"{pkg}-{version}.tar.gz"
-    with tarfile.open(archive, "w:gz") as tf:
+    # tar 与 gzip 两层都自己写：tarfile 的 "w:gz" 会把当前时间塞进 gzip 头，
+    # 只走 tarfile.SOURCE_DATE_EPOCH 这个模块级变量还受导入时机影响。
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as tf:
         for rel in tracked:
-            tf.add(REPO_ROOT / rel, arcname=f"{pkg}/{rel[len('packages/') + len(pkg) + 1:]}")
+            rel_inside = rel.split("/", 2)[2]
+            f = REPO_ROOT / rel
+            arcname = f"{pkg}/{rel_inside}"
+            # 目录条目随其后的文件隐式重建，包内不留空目录。
+            if f.is_dir():
+                continue
+            _add_to_tar(tf, f, arcname=arcname, mtime=mtime)
+    with archive.open("wb") as fh:
+        with gzip.GzipFile(filename="", fileobj=fh, mode="wb", mtime=0) as gz:
+            gz.write(raw.getvalue())
     return [archive]
 
 
@@ -283,7 +349,7 @@ def main() -> int:
         return 0
 
     out = _clean_dist(pkg)
-    artifacts = BUILDERS[pkg](pkg, version, out)
+    artifacts = BUILDERS[pkg](pkg, version, out, _deterministic_mtime(args.tag))
     _write_checksums(out, artifacts)
     (out / "release_notes.md").write_text(release_notes(pkg, version), encoding="utf-8")
     print(f"✓ {pkg} {version} 产物：")
