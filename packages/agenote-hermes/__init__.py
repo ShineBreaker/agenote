@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -193,21 +194,26 @@ def _kb_fingerprint() -> str:
     return fp
 
 
-def _state_dir() -> Path:
-    env = os.environ.get("AGENOTE_INJECTOR_STATE_DIR")
-    if env:
-        return Path(env)
-    cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(cache) / "agenote" / "injectors"
+# 状态目录：常量路径，不读环境变量。env 会被静态扫描器当作不可信输入，
+# 沿 `env → Path → open` 判成路径穿越；测试要隔离就改这个常量，或直接
+# 清掉整个目录（文档已承诺「整目录可清理无副作用」）。
+_STATE_DIR = Path.home() / ".cache" / "agenote" / "injectors"
 
 
 def _state_path(session_id: str) -> Path:
-    sid = (session_id or "").strip().replace("/", "_")
-    name = f"hermes-{sid}.json" if sid else "hermes.json"
-    return _state_dir() / name
+    # session_id 来自宿主钩子参数（不可信输入）。只留字母数字与 `-_`：
+    # `..`、分隔符、点号在拼接前就被消掉，留下的是不含路径语义的基名
+    # （真实 sid 形如 sess_697159c8-…，用户名下仍是同一份可读文件）。
+    fields = re.sub(r"[^A-Za-z0-9_-]", "", session_id or "")[:64]
+    return _STATE_DIR / ("hermes-" + fields + ".json" if fields else "hermes.json")
 
 
-def _state_read(path: Path) -> dict[str, Any]:
+def _state_read(session_id: str) -> dict[str, Any]:
+    # 路径只由常量目录 + 白名单基名拼出，再做规范化与包含性校验：
+    # 越界即放弃本次读写（正常输入永远落在状态目录内）。
+    path = _state_path(session_id).resolve()
+    if os.path.commonpath([path, _STATE_DIR.resolve()]) != str(_STATE_DIR.resolve()):
+        return {}
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -216,10 +222,13 @@ def _state_read(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _state_write(path: Path, data: dict[str, Any]) -> None:
+def _state_write(session_id: str, data: dict[str, Any]) -> None:
+    path = _state_path(session_id).resolve()
+    if os.path.commonpath([path, _STATE_DIR.resolve()]) != str(_STATE_DIR.resolve()):
+        return
+    tmp = path.parent / (path.name + ".tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
         os.replace(tmp, path)
@@ -277,23 +286,22 @@ def _recall_context(session_id: str, user_text: str) -> str:
     q = build_query(user_text)
     if q is None:  # 三件套②：短 prompt 不值得注入
         return ""
-    state_path = _state_path(session_id)
-    state = _state_read(state_path)
+    state = _state_read(session_id)
     key = fp + "::" + q
     if state.get("recall_key") == key:  # 三件套①：指纹+query 未变（含滤空）不重注
         return ""
     cumulative = int(state.get("cumulative") or 0)
     if cumulative >= _CUMULATIVE_BUDGET:  # 三件套③：触顶停 recall
         state["recall_key"] = key
-        _state_write(state_path, state)
+        _state_write(session_id, state)
         return ""
     content = _context_content("recall", _RECALL_BUDGET, q)
     state["recall_key"] = key
     if content:
         state["cumulative"] = cumulative + len(content)
-        _state_write(state_path, state)
+        _state_write(session_id, state)
         return content
-    _state_write(state_path, state)  # 滤空也落账：同 query 下轮零 spawn
+    _state_write(session_id, state)  # 滤空也落账：同 query 下轮零 spawn
     return ""
 
 

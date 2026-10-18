@@ -16,11 +16,11 @@
  * 本插件只做"事件触发 + 命令快捷入口"，避免与 skill 重复维护。
  *
  * 调用路径：agent 主循环通过 bash 调用 agenote CLI。本插件注入的提示词由
- * agent 执行；execSync 仅限只读 CLI 查询（/agenote-health 与 context 简报），
- * 走轻量 CLI shim（agenote-cli）。
+ * agent 执行；子进程调用仅限只读 CLI 查询（/agenote-health 与 context 简报），
+ * 一律以 argv 数组传参、不经 shell，走轻量 CLI shim（agenote-cli）。
  */
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
   existsSync,
@@ -132,11 +132,11 @@ const HOOK_MARKER = "<agenote-hook>";
  *
  * agenote-cli 是轻量 CLI shim entry point（由 agenote 包的 console_scripts 产出），
  * 复用 agenote 内核，输出人类可读文本。本插件（ExtensionAPI 无 MCP 调用接口）
- * 只能 execSync 外部进程，故走此 shim。
+ * 只能 spawn 外部进程，故走此 shim。
  */
 function runKb(...args: string[]): string {
   try {
-    return execSync(`${KB_SCRIPT} ${args.join(" ")}`, {
+    return execFileSync(KB_SCRIPT, args, {
       encoding: "utf-8",
       timeout: 30000,
       stdio: ["pipe", "pipe", "pipe"],
@@ -370,6 +370,12 @@ function loadInjectConfig(): InjectConfig {
     homedir(),
     process.env.PI_CONFIG_DIR || join(".config", "omp"),
   );
+  // 规范化 + 包含性校验：PI_CONFIG_DIR 可能来自环境（静态扫描器按不可信
+  // 输入处理，读作路径穿越），故显式限制在用户主目录内。
+  if (!configRoot.startsWith(homedir() + "/")) {
+    logLoadError("agenote-hooks", "load agenote-pi.json: 配置根越界", configRoot);
+    return { ...DEFAULT_INJECT_CONFIG };
+  }
   const path = join(configRoot, "agenote-pi.json");
   if (!existsSync(path)) return { ...DEFAULT_INJECT_CONFIG };
   try {
@@ -401,8 +407,17 @@ const BRIEFING_TIMEOUT_MS = 5000;
 // ─── END GENERATED: hosts.pi.timeout ───
 function fetchBriefing(budget: number): string | null {
   try {
-    const stdout = execSync(
-      `${KB_SCRIPT} context --mode session --host pi --budget ${budget}`,
+    const stdout = execFileSync(
+      KB_SCRIPT,
+      [
+        "context",
+        "--mode",
+        "session",
+        "--host",
+        "pi",
+        "--budget",
+        String(budget),
+      ],
       {
         encoding: "utf-8",
         timeout: BRIEFING_TIMEOUT_MS,
