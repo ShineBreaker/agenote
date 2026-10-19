@@ -68,7 +68,7 @@ uv tool install --editable .  # 本地体验 CLI（改源即生效，在本目�
 
 ## LLM 署名
 
-LLM 参与的提交按**实际宿主与模型**附加 `Co-authored-by`，多个作者各占一行。
+LLM 参与的提交按**实际宿主与模型**附加 `Assisted-by`，多个作者各占一行。
 这张表是署名约定的唯一真相源（`~/.config/git/gitmessage` 里只有 type 清单）：
 
 | 宿主 | 写法 |

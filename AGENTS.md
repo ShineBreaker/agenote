@@ -47,7 +47,7 @@ dotfiles 仓 `Guix-configs` 通过钉版本锁文件消费本仓的发布产物�
   `tools/codegen/generate.py` 从 spec 写入。改语义改 spec 再重新生成；生成物随仓提交
   （宿主插件独立安装，运行时没有 monorepo）。生成块可以嵌在文件中间。
 - **提交**：`type(scope): 简短描述`（动词开头、小写、无句号），按实际宿主与模型附
-  `Co-authored-by`。细则见 [§commit](CODING_STANDARDS.md#commit)。
+  `Assisted-by`。细则见 [§commit](CODING_STANDARDS.md#commit)。
 
 ## 4. 静默失败
 

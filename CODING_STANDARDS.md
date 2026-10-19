@@ -108,7 +108,7 @@ python3 tools/codegen/check.py              # 校验 JSON 正则 / Markdown 散�
 文件名，多文件用组件名；描述动词开头、小写、无句号；body 只解释**为什么**；不兼容
 变更 type 后加 `!`。提交前 `git status --short` 确认只含本次相关文件。
 
-**LLM 参与的提交按实际宿主与模型附 `Co-authored-by`**——宿主与模型的对应写法见
+**LLM 参与的提交按实际宿主与模型附 `Assisted-by`**——宿主与模型的对应写法见
 [CONTRIBUTING.md §LLM 署名](CONTRIBUTING.md#llm-署名)，那里是这张表的唯一真相源。
 `gitmessage` 里只有 type 清单，没有署名约定，别指望它会自述。
 
