@@ -140,6 +140,8 @@ function runKb(...args: string[]): string {
       encoding: "utf-8",
       timeout: 30000,
       stdio: ["pipe", "pipe", "pipe"],
+      // F8 归因：只读调用也带，口径与注入路径一致。
+      env: { ...process.env, AGENOTE_AGENT: "pi" },
     }).trim();
   } catch (err: any) {
     return `(agenote-cli 命令失败: ${err.message?.split("\n")[0] || err})`;
