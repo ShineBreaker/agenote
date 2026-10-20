@@ -4,7 +4,8 @@
 #
 # 刻意不放：
 #   - CLI 自身配置项——真相源是 packages/agenote/src/agenote/config.py 的 SCHEMA。
-#     下方 [append] 的 min_query 是**镜像值**（只为省一次 spawn），改它不会改 CLI 行为。
+#     注入状态机（指纹 / 门槛 / 累计预算 / 状态文件）同样只实现在 CLI 的
+#     `agenote inject`，本文件不镜像它的数值。
 #   - 宿主适配胶水逻辑——各插件自有，不跨宿主复制。
 #   - 无法复用的实现细节（如各宿主 CLI 超时的不同理由，只统一数值并在此注明）。
 #
@@ -40,20 +41,17 @@ debounce_ms = 300000
 # 覆盖「用户 kick-off 后离开、agent 自主完成、无人说完成」的场景。
 idle_ms = 300000
 
-# ═══ 追加型（append）三件套共用参数 ════════════════════════════
+# ═══ 追加型（append）三件套：实现已下沉 CLI ═════════════════════
 # ① 指纹 + query 未变不重注 ② recall 有效长度门槛 ③ 单会话累计触顶停 recall
-[append]
-cumulative = 24000
-# 镜像 CLI SCHEMA 的 recall_min_query=6。两边**仅 env 口径联动**
-# （AGENOTE_INJECTION_MIN_QUERY），改 config.toml 的 [injection] 不同步注入器；
-# CLI 侧始终是召回与否的最终裁决，注入器这道门槛只为省一次 spawn。
-min_query = 6
-# recall query 取 prompt 前 N 字符（设计 C4 规定值）。
-query_max_chars = 200
+# 这三项的**唯一实现**是 `agenote inject`（packages/agenote/src/agenote/inject.py），
+# 参数真相源是 CLI SCHEMA 的 [injection] 节（session_cumulative_budget /
+# recall_min_query）与 inject.py 的 QUERY_MAX_CHARS 常量。注入器只传事件与预算，
+# 不再各自实现状态机——所以本节没有需要跨组件生成的数值。
 
 # ═══ 每宿主注入档位 ═════════════════════════════════════════════
 # mode = "append"  每轮追加正文，靠三件套抑制上下文膨胀。
-# mode = "rewrite" 每请求幂等重写（先剥旧块再注缓存块），只需简报。
+# mode = "rewrite" 每请求幂等重写（先剥旧块再注缓存块），只需简报预算；
+#                  若同一快照里也带按 query 的召回（dsh），另给 recall 预算。
 #
 # 状态文件统一布局：${XDG_CACHE_HOME:-$HOME/.cache}/agenote/injectors/<host>-<session_id>.json
 #   （session_id 取不到则退化为 <host>.json；整目录可清理，无副作用。）

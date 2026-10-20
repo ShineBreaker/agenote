@@ -8,14 +8,15 @@
 | 内容 | 真相源 | 理由 |
 |---|---|---|
 | 完成信号、注入预算、时序阈值 | `spec/injection.toml` | 跨 4–6 处复制，必须机器保障 |
+| 注入状态机（指纹/门槛/累计/状态文件） | `agenote inject`（CLI） | 单一实现，插件只传事件与预算 |
 | CLI 配置项（`[injection]` 等 84 键） | `packages/agenote/src/agenote/config.py` 的 `SCHEMA` | 只有 CLI 读，注入器不读数值键 |
 | 各插件的 Config schema 默认值 | 各包 `Config` 声明 | 宿主加载期校验用，形状随宿主而异 |
 | 卡片格式 / 写入流程 / 策展策略 | `packages/agenote-skills/*/SKILL.md` | 文档即载体，改策略不该发版 |
 
-`spec` 里有一处**刻意的镜像值**：`[append].min_query = 6` 对应 CLI 的
-`recall_min_query`。两边仅通过 env（`AGENOTE_INJECTION_MIN_QUERY`）联动，
-改 `config.toml` 不同步注入器；CLI 侧始终是召回与否的最终裁决，注入器这道门槛
-只为省一次 spawn。
+注入器的三件套（指纹去重 / 短 prompt 门槛 / 单会话累计）曾是 bash、JS、Python
+各写一份的复制债（ADR 0005）。2026-10 起**只有 `agenote inject` 一份实现**：
+`spec` 里不再有 `[append]` 数值，修改语义改 CLI SCHEMA 或 `inject.py`，插件侧
+无需同步。
 
 ## 工作流
 

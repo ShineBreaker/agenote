@@ -5,21 +5,20 @@
 
 本插件是 agenote 生态为 hermes 的唯一接入点，承担两块职责：
 
-注入（agenote → 会话，AGENOTE_INJECTION_DESIGN.md §3 C4，追加型三件套）：
+注入（agenote → 会话，设计 C4）——策略在 CLI，本插件只做协议适配：
 - register_system_prompt_section（after_memory 锚点，框架默认位）：会话级简报
-  （`--mode session`，3800 字符）。进程内按 KB 指纹缓存——指纹未变零 spawn
-  重放；compact 后 hermes 重建系统提示词会重新调 render，此时从缓存返回
-  （不返回空，否则重建后的提示词会丢简报）；KB 更新则重跑 CLI 换新快照。
-- pre_llm_call（每回合 recall，2000 字符）：追加型三件套——①指纹+query
-  未变不重注（含被分数下限滤空的情况）②短 prompt 门槛（镜像 SCHEMA
-  recall_min_query=6）③单会话累计预算 24000 字符触顶停 recall；
-  SessionStart 语义由 bash 注入器承担（hermes 无该挂点），本插件的会话
-  边界 = 进程生命周期 + 状态文件按 session_id 隔离。
+  （3800 字符）。render 时调 `agenote inject --event session`，CLI 侧完成状态
+  重置与指纹缓存重放；compact 后重建提示词会重新 render，缓存命中直接返回
+  快照（不返回空，否则重建后的提示词会丢简报）。
+- pre_llm_call（每回合 recall，2000 字符）：调 `agenote inject --event prompt`，
+  三件套（指纹+query 去重 / 短 prompt 门槛 / 单会话累计触顶）由 CLI 统一判定
+  （ADR 0005：此前四份语言副本，现在只有 `inject.py` 一份）。
 - 与既有的任务完成信号检测共存于同一 pre_llm_call：召回正文与评估提示
   各自独立触发，同回合双双命中时以空行拼接成一个 context 注入。
-- 状态文件 ~/.cache/agenote/injectors/hermes-<session_id>.json（与 bash 注入器
-  同款布局；session_id 缺失退化为 hermes.json 单文件；整目录可清理无副作用）。
-- `agenote context` text 零字节（disabled/empty）→ 本回合不注，宿主零感知。
+- 状态文件 ~/.cache/agenote/injectors/hermes-<session_id>.json（CLI 统一布局；
+  session_id 缺失退化为 hermes.json 单文件；整目录可清理无副作用）。
+- `agenote inject` 输出非 inject 态（disabled/empty/duplicate/短 prompt）→
+  本回合不注，宿主零感知。
 
 集成（会话 → agenote，既有能力，保持不变）：
 - pre_llm_call 钩子：检测任务完成信号，注入 agenote-review 评估提示
@@ -32,7 +31,7 @@
 事件触发 + 注入通道 + 命令快捷入口，避免与 skill 重复维护。
 
 注入语义开关的真相源在 agenote SCHEMA [injection]/[injection.hosts]（一键全关
-AGENOTE_INJECTION_ENABLED=false）；本侧旋钮只有预算/门槛/状态目录三个 env。
+AGENOTE_INJECTION_ENABLED=false）；本侧旋钮只有每宿主预算两个 env。
 真机验收：/context 看 agenote 节 + sidecar 审计（详见 agenote 仓库
 injectors/hermes/README.md）。
 """
@@ -41,7 +40,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import time
 from pathlib import Path
@@ -80,23 +78,14 @@ DEBOUNCE_MS = 300000  # 毫秒
 _last_trigger_ms: float = 0.0
 
 # ── 注入参数（设计 C4 每宿主预算表；env 覆盖，语义开关在 agenote SCHEMA）──
-# 注意：此处累计预算/门槛仅为 env 口径的镜像——改 config.toml 中 [injection]
-# 同名键不会同步注入器侧（注入器不读 config 数值键），需用 env 覆盖，否则
-# CLI 与注入器的触顶/门槛判定分叉。
+# 只保留每宿主单次预算；指纹/门槛/累计预算的真相源是 CLI（`agenote inject`），
+# 本插件不再持有同名镜像值。
 # ─── BEGIN GENERATED: hosts.hermes.budgets ───
 # 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
 _BRIEF_BUDGET = int(os.environ.get("AGENOTE_INJECTION_BRIEF_BUDGET") or 3800)
 _RECALL_BUDGET = int(os.environ.get("AGENOTE_INJECTION_RECALL_BUDGET") or 2000)
-_CUMULATIVE_BUDGET = int(
-    os.environ.get("AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET") or 24000
-)
-_MIN_QUERY = int(os.environ.get("AGENOTE_INJECTION_MIN_QUERY") or 6)
-_QUERY_MAX_CHARS = 200
 # ─── END GENERATED: hosts.hermes.budgets ───
 _SKIP_PLATFORMS = ("subagent", "cron")
-
-# 会话级简报的进程内缓存：{fp, content}（指纹未变零 spawn；compact 重建安全）
-_BRIEF_CACHE: dict[str, str] = {}
 
 # agenote CLI 解析：Guix 路径优先，fallback 到 PATH
 _AGENOTE_BIN = "agenote"
@@ -147,186 +136,59 @@ def _run_agenote(*args: str, timeout: int = 30) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 注入：KB 指纹 / 状态文件 / context 调用（与 injectors/lib.sh 同构）
+# 注入：唯一 CLI 调用（`agenote inject` 内完成指纹 / 三件套 / 状态）
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _kb_domain_root() -> Path:
-    """agenote 域根（context 语料所在）：KB_ROOT env > config.toml > 默认。
+def _inject(session_id: str, event: str, prompt: str = "", cwd: str = "") -> str:
+    """调 `agenote inject`；CLI 缺失/失败/非 inject 态一律空串。
 
-    与 CLI 同口径的镜像实现（config 只取 paths 两键，解析失败回退默认）；
-    context 命令读 agent 域，指纹必须定位到 KB_ROOT/<agenote_dir>/。
+    注入策略是 CLI 的单一实现（ADR 0005）：本插件只把宿主事件转成参数，
+    不再自己读写状态文件、算指纹或拼 query。
     """
-    try:
-        import tomllib
-
-        cfg = (
-            Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-            / "agenote"
-            / "config.toml"
-        )
-        with open(cfg, "rb") as f:
-            paths = tomllib.load(f).get("paths", {})
-        kb = os.environ.get("KB_ROOT") or paths.get("kb_root") or ""
-        agenote_dir = paths.get("agenote_dir") or "agenote"
-        if kb:
-            return Path(kb).expanduser() / agenote_dir
-    except Exception:
-        pass
-    if os.environ.get("KB_ROOT"):
-        return Path(os.environ["KB_ROOT"]).expanduser() / "agenote"
-    return Path.home() / "Documents" / "Org" / "agenote"
-
-
-def _kb_fingerprint() -> str:
-    """MEMORY.org 与 memories/ 的 mtime_ns+size 指纹（设计 D8）；KB 缺失返回空。"""
-    root = _kb_domain_root()
-    try:
-        st = (root / "MEMORY.org").stat()
-    except OSError:
-        return ""
-    fp = f"{st.st_mtime_ns}:{st.st_size}"
-    try:
-        st_dir = (root / "memories").stat()
-        fp += f"|{st_dir.st_mtime_ns}:{st_dir.st_size}"
-    except OSError:
-        fp += "|-"
-    return fp
-
-
-# 状态目录：常量路径，不读环境变量。env 会被静态扫描器当作不可信输入，
-# 沿 `env → Path → open` 判成路径穿越；测试要隔离就改这个常量，或直接
-# 清掉整个目录（文档已承诺「整目录可清理无副作用」）。
-_STATE_DIR = Path.home() / ".cache" / "agenote" / "injectors"
-
-
-def _state_path(session_id: str) -> Path:
-    # session_id 来自宿主钩子参数（不可信输入）。只留字母数字与 `-_`：
-    # `..`、分隔符、点号在拼接前就被消掉，留下的是不含路径语义的基名
-    # （真实 sid 形如 sess_697159c8-…，用户名下仍是同一份可读文件）。
-    fields = re.sub(r"[^A-Za-z0-9_-]", "", session_id or "")[:64]
-    return _STATE_DIR / ("hermes-" + fields + ".json" if fields else "hermes.json")
-
-
-def _state_read(session_id: str) -> dict[str, Any]:
-    # 路径只由常量目录 + 白名单基名拼出，再做规范化与包含性校验：
-    # 越界即放弃本次读写（正常输入永远落在状态目录内）。
-    path = _state_path(session_id).resolve()
-    if os.path.commonpath([path, _STATE_DIR.resolve()]) != str(_STATE_DIR.resolve()):
-        return {}
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def _state_write(session_id: str, data: dict[str, Any]) -> None:
-    path = _state_path(session_id).resolve()
-    if os.path.commonpath([path, _STATE_DIR.resolve()]) != str(_STATE_DIR.resolve()):
-        return
-    tmp = path.parent / (path.name + ".tmp")
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-        os.replace(tmp, path)
-    except OSError:
-        pass  # 状态写失败宁可下轮重复注入，也不中断回合
-
-
-def _context_content(mode: str, budget: int, query: str = "") -> str:
-    """调 `agenote context` 取注入正文；任何失败/非 ok/空 → 空串（不注）。"""
     args = [
-        "context", "--mode", mode, "--budget", str(budget),
-        "--host", "hermes", "--format", "json",
+        "inject", "--host", "hermes", "--session-id", session_id,
+        "--event", event, "--format", "json",
     ]
-    if query:
-        args += ["--query", query]
+    if event == "prompt":
+        args += ["--prompt", prompt, "--budget", str(_RECALL_BUDGET)]
+    else:
+        args += ["--budget", str(_BRIEF_BUDGET)]
     try:
         result = subprocess.run(
             [_bin(), *args],
             capture_output=True,
             text=True,
             timeout=30,
+            cwd=cwd or None,
             env={**os.environ, "AGENOTE_AGENT": "hermes"},
         )
         data = json.loads(result.stdout or "")
     except Exception:
         return ""
-    if isinstance(data, dict) and data.get("status") == "ok":
+    if isinstance(data, dict) and data.get("action") == "inject":
         return data.get("content") or ""
     return ""
 
 
-def build_query(user_text: str, cwd: str = "") -> str | None:
-    """prompt 折叠空白取前 200 字符 + cwd basename 伪词；短门槛不过返回 None。
-
-    门槛按 prompt 部分长度判（伪词不计入），与 lib.sh 同语义。
-    局限：pre_llm_call 钩子入参不携带 cwd（hermes v0.21.3
-    turn_context._collect_pre_llm_call_context 只给 session_id/task_id/turn_id/
-    user_message/conversation_history/is_first_turn/model/platform/
-    parent_session_id/sender_id），调用处也无从取得——os.getcwd() 是 hermes
-    进程目录而非用户项目目录，recall 项目信号弱于 zcode/claude 实现，
-    待上游钩子提供 cwd 后接入。
-    """
-    q_text = " ".join((user_text or "").split())[:_QUERY_MAX_CHARS]
-    if len(q_text.strip()) < _MIN_QUERY:
-        return None
-    pseudo = os.path.basename((cwd or os.getcwd()).rstrip("/"))
-    return (q_text + " " + pseudo).strip() if pseudo and pseudo != "." else q_text
-
-
-def _recall_context(session_id: str, user_text: str) -> str:
-    """每回合 recall（追加型三件套①②③）；不注返回空串。"""
-    fp = _kb_fingerprint()
-    if not fp:
-        return ""
-    q = build_query(user_text)
-    if q is None:  # 三件套②：短 prompt 不值得注入
-        return ""
-    state = _state_read(session_id)
-    key = fp + "::" + q
-    if state.get("recall_key") == key:  # 三件套①：指纹+query 未变（含滤空）不重注
-        return ""
-    cumulative = int(state.get("cumulative") or 0)
-    if cumulative >= _CUMULATIVE_BUDGET:  # 三件套③：触顶停 recall
-        state["recall_key"] = key
-        _state_write(session_id, state)
-        return ""
-    content = _context_content("recall", _RECALL_BUDGET, q)
-    state["recall_key"] = key
-    if content:
-        state["cumulative"] = cumulative + len(content)
-        _state_write(session_id, state)
-        return content
-    _state_write(session_id, state)  # 滤空也落账：同 query 下轮零 spawn
-    return ""
-
-
 def _render_brief(session_info: dict[str, str]) -> str:
-    """会话级简报节（register_system_prompt_section 渲染回调）。
+    """会话级简报节：render 时调 session 事件，CLI 完成重置 + 指纹缓存重放。
 
-    指纹未变零 spawn 重放；compact 重建时 hermes 重新调 render，从缓存返回
-    而非空串——否则重建后的提示词会丢简报。空 content（disabled/empty）刻意
-    不入缓存（对齐 lib.sh 注入器策略）：开关从 disabled 转开后立即生效，不必
-    等指纹变化；代价是 disabled 期间每次 render 都 spawn 一次 CLI——hermes 的
-    render 只发生在会话建立与 compact 重建，频率可接受。
+    hermes 的 render 只发生在会话建立与 compact 重建，频率低；缓存命中时
+    CLI 直接返回快照（不再生成内容），compact 重建不会丢简报。
     """
     if session_info.get("platform") in _SKIP_PLATFORMS:
         return ""
-    fp = _kb_fingerprint()
-    if not fp:
-        return ""
-    if _BRIEF_CACHE.get("fp") == fp:
-        return _BRIEF_CACHE.get("content", "")
-    content = _context_content("session", _BRIEF_BUDGET)
-    if not content:
-        return ""  # 空不入缓存：开关 disabled→enabled 即时生效（P2-4，同 lib.sh）
-    _BRIEF_CACHE["fp"] = fp
-    _BRIEF_CACHE["content"] = content
-    return content
+    return _inject(
+        session_info.get("session_id", ""),
+        "session",
+        cwd=session_info.get("cwd", ""),
+    )
+
+
+def _recall_context(session_id: str, user_text: str) -> str:
+    """每回合 recall：三件套判定在 CLI 内；不注返回空串。"""
+    return _inject(session_id, "prompt", user_text or "")
 
 
 # ── 完成信号（既有逻辑，保持不变）─────────────────────────────────

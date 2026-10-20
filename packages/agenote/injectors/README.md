@@ -22,15 +22,20 @@ agenote context --mode session|recall --query Q --budget N --host H [--format js
 │ 插件(mjs)    │ claude/ (sh)  │ codex/ (sh 模板)│ opencode/(ts)│ 插件(py)  │
 └──────────────┴───────────────┴────────────────┴──────────────┴───────────┘
      │               │              │                │              │
-     └── 状态文件统一：~/.cache/agenote/injectors/<host>-<session_id>.json
-         （整目录可清理，无副作用；hermes 插件内另有进程内简报缓存）
+     └── 状态文件统一由 `agenote inject` 读写：~/.cache/agenote/injectors/<host>-<session_id>.json
+         （整目录可清理，无副作用；重写型宿主另有进程内指纹缓存，只省 spawn）
 ```
 
 **追加型三件套**（zcode/claude/codex/hermes 的每轮通道，防上下文累积膨胀）：
 ①指纹+query 未变不重注（含被 `recall_min_score` 滤空的情况，记键零重跑）；
 ②recall 门槛（prompt 有效长度 < `recall_min_query` 跳过，「继续/ok」类不注）；
 ③单会话累计 ≤ 24000 字符触顶停 recall（SessionStart/compact 重置）。
-**重写型**（opencode）：每请求幂等（先剥旧块再注缓存块），只需指纹缓存。
+**这三项只有 `agenote inject` 一份实现**（`injectors/*` 只传事件与预算）。
+**重写型**（opencode / pi / dsh）：每请求幂等重写，只需指纹缓存。dsh 在同一份
+动态上下文快照里并置简报与召回，按「指纹 + 最近用户消息」缓存，无需累计预算。
+
+功能基线（每个宿主应实现哪些项、哪些豁免）见
+[`docs/PLUGIN_CAPABILITIES.md`](../../../docs/PLUGIN_CAPABILITIES.md)。
 
 ## 目录
 
@@ -41,13 +46,16 @@ agenote context --mode session|recall --query Q --budget N --host H [--format js
 | `codex/` | recipe 模板（sh）+ README | `~/.codex/config.toml` [hooks]（示例待实装核对） | 2800 / 2800（CJK 折算保守值） |
 | `opencode/` | recipe 模板（ts）+ README | `experimental.chat.messages.transform` | 8000 / —（重写型） |
 | `hermes/` | 仅 README——实装在本仓 packages/agenote-hermes 插件 | system prompt section + pre_llm_call | 3800 / 2000 |
+| `dsh/` | 未单独建目录——实装在本仓 packages/dsh-agenote 插件 | `systemPrompt.context`（重写型：简报 + 召回同快照） | 8000 / 4000 |
 | `lib.sh` | bash 共享库（claude/codex source） | — | — |
 | `selftest.sh` | 离线验收（mock stdin + 临时 KB + spy PATH） | — | — |
 
 ## 安装总则
 
-1. **前置**：agenote CLI 含 `context` 子命令（旧版 CLI 静默空串 = 不注入，
-   会话永不受影响）。每次注入都带 `AGENOTE_AGENT=<host>` 归因前缀。
+1. **前置**：agenote CLI 含 `inject` 子命令（旧版 CLI 静默空串 = 不注入，
+   会话永不受影响）。每次注入都带 `AGENOTE_AGENT=<host>` 归因前缀；状态机与
+   状态文件都在 CLI 内，注入器不保存任何跨轮状态（pi/opencode/dsh 的进程内
+   指纹缓存只是省 spawn 的镜像）。
 2. **挂接**：按各宿主子目录 README 操作；注入器绝不代改宿主配置。
 3. **写侧禁用**（防双真相源，接管硬前提）：claude 关
    `autoMemoryEnabled`+`autoDreamEnabled`；codex 保持 `[features] memories`
@@ -76,8 +84,8 @@ SCHEMA（同agenote-curator skill 的「注入器与开关」节）。
 |---|---|---|
 | `AGENOTE_INJECTION_BRIEF_BUDGET` | 8000（codex 2800） | 简报单次预算（字符） |
 | `AGENOTE_INJECTION_RECALL_BUDGET` | 4000（codex 2800） | recall 单次预算（字符） |
-| `AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET` | 24000 | 单会话累计预算（追加型；SessionStart/compact 重置） |
-| `AGENOTE_INJECTION_MIN_QUERY` | 6 | recall 有效 query 最短字符（镜像 `recall_min_query`，只省 spawn；CLI 侧仍是最终裁决） |
+| `AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET` | 24000 | 单会话累计预算（由 `agenote inject` 读取；SessionStart/compact 重置） |
+| `AGENOTE_INJECTION_MIN_QUERY` | 6 | recall 有效 query 最短字符（由 `agenote inject` 读取） |
 | `AGENOTE_INJECTOR_STATE_DIR` | `~/.cache/agenote/injectors` | 状态目录 |
 | `KB_ROOT` | — | 与 CLI 同名 env 同口径（指纹定位用） |
 

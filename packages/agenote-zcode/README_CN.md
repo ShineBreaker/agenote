@@ -10,7 +10,7 @@
 | --------------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------- |
 | `hooks/session-start.mjs`               | `SessionStart`                             | 注入 agenote 使用规则（含必需的 `AGENOTE_AGENT=zcode` 归因前缀）与记事本健康度摘要                           |
 | `hooks/prompt-submit.mjs`               | `UserPromptSubmit`（`hooks.json` 里按完成词正则粗筛） | 精确信号匹配 + 5 分钟防抖（状态存插件数据目录），命中注入 `agenote-review` 评估提示；含 `<agenote-hook>` 标记的自注入回声跳过 |
-| `hooks/prompt-inject.mjs`               | `UserPromptSubmit`（无 matcher，每轮触发）         | 经 `agenote context --mode recall` 做记忆召回注入，按指纹 / 预算 / 累计上限抑制重复注入                     |
+| `hooks/prompt-inject.mjs`               | `UserPromptSubmit`（无 matcher，每轮触发）         | 经 `agenote inject --event prompt` 做记忆召回注入，指纹 / 预算 / 累计上限由 CLI 统一判定              |
 | `hooks/pre-tool-use.mjs`                | `PreToolUse` matcher `Bash`                | `agenote` 命令缺 `AGENOTE_AGENT=zcode` 前缀时提醒                                           |
 | `commands/{summarize,curate,health}.md` | `/agenote-zcode:summarize` 等               | 斜杠命令快捷入口，对应 pi 的 `/agenote-*`                                                       |
 

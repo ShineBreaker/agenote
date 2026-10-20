@@ -8,6 +8,12 @@
 （布局与发布约定见仓库根 `docs/adr/0005-monorepo-unify-seven-components.md`），
 由 `<component>-v<version>` 形式的 tag 触发发布。
 
+## [Unreleased]
+
+### Changed
+
+- 注入状态机移到 CLI（`agenote inject`）：插件不再自己算指纹、拼 query、读写状态文件；简报（system prompt section）与召回（`pre_llm_call`）都只传事件与预算。此前累计预算跨会话延续的问题随状态机下沉一并消除——`inject --event session` 按 session_id 重置，render 时即完成。
+
 ## [0.1.0] - 2026-10-03
 
 ### Added

@@ -10,9 +10,9 @@
 // 信号清单、写入流程、卡片格式由 agenote-{base,curator,review} skill 提供，
 // 本 hook 只做"规则常驻提醒"，避免与 skill 重复维护。
 //
-// 记忆简报段（设计 C4）：追加 `agenote context --mode session --budget 8000`
-// 的会话简报（text 空则不追加）；同时承担追加型三件套的会话重置语义
-// （累计清零 + recall 解禁，resume/clear/compact 重触发同样生效），见 lib.mjs。
+// 记忆简报段（设计 C4）：调 `agenote inject --event session --budget 8000`
+// 取会话简报（CLI 同时完成累计清零与 recall 解禁；resume/clear/compact 重触发
+// 同样生效）。空内容不追加。
 //
 // 手动冒烟测试：
 //   printf '%s\n' '{"hook_event_name":"SessionStart","session_id":"manual","source":"startup"}' \

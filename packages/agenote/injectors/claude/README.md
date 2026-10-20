@@ -42,9 +42,9 @@ claude-code 2.1.278（脚本为标准 hooks 协议，不依赖特定版本特性
 ```
 
 - SessionStart matcher 不填 = 覆盖 `startup/resume/clear/compact` 四源；
-  compact 自动重跑即免费获得重注入（简报缓存使重触发零 spawn）。
-- 两个脚本三件套共享状态文件 `~/.cache/agenote/injectors/claude-<session_id>.json`
-  （session_id 缺失退化为 `claude.json`；整目录可清理无副作用）。
+  compact 自动重跑即免费获得重注入（CLI 侧简报缓存命中）。
+- 两个脚本共享状态文件 `~/.cache/agenote/injectors/claude-<session_id>.json`
+  （由 `agenote inject` 读写；session_id 缺失退化为 `claude.json`；整目录可清理无副作用）。
 
 ## 预算与三件套
 
@@ -52,9 +52,9 @@ claude-code 2.1.278（脚本为标准 hooks 协议，不依赖特定版本特性
 |---|---|---|
 | 简报单次预算 | 8000 字符 | session-start.sh 经 `../lib.sh` |
 | recall 单次预算 | 4000 字符 | user-prompt-submit.sh（宿主上限 10000） |
-| 简报指纹未变 | 缓存重放/不重注 | `../lib.sh`（MEMORY.org+memories/ 的 mtime+size） |
-| recall 门槛 | prompt 有效长度 <6 跳过；全被 `recall_min_score` 滤空则记键不再 spawn | `../lib.sh` |
-| 单会话累计 | 24000 字符触顶停 recall（SessionStart/compact 重置） | 状态文件 |
+| 简报指纹未变 | 缓存重放 | `agenote inject --event session`（CLI 状态文件） |
+| recall 门槛 | prompt 有效长度 <6 跳过；被分数下限滤空则记键 | `agenote inject --event prompt` |
+| 单会话累计 | 24000 字符触顶停 recall（SessionStart/compact 重置） | `agenote inject`（CLI 状态文件） |
 
 ## 安装前置（写侧禁用，防双真相源）
 

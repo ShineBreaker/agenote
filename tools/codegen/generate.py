@@ -132,16 +132,10 @@ def render_idle_js(spec: Spec) -> str:
 
 def render_budgets_mjs(spec: Spec, host: str) -> str:
     h = spec.host(host)
-    common = spec["append"]
     return "\n".join(
         [
             f"export const BRIEF_BUDGET = Number(process.env.AGENOTE_INJECTION_BRIEF_BUDGET || {h['brief']});",
             f"export const RECALL_BUDGET = Number(process.env.AGENOTE_INJECTION_RECALL_BUDGET || {h['recall']});",
-            "export const CUMULATIVE_BUDGET = Number(",
-            f"  process.env.AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET || {common['cumulative']},",
-            ");",
-            f"export const MIN_QUERY = Number(process.env.AGENOTE_INJECTION_MIN_QUERY || {common['min_query']});",
-            f"export const QUERY_MAX_CHARS = {common['query_max_chars']};",
             f"const CLI_TIMEOUT_MS = {spec.timeout(host)};",
         ]
     )
@@ -149,16 +143,10 @@ def render_budgets_mjs(spec: Spec, host: str) -> str:
 
 def render_budgets_py(spec: Spec, host: str) -> str:
     h = spec.host(host)
-    common = spec["append"]
     return "\n".join(
         [
             f"_BRIEF_BUDGET = int(os.environ.get(\"AGENOTE_INJECTION_BRIEF_BUDGET\") or {h['brief']})",
             f"_RECALL_BUDGET = int(os.environ.get(\"AGENOTE_INJECTION_RECALL_BUDGET\") or {h['recall']})",
-            "_CUMULATIVE_BUDGET = int(",
-            f"    os.environ.get(\"AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET\") or {common['cumulative']}",
-            ")",
-            f"_MIN_QUERY = int(os.environ.get(\"AGENOTE_INJECTION_MIN_QUERY\") or {common['min_query']})",
-            f"_QUERY_MAX_CHARS = {common['query_max_chars']}",
         ]
     )
 
@@ -253,10 +241,7 @@ TARGETS: list[tuple[str, str, list[Block]]] = [
     (
         "packages/agenote/injectors/lib.sh",
         "#",
-        [
-            ("hosts.claude.budgets", lambda s: render_budgets_bash(s, "claude")),
-            ("append.common.bash", lambda s: render_append_common_bash(s)),
-        ],
+        [("hosts.claude.budgets", lambda s: render_budgets_bash(s, "claude"))],
     ),
     (
         "packages/agenote/injectors/codex/session-start.sh",
@@ -275,17 +260,6 @@ TARGETS: list[tuple[str, str, list[Block]]] = [
         [("hosts.opencode.brief", lambda s: render_brief_only_ts(s, "opencode"))],
     ),
 ]
-
-
-def render_append_common_bash(spec: Spec) -> str:
-    common = spec["append"]
-    return "\n".join(
-        [
-            f': "${{AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET:={common["cumulative"]}}}"',
-            f': "${{AGENOTE_INJECTION_MIN_QUERY:={common["min_query"]}}}"',
-            f"_AGENOTE_QUERY_MAX_CHARS={common['query_max_chars']}",
-        ]
-    )
 
 
 def render_recall_only_bash(spec: Spec, host: str) -> str:

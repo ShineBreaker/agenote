@@ -5,9 +5,9 @@
 
 # agenote → codex UserPromptSubmit 注入器（recipe 级模板，设计 C4 W2）
 #
-# 每轮 recall 通道：query = prompt 前 200 字符 + cwd basename 伪词，追加型
-# 三件套（指纹未变不重注 / query 门槛与分数下限滤空跳过 / 单会话累计 24000
-# 停 recall）全在 ../lib.sh。预算 2800 字符（CJK 折算保守值，防 spill）。
+# 每轮 recall 通道：query 构造与三件套（指纹未变不重注 / 门槛与分数下限滤空 /
+# 单会话累计 24000 停 recall）都是 `agenote inject` 的单一实现，../lib.sh 只传
+# 事件与预算。预算 2800 字符（CJK 折算保守值，防 spill）。
 # 注意：codex 的 hook additionalContext 进 rollout 持久化，注入体量影响存储
 # ——累计预算触顶后本通道自动静默。
 #

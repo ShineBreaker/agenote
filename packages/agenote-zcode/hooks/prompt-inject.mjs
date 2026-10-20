@@ -3,13 +3,12 @@
 //
 // SPDX-License-Identifier: MIT
 
-// agenote-zcode UserPromptSubmit hook — 记忆召回注入（每轮，追加型三件套）
+// agenote-zcode UserPromptSubmit hook — 记忆召回注入（每轮）
 //
-// 设计 C4：query = prompt 折叠空白取前 200 字符 + cwd basename 伪词，调
-// `AGENOTE_AGENT=zcode agenote context --mode recall --budget 4000` 注入。
-// 三件套（指纹+query 未变不重注 / 短 prompt 与分数下限滤空跳过 / 单会话
-// 累计 24000 触顶停 recall）在 lib.mjs，状态文件
-// ~/.cache/agenote/injectors/zcode-<session_id>.json。
+// 设计 C4：调 `AGENOTE_AGENT=zcode agenote inject --event prompt --budget 4000`
+// 注入。三件套（指纹+query 未变不重注 / 短 prompt 与分数下限滤空跳过 / 单会话
+// 累计 24000 触顶停 recall）是 CLI 的单一实现（inject.py），状态文件
+// ~/.cache/agenote/injectors/zcode-<session_id>.json；本 hook 只做协议适配。
 //
 // 与既有 prompt-submit.mjs（完成信号检测，带 matcher 粗筛）并存为
 // hooks.json UserPromptSubmit 的两个条目：本条目无 matcher = 每轮触发，

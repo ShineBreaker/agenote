@@ -6,9 +6,9 @@
 # agenote → claude-code UserPromptSubmit 注入器（成品级，设计 C4 W2）
 #
 # 挂点：~/.claude/settings.json hooks.UserPromptSubmit（每轮触发）。
-# 单次预算：recall 4000 字符（宿主上限 10000，设计 C4 预算表）；追加型三件套
+# 单次预算：recall 4000 字符（宿主上限 10000，设计 C4 预算表）；三件套
 # （指纹未变不重注 / 短 prompt 与分数下限滤空跳过 / 单会话累计 24000 停 recall）
-# 全在 ../lib.sh。query = prompt 折叠空白取前 200 字符 + cwd basename 伪词。
+# 是 `agenote inject` 的单一实现，../lib.sh 只传事件与预算。
 #
 # 协议依据：code.claude.com/docs/en/hooks（2026-09 核对）——stdin 含
 # session_id/prompt/cwd；输出 hookSpecificOutput.additionalContext；正文为空

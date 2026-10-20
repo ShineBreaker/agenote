@@ -6,14 +6,16 @@
 # injectors/selftest.sh — 注入器离线验收（开发/验收两用）
 #
 # 构造临时 KB（agenote 域布局）+ spy agenote 包装器（计数 CLI spawn）+
-# mock hook stdin，断言：正常输出合法 JSON、CLI 缺失静默 0、指纹缓存二次
-# 调用零 spawn、累计预算触顶停 recall、三件套各门槛生效。
-# zcode(mjs)/hermes(py) 实装就在本仓 packages/ 下，合仓后默认直接验证
-# 仓内源码（CI 也跑这两个 section）；要验部署副本时用 env 覆盖路径。
+# mock hook stdin，断言：宿主协议封包合法、CLI 缺失静默 0、缓存重放、
+# 三件套门槛生效、语义开关零字节。注入状态机本身由 CLI 的
+# tests/test_inject.py 覆盖——这里只验「宿主事件 → inject 参数 → 协议封包」。
+# zcode(mjs)/hermes(py)/dsh(js) 实装就在本仓 packages/ 下，合仓后默认直接
+# 验证仓内源码（CI 也跑这些 section）；要验部署副本时用 env 覆盖路径。
 #
 # 用法：bash injectors/selftest.sh
-# 可调：AGENOTE_BIN=路径（默认找包内 .venv/bin/agenote 或 PATH 下含 context
-#       子命令的 agenote）；AGENOTE_ZCODE_PLUGIN_SRC / AGENOTE_HERMES_PLUGIN_SRC
+# 可调：AGENOTE_BIN=路径（默认找包内 .venv/bin/agenote 或 PATH 下含 inject
+#       子命令的 agenote）；AGENOTE_ZCODE_PLUGIN_SRC / AGENOTE_HERMES_PLUGIN_SRC /
+#       AGENOTE_DSH_PLUGIN_SRC
 
 set -uo pipefail
 
@@ -25,16 +27,16 @@ ok() { PASS=$((PASS + 1)); printf '  ✓ %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  ✗ %s\n' "$1"; }
 section() { printf '\n== %s\n' "$1"; }
 
-# ── 定位含 context 子命令的 agenote（旧版 CLI 无此子命令）───────────────────
+# ── 定位含 inject 子命令的 agenote（注入状态机下沉后的最低版本门）────────────
 BIN=""
 for cand in "${AGENOTE_BIN:-}" "$PKG_ROOT/.venv/bin/agenote"; do
-  if [[ -n "$cand" && -x "$cand" ]] && "$cand" context --help >/dev/null 2>&1; then
+  if [[ -n "$cand" && -x "$cand" ]] && "$cand" inject --help >/dev/null 2>&1; then
     BIN="$cand"
     break
   fi
 done
 if [[ -z "$BIN" ]] && command -v agenote >/dev/null 2>&1 \
-  && agenote context --help >/dev/null 2>&1; then
+  && agenote inject --help >/dev/null 2>&1; then
   BIN="$(command -v agenote)"
 fi
 if [[ -z "$BIN" ]]; then
@@ -101,7 +103,9 @@ chmod +x "$T/bin/agenote"
 export KB_ROOT="$T/kb" AGENOTE_INJECTOR_STATE_DIR="$T/state"
 export SPY_LOG="$T/spy.log" PATH="$T/bin:$PATH"
 
-ctx_spawns() { grep -c '^ARGS: context' "$SPY_LOG" 2>/dev/null || true; }
+# 注入策略已下沉 CLI：注入器每轮只 spawn 一次 `agenote inject`（不再 spawn
+# context，也不再在宿主侧做三件套）。计数用于验证「注入器不重复生成内容」。
+ctx_spawns() { grep -c '^ARGS: inject' "$SPY_LOG" 2>/dev/null || true; }
 reset_state() { rm -f "$T"/state/*.json; : > "$SPY_LOG"; }
 run_hook() { printf '%s\n' "$2" | bash "$INJ_DIR/$1" 2>/dev/null; }
 
@@ -123,12 +127,11 @@ assert d["additionalContext"].startswith("<!-- agenote-context v1 mode=session")
 ' "$OUT" 2>/dev/null && ok "session-start 输出合法 JSON + 简报 marker" \
   || bad "session-start 输出合法 JSON + 简报 marker"
 
-S1="$(ctx_spawns)"
 OUT2="$(run_hook claude/session-start.sh \
   '{"hook_event_name":"SessionStart","session_id":"s1","cwd":"'"$T"'","source":"compact"}')"
-[[ "$(ctx_spawns)" == "$S1" && -n "$OUT2" ]] \
-  && ok "指纹未变重触发：缓存重放零 spawn（context spawn 仍 $S1）" \
-  || bad "指纹未变重触发应零 spawn 重放"
+[[ -n "$OUT2" && "$OUT2" == "$OUT" ]] \
+  && ok "指纹未变重触发：CLI 缓存重放同一简报" \
+  || bad "指纹未变重触发应重放同一简报"
 
 OUT="$(run_hook claude/user-prompt-submit.sh "$P_LONG")"
 printf '%s' "$OUT" | python3 -c '
@@ -139,21 +142,20 @@ assert "mode=recall" in d["additionalContext"]
 ' 2>/dev/null && ok "recall 注入合法 JSON（query=前200字+伪词）" \
   || bad "recall 注入应输出合法 JSON"
 
-S2="$(ctx_spawns)"
-[[ -z "$(run_hook claude/user-prompt-submit.sh "$P_LONG")" && "$(ctx_spawns)" == "$S2" ]] \
-  && ok "三件套①同 query 同指纹：不重注且零 spawn" \
+[[ -z "$(run_hook claude/user-prompt-submit.sh "$P_LONG")" ]] \
+  && ok "三件套①同 query 同指纹：CLI 判 duplicate，零输出" \
   || bad "三件套①同 query 应静默跳过"
 
-[[ -z "$(run_hook claude/user-prompt-submit.sh "$P_SHORT")" && "$(ctx_spawns)" == "$S2" ]] \
-  && ok "三件套②短 prompt（<6 字符）：跳过且零 spawn" \
+[[ -z "$(run_hook claude/user-prompt-submit.sh "$P_SHORT")" ]] \
+  && ok "三件套②短 prompt（<6 字符）：CLI 判 short，零输出" \
   || bad "三件套②短 prompt 应跳过"
 
+S2="$(ctx_spawns)"
 touch -d "2026-01-01" "$T/kb/agenote/MEMORY.org"
-run_hook claude/user-prompt-submit.sh "$P_LONG" >/dev/null
-[[ "$(ctx_spawns)" -gt "$S2" ]] \
+OUT_FRESH="$(run_hook claude/user-prompt-submit.sh "$P_LONG")"
+[[ -n "$OUT_FRESH" && "$(ctx_spawns)" -gt "$S2" ]] \
   && ok "指纹失效（KB mtime 变化）：同 query 重新召回" \
-  || bad "指纹失效后应重新 spawn 召回"
-S3="$(ctx_spawns)"
+  || bad "指纹失效后应重新召回"
 
 CUM="$(python3 -c "import json;print(json.load(open('$T/state/claude-s1.json'))['cumulative'])" 2>/dev/null || echo 0)"
 OUT_CUM="$(AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET="$((CUM + 1))" \
@@ -221,17 +223,15 @@ import json, sys
 c = json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"]
 assert "agenote-context v1 mode=session" in c  # 简报段已追加
 ' 2>/dev/null && ok "zcode SessionStart 注入简报段 ✓" || bad "zcode SessionStart 简报段缺失"
-  ZS1="$(ctx_spawns)"
-  printf '%s\n' '{"hook_event_name":"SessionStart","session_id":"z1","source":"compact","cwd":"'"$T"'"}' \
-    | node "$HOOKS/session-start.mjs" >/dev/null 2>&1
-  [[ "$(ctx_spawns)" == "$ZS1" ]] \
-    && ok "zcode SessionStart 重触发：context 缓存重放零 spawn（health 照常）✓" \
-    || bad "zcode 重触发不应重跑 context"
+  ZOUT2="$(printf '%s\n' '{"hook_event_name":"SessionStart","session_id":"z1","source":"compact","cwd":"'"$T"'"}' \
+    | node "$HOOKS/session-start.mjs" 2>/dev/null)"
+  printf '%s' "$ZOUT2" | grep -q 'agenote-context v1 mode=session' \
+    && ok "zcode SessionStart 重触发：CLI 缓存重放简报 ✓" \
+    || bad "zcode 重触发应重放简报"
 
   ZOUT="$(printf '%s\n' "$P_LONG" | node "$HOOKS/prompt-inject.mjs" 2>/dev/null)"
   printf '%s' "$ZOUT" | grep -q 'mode=recall' && ok "zcode prompt-inject recall ✓" || bad "zcode recall 注入失败"
-  ZS2="$(ctx_spawns)"
-  [[ -z "$(printf '%s\n' "$P_LONG" | node "$HOOKS/prompt-inject.mjs" 2>/dev/null)" && "$(ctx_spawns)" == "$ZS2" ]] \
+  [[ -z "$(printf '%s\n' "$P_LONG" | node "$HOOKS/prompt-inject.mjs" 2>/dev/null)" ]] \
     && ok "zcode 三件套①同 query 去重 ✓" || bad "zcode 同 query 应去重"
   [[ -z "$(printf '%s\n' "$P_SHORT" | node "$HOOKS/prompt-inject.mjs" 2>/dev/null)" ]] \
     && ok "zcode 三件套②短 prompt 门槛 ✓" || bad "zcode 短 prompt 应跳过"
@@ -254,35 +254,31 @@ if [[ -f "$HZ_SRC/__init__.py" ]]; then
     && ok "__init__.py AST 语法 ✓" || bad "__init__.py 语法错误"
   reset_state
   HOUT="$(KB_ROOT="$T/kb" AGENOTE_INJECTOR_STATE_DIR="$T/state" \
-    AGENOTE_BIN="$BIN" python3 - "$HZ_SRC" "$BIN" <<'PYEOF'
+    AGENOTE_BIN="$T/bin/agenote" python3 - "$HZ_SRC" "$T" <<'PYEOF'
 import importlib.util, json, os, sys
-src, bin_path = sys.argv[1], sys.argv[2]
+src, tmp = sys.argv[1], sys.argv[2]
 spec = importlib.util.spec_from_file_location("agenote_hermes_test", os.path.join(src, "__init__.py"))
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
-mod._RESOLVED_BIN = bin_path  # 绕过 Guix 旧版 CLI 解析（实装环境同口径降级安全）
+mod._RESOLVED_BIN = os.path.join(tmp, "bin", "agenote")  # spy：计数并转发真 CLI
 
-calls = []
-real = mod._context_content
-mod._context_content = lambda m, b, q="": (calls.append(m), real(m, b, q))[1]
-
-brief = mod._render_brief({"platform": "main"})
+brief = mod._render_brief({"platform": "main", "session_id": "h1", "cwd": tmp})
 assert brief.startswith("<!-- agenote-context v1 mode=session"), brief[:60]
-assert mod._render_brief({"platform": "main"}) == brief and len(calls) == 1, "指纹缓存零 spawn"
-assert mod._render_brief({"platform": "subagent"}) == "", "subagent 应豁免"
-recall = mod._recall_context("st1", "BM25 检索参数是什么来着")
-assert recall.startswith("<!-- agenote-context v1 mode=recall") and len(calls) == 2
-assert mod._recall_context("st1", "BM25 检索参数是什么来着") == "" and len(calls) == 2, "去重"
-assert mod._recall_context("st1", "继续") == "", "短门槛"
-st = mod._state_read(mod._state_path("st1"))
-assert st.get("cumulative") == len(recall) and st.get("recall_key"), st
+assert mod._render_brief({"platform": "main", "session_id": "h1", "cwd": tmp}) == brief
+assert mod._render_brief({"platform": "subagent", "session_id": "h1", "cwd": tmp}) == ""
+recall = mod._recall_context("h1", "BM25 检索参数是什么来着")
+assert recall.startswith("<!-- agenote-context v1 mode=recall"), recall[:60]
+assert mod._recall_context("h1", "BM25 检索参数是什么来着") == "", "去重"
+assert mod._recall_context("h1", "继续") == "", "短门槛"
+state = json.load(open(os.path.join(tmp, "state", "hermes-h1.json"), encoding="utf-8"))
+assert state.get("cumulative") == len(recall) and state.get("recall_key"), state
 assert mod._pre_llm_call(session_id="x", user_message="搞定了", platform="main") is not None
 assert mod._pre_llm_call(session_id="x", user_message="搞定了", platform="subagent") is None
-print(json.dumps({"ok": True, "spawns": len(calls)}))
+print(json.dumps({"ok": True}))
 PYEOF
   )" 2>/dev/null
   [[ "$HOUT" == *'"ok": true'* ]] \
-    && ok "导入级：简报节/指纹缓存/recall 三件套/完成信号共存 ✓" \
+    && ok "导入级：简报缓存/recall/完成信号（策略由 CLI 统一）✓" \
     || bad "hermes 插件功能验证失败: $HOUT"
 else
   printf '  - 跳过（未找到 %s）\n' "$HZ_SRC/__init__.py"

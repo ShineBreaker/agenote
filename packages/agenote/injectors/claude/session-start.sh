@@ -7,7 +7,8 @@
 #
 # 挂点：~/.claude/settings.json hooks.SessionStart（startup/resume/clear/compact
 # 四源全覆盖，compact 自动重跑即免费重注入）。单次预算：简报 8000 字符。
-# 三件套/缓存逻辑在 ../lib.sh：本脚本只做协议适配（stdin 字段提取 + 输出封包）。
+# 注入策略（指纹缓存/会话重置）在 `agenote inject`：本脚本与 ../lib.sh 只做
+# 协议适配（stdin 字段提取 + 输出封包）。
 #
 # 协议依据：code.claude.com/docs/en/hooks（2026-09 核对）——stdin 含
 # session_id/cwd/hook_event_name/source；输出 hookSpecificOutput.additionalContext；

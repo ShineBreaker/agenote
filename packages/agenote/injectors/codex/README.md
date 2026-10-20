@@ -35,7 +35,7 @@ UserPromptSubmit = [
 | 项 | 值 | 说明 |
 |---|---|---|
 | 简报/recall 单次预算 | 2800 字符 | CJK ≈1–1.5 字符/token 的保守折算，保不 spill；英文占比高时可能仍触 spill，可下调或调 `additional_context_limit`（设计 R5/Q2） |
-| 三件套 | 同 claude | `../lib.sh`：指纹未变不重注 / query 门槛+滤空跳过 / 累计 24000 触顶停 recall |
+| 三件套 | 同 claude | `agenote inject`（CLI 单一实现）：指纹未变不重注 / query 门槛+滤空跳过 / 累计 24000 触顶停 recall |
 | 状态文件 | `~/.cache/agenote/injectors/codex-<session_id>.json` | 与其他宿主同款布局 |
 
 ## 安装前置

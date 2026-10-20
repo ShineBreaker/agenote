@@ -8,6 +8,14 @@
 （布局与发布约定见仓库根 `docs/adr/0005-monorepo-unify-seven-components.md`），
 由 `<component>-v<version>` 形式的 tag 触发发布。
 
+## [Unreleased]
+
+### Changed
+
+- **注入状态机移到 CLI**：`hooks/lib.mjs` 不再自己算指纹、拼 query、读写状态文件；
+  改为调 `agenote inject` 并只做协议封包。三件套的单一实现在 CLI，zcode 侧
+  改行为不再需要与 claude/codex/hermes 同步同一段逻辑。
+
 ## [0.1.0] - 2026-10-03
 
 ### Added

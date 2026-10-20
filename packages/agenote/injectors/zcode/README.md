@@ -12,13 +12,12 @@ hooks.json 内统一管理，避免双挂接入口）：
 
 | 挂点 | 条目 | 行为 |
 |---|---|---|
-| SessionStart（matcher startup\|resume\|clear\|compact） | `hooks/session-start.mjs`（既有条目扩展） | 使用规则 + 健康度摘要之后追加 `agenote context --mode session --host zcode --budget 8000` 简报段（text 空则不追加）；同时承担三件套的会话重置（累计清零 + recall 解禁） |
-| UserPromptSubmit（无 matcher = 每轮） | `hooks/prompt-inject.mjs`（新增条目，与既有完成信号条目并存） | recall 注入：query = prompt 前 200 字符 + cwd basename 伪词，预算 4000，三件套全量 |
+| SessionStart（matcher startup\|resume\|clear\|compact） | `hooks/session-start.mjs`（既有条目扩展） | 使用规则 + 健康度摘要之后追加 `agenote inject --event session --host zcode --budget 8000` 简报（空则不追加）；CLI 同时完成会话重置（累计清零 + recall 解禁） |
+| UserPromptSubmit（无 matcher = 每轮） | `hooks/prompt-inject.mjs`（新增条目，与既有完成信号条目并存） | recall 注入：调 `agenote inject --event prompt`，预算 4000，三件套由 CLI 判定 |
 | UserPromptSubmit（完成信号 matcher） | `hooks/prompt-submit.mjs`（既有，未改动） | 任务完成信号 → review 提示 |
 
-三件套/缓存的 mjs 实现在 `hooks/lib.mjs`（指纹 = MEMORY.org+memories/
-mtime+size；状态文件 `~/.cache/agenote/injectors/zcode-<session_id>.json`），
-与 `injectors/lib.sh`（claude/codex 用）同构——改语义需两处同步。
+三件套/状态文件的唯一实现在 `agenote inject`（`inject.py`）；`hooks/lib.mjs`
+只做协议适配。状态文件 `~/.cache/agenote/injectors/zcode-<session_id>.json`。
 
 ## 预算
 
