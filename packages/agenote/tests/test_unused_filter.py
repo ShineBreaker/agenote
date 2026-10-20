@@ -10,8 +10,13 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta
 
 import agenote.cards as cards
+
+# 「刚用过」必须相对当前时间生成：写死日期会在阈值到期后把这张卡也判成候选，
+# 让测试在某个日历日之后无条件变红（2026-10-13 起就踩过）。
+_RECENT = (datetime.now() - timedelta(days=10)).strftime("[%Y-%m-%d %a %H:%M]")
 
 
 def _card(cid, status, last_used):
@@ -28,7 +33,7 @@ def test_unused_days_only_lists_done_cards(monkeypatch, capsys):
         _card("20260101-000001", "done", "[2026-01-01 Mon 00:00]"),      # 候选
         _card("20260101-000002", "stable", "[2026-01-01 Mon 00:00]"),    # 已复核 → 排除
         _card("20260101-000003", "archived", "[2026-01-01 Mon 00:00]"),  # 出局 → 排除
-        _card("20260101-000004", "done", "[2026-09-13 Sun 00:00]"),      # 刚用过 → 排除
+        _card("20260101-000004", "done", _RECENT),      # 刚用过 → 排除
     ]}
     monkeypatch.setattr(cards, "_load_index", lambda ctx=None, **kwargs: index)
     args = argparse.Namespace(category=None, type=None, owner=None, all=True,
