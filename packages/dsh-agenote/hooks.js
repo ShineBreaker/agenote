@@ -19,12 +19,24 @@
 //   - review/curate 提示 → agent.followup()：这才是"要 agent 立即执行任务"的场景，
 //     等价 pi 的 sendUserMessage({deliverAs:'followUp'})。
 
-import { createUserMessage, healthSummary, runKb, schema } from "./lib.js";
+import {
+  BRIEF_BUDGET,
+  RECALL_BUDGET,
+  buildQuery,
+  contextContent,
+  createUserMessage,
+  healthSummary,
+  kbFingerprint,
+  runKb,
+  schema,
+} from "./lib.js";
 
 export const name = "agenote-hooks";
 
 /** system-prompt 里的 section 名。 */
 const SECTION_NAME = "agenote-health-summary";
+/** 动态上下文（简报 + 召回）的 context 名。 */
+const MEMORY_CONTEXT_NAME = "agenote-memory";
 /** 注入的 review/curate 提示的 plugin 名——也是 durable log 里识别自注入的依据。 */
 const PLUGIN_SOURCE = "agenote-hooks";
 
@@ -84,6 +96,10 @@ export const Config = schema.object({
   enabled: schema.boolean(true),
   /** system prompt 注入健康度摘要 */
   status: schema.boolean(true),
+  /** 动态上下文注入记忆简报（会话级） */
+  brief: schema.boolean(true),
+  /** 动态上下文注入按用户消息的召回 */
+  recall: schema.boolean(true),
   /** 完成信号 → 注入 review 提示 */
   completionSignals: schema.boolean(true),
   /** 空闲兜底（无人值守场景） */
@@ -138,6 +154,24 @@ export function extractText(content) {
     )
     .map((block) => block.text ?? "")
     .join(" ");
+}
+
+/**
+ * 从 durable log 取最近一条**真实用户**消息（source.kind === 'user'）。
+ * 不用内存里的 lastUserText：那个值会在完成信号触发后被清空，而动态上下文
+ * 需要稳定的「本轮用户说了什么」；log 是唯一真相源，resume 后同样可用。
+ */
+export function lastUserText(session) {
+  const surface = session?.surface?.nodes;
+  if (surface === undefined) return "";
+  const seqs = [...surface];
+  for (let i = seqs.length - 1; i >= 0; i--) {
+    const event = session.eventAt(seqs[i]);
+    if (event?.type === "user/message" && event.data?.source?.kind === "user") {
+      return extractText(event.data.content);
+    }
+  }
+  return "";
 }
 
 /** 本插件投递的消息统一带这个 source（durable log 里以此识别自注入）。 */
@@ -220,6 +254,64 @@ export function apply(ctx, cfg) {
         }
         cachedAt = now;
         return cached;
+      },
+    });
+  }
+
+  // ── 记忆注入：简报 + 每轮召回 → systemPrompt.context ──
+  // DSH 的 context 是「每次请求重新物化的动态上下文快照」，等价 pi 的 context
+  // 事件重写：简报与召回并置同一快照，每次请求幂等重算，没有追加型的累积风险，
+  // 因此不需要三件套里的累计预算；只保留指纹 + query 缓存做零 spawn 重放。
+  // 召回 query 取 durable log 里最近一条真实用户消息，resume / 多标签天然隔离。
+  const recallCache = new Map();
+  if (cfg.brief || cfg.recall) {
+    let briefCache = { fingerprint: "", content: "" };
+
+    const briefOf = (fingerprint) => {
+      if (briefCache.fingerprint === fingerprint) return briefCache.content;
+      const content = contextContent("dsh", "session", BRIEF_BUDGET);
+      briefCache = { fingerprint, content };
+      return content;
+    };
+
+    const recallOf = (agent, fingerprint) => {
+      const cwd = agent?.session?.header?.cwd || "";
+      const query = buildQuery(lastUserText(agent.session), cwd);
+      if (!query) return "";
+      const key = `${fingerprint}::${query}`;
+      const cached = recallCache.get(String(agent.id));
+      if (cached?.key === key) return cached.content;
+      const content = contextContent("dsh", "recall", RECALL_BUDGET, query, cwd);
+      recallCache.set(String(agent.id), { key, content });
+      return content;
+    };
+
+    ctx.systemPrompt.context({
+      name: MEMORY_CONTEXT_NAME,
+      order: 300,
+      // 记忆正文里可能出现 {{...}} 字样，不能当 prompt 变量插值。
+      interpolate: false,
+      text: (assembly) => {
+        try {
+          const agent = assembly?.agent;
+          if (!agent || isSubagent(agent)) return "";
+          const fingerprint = kbFingerprint();
+          if (!fingerprint) return "";
+          const parts = [];
+          if (cfg.brief) {
+            const brief = briefOf(fingerprint);
+            if (brief) parts.push(brief);
+          }
+          if (cfg.recall) {
+            const recall = recallOf(agent, fingerprint);
+            if (recall) parts.push(recall);
+          }
+          return parts.join("\n\n");
+        } catch (error) {
+          // 注入是纯增益路径：任何异常都只让本轮少注入，不炸宿主请求。
+          ctx.logger?.warn?.(`agenote-hooks: 记忆注入失败: ${String(error)}`);
+          return "";
+        }
       },
     });
   }
@@ -344,11 +436,12 @@ export function apply(ctx, cfg) {
     // timer 不 unref：会话存活期间就该触发；agent 销毁时随会话状态一并丢弃。
   });
 
-  // ── 会话销毁：清掉计时器，避免进程退出前留下悬挂 timer ──
+  // ── 会话销毁：清掉计时器与召回缓存，避免进程退出前留下悬挂状态 ──
   ctx.on("agent/disposed", ({ agent }) => {
     const id = String(agent?.id ?? "unknown");
     const state = sessions.get(id);
     if (state) clearIdle(state);
     sessions.delete(id);
+    recallCache.delete(id);
   });
 }

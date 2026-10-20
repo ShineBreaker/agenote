@@ -95,3 +95,12 @@ mode = "rewrite"
 brief = 8000
 # 单次简报超时，较 zcode 短（omp 的 context 钩子预算更紧）。
 cli_timeout_ms = 5000
+
+# dsh：重写型（systemPrompt.context，每次请求重新物化动态上下文快照）。
+# 简报与召回写在同一个快照里，按指纹 + 最近用户消息缓存，无累积风险。
+[hosts.dsh]
+mode = "rewrite"
+brief = 8000
+recall = 4000
+cli_timeout_ms = 6000
+

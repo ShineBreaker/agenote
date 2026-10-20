@@ -284,6 +284,130 @@ else
   printf '  - 跳过（未找到 %s）\n' "$HZ_SRC/__init__.py"
 fi
 
+# ═══ dsh 插件（本仓实装，重写型：简报 + 召回同一快照）═════════════════════════
+DSH_SRC="${AGENOTE_DSH_PLUGIN_SRC:-$MONOREPO_ROOT/packages/dsh-agenote}"
+section "dsh dsh-agenote 插件（mjs）"
+if [[ -d "$DSH_SRC" ]] && command -v node >/dev/null 2>&1; then
+  for f in "$DSH_SRC"/index.js "$DSH_SRC"/hooks.js "$DSH_SRC"/commands.js \
+           "$DSH_SRC"/tools.js "$DSH_SRC"/lib.js; do
+    cp "$f" "/tmp/dsh-$(basename "${f%.js}").mjs"
+    node --check "/tmp/dsh-$(basename "${f%.js}").mjs" 2>/dev/null \
+      && ok "$(basename "$f") 语法 ✓" || bad "$(basename "$f") 语法"
+  done
+  reset_state
+  DOUT="$(node --input-type=module - "$DSH_SRC" "$T" <<'JSEOF'
+const [src, tmp] = process.argv.slice(2);
+const { pathToFileURL } = await import("node:url");
+const { readFileSync } = await import("node:fs");
+const hooks = await import(pathToFileURL(`${src}/hooks.js`).href);
+
+const handlers = new Map();
+const contexts = [];
+const ctx = {
+  on: (name, fn) => handlers.set(name, fn),
+  systemPrompt: { section: () => {}, context: (c) => contexts.push(c) },
+  logger: { warn: () => {} },
+};
+hooks.apply(ctx, {
+  enabled: true, status: false, brief: true, recall: true,
+  completionSignals: true, idleFallback: false,
+  signals: hooks.COMPLETION_SIGNALS, debounceMs: 300000,
+  idleMs: 300000, statusTtlMs: 300000,
+});
+
+const spawns = () => {
+  try {
+    return readFileSync(process.env.SPY_LOG, "utf8")
+      .split("\n").filter((l) => l.startsWith("ARGS: context")).length;
+  } catch { return 0; }
+};
+const userEvent = (text) => ({
+  type: "user/message",
+  data: { source: { kind: "user" }, content: [{ type: "text", text }] },
+});
+const events = [userEvent("BM25 检索参数是什么来着")];
+const session = {
+  header: { origin: "main", cwd: tmp },
+  surface: { nodes: [0] },
+  eventAt: (seq) => events[seq],
+};
+const followed = [];
+const agent = { id: "a1", session, followup: (m) => followed.push(m) };
+const memory = contexts.find((c) => c.name === "agenote-memory");
+if (!memory) throw new Error("agenote-memory context 未注册");
+
+const text = memory.text({ agent });
+const s1 = spawns();
+const again = memory.text({ agent });
+
+events[0] = userEvent("继续");
+const shortText = memory.text({ agent });
+const shortSpawns = spawns();
+
+session.header.origin = "subagent";
+const subagentText = memory.text({ agent });
+session.header.origin = "main";
+
+handlers.get("agent/inbox/inserted")(
+  { agent, message: { source: { kind: "user" }, content: [{ type: "text", text: "搞定了" }] } },
+);
+handlers.get("agent/turn-stopping")({ agent });
+
+console.log(JSON.stringify({
+  session: text.includes("mode=session"),
+  recall: text.includes("mode=recall"),
+  idempotent: again === text && spawns() === s1,
+  short: shortText.includes("mode=session") && !shortText.includes("mode=recall") && shortSpawns === s1,
+  subagent: subagentText === "",
+  review: followed.length === 1 && followed[0].content[0].text.includes("agenote-hook"),
+  spawns: s1,
+}));
+JSEOF
+  )" 2>/dev/null
+  printf '%s' "$DOUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["session"],d' 2>/dev/null \
+    && ok "简报注入上下文（mode=session）✓" || bad "缺乏会话简报注入"
+  printf '%s' "$DOUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["recall"],d' 2>/dev/null \
+    && ok "按最近用户消息召回（mode=recall）✓" || bad "缺乏每轮召回"
+  printf '%s' "$DOUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["idempotent"] and d["spawns"]==2,d' 2>/dev/null \
+    && ok "指纹+query 缓存：二次求值零 spawn ✓" || bad "缓存未生效或 CLI 调用次数异常"
+  printf '%s' "$DOUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["short"],d' 2>/dev/null \
+    && ok "短 prompt（<6 字符）跳过召回、保留简报 ✓" || bad "短 prompt 门槛未生效"
+  printf '%s' "$DOUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["subagent"],d' 2>/dev/null \
+    && ok "subagent 会话不注入 ✓" || bad "subagent 未豁免"
+  printf '%s' "$DOUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["review"],d' 2>/dev/null \
+    && ok "完成信号触发 review 提示 ✓" || bad "完成信号未触发"
+  DOUT2="$(AGENOTE_INJECTION_ENABLED=false node --input-type=module - "$DSH_SRC" "$T" <<'JSEOF2'
+const [src, tmp] = process.argv.slice(2);
+const { pathToFileURL } = await import("node:url");
+const hooks = await import(pathToFileURL(`${src}/hooks.js`).href);
+const contexts = [];
+const ctx = {
+  on: () => {},
+  systemPrompt: { section: () => {}, context: (c) => contexts.push(c) },
+  logger: { warn: () => {} },
+};
+hooks.apply(ctx, {
+  enabled: true, status: false, brief: true, recall: true,
+  completionSignals: false, idleFallback: false, signals: [], debounceMs: 300000,
+  idleMs: 300000, statusTtlMs: 300000,
+});
+const events = [{ type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "BM25 检索参数是什么来着" }] } }];
+const agent = {
+  id: "a2",
+  session: { header: { origin: "main", cwd: tmp }, surface: { nodes: [0] }, eventAt: (s) => events[s] },
+};
+console.log(JSON.stringify({ disabled: contexts[0].text({ agent }) === "" }));
+JSEOF2
+  )" 2>/dev/null
+  printf '%s' "$DOUT2" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["disabled"],d' 2>/dev/null \
+    && ok "AGENOTE_INJECTION_ENABLED=false：CLI 应答 disabled，零字节不注 ✓" \
+    || bad "语义开关关闭后仍有注入"
+elif [[ ! -d "$DSH_SRC" ]]; then
+  printf '  - 跳过（未找到 %s）\n' "$DSH_SRC"
+else
+  printf '  - 跳过（node 不可用）\n'
+fi
+
 # ═══ opencode 模板（结构自洽 + 类型签名对照）═════════════════════════════════
 section "opencode agenote-context.ts（recipe 模板结构）"
 TS="$INJ_DIR/opencode/agenote-context.ts"

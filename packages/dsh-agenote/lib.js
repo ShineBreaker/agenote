@@ -14,7 +14,18 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+
+// ─── 注入预算（规格见 spec/injection.toml [hosts.dsh]）──────────────────────
+// ─── BEGIN GENERATED: hosts.dsh.budgets ───
+// 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
+export const BRIEF_BUDGET = Number(process.env.AGENOTE_INJECTION_BRIEF_BUDGET || 8000);
+export const RECALL_BUDGET = Number(process.env.AGENOTE_INJECTION_RECALL_BUDGET || 4000);
+export const CLI_TIMEOUT_MS = 6000;
+// ─── END GENERATED: hosts.dsh.budgets ───
+// query 有效长度与截断上限（spec [append] 的镜像；CLI 侧仍是最终裁决）。
+export const MIN_QUERY = Number(process.env.AGENOTE_INJECTION_MIN_QUERY || 6);
+export const QUERY_MAX_CHARS = 200;
 
 // ─── CLI 调用 ───────────────────────────────────────────────────────────────
 
@@ -54,6 +65,7 @@ export function runKb(args, options = {}) {
     encoding: "utf8",
     timeout,
     maxBuffer: options.maxBuffer ?? 4 * 1024 * 1024,
+    cwd: options.cwd || undefined,
     env: { ...process.env, AGENOTE_AGENT: options.agent ?? "dsh" },
   });
   if (res.error) {
@@ -85,6 +97,110 @@ function firstLine(text) {
     .split("\n")
     .find((l) => l.trim().length > 0);
   return line ? line.trim() : "(无输出)";
+}
+
+// ─── 注入：KB 域根 / 指纹 / query / context 正文 ─────────────────────────────
+// 重写型宿主（DSH 每次请求重写动态上下文快照）的**进程内预检镜像**：指纹与
+// query 只用于决定「能不能复用上次正文」，省一次 spawn；内容、裁剪与门槛始终
+// 由 CLI 决定。追加型宿主的状态机（去重/累计/状态文件）在 `agenote inject`，
+// 不在本文件，也不得在这里补一份。
+
+/** KB agent 域根：context 只读 agent 域，指纹也须定位到 KB_ROOT/<agenote_dir>。 */
+export function kbDomainRoot() {
+  try {
+    let kb = process.env.KB_ROOT || "";
+    let agenoteDir = "agenote";
+    if (!kb) {
+      const cfgPath = join(xdgConfigHome(), "agenote", "config.toml");
+      let section = "";
+      for (const line of readFileSync(cfgPath, "utf-8").split("\n")) {
+        // 值先吃掉引号串再匹配行尾注释（# 在引号内不被误剥）；手写 TOML 近似，
+        // 解析失败整体回退默认——CLI 侧仍以其自身配置为最终裁决。
+        const sec = line.match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/);
+        if (sec) {
+          section = sec[1];
+          continue;
+        }
+        const kv =
+          line.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*"((?:[^"\\]|\\.)*)"\s*(?:#.*)?$/) ||
+          line.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*'([^']*)'\s*(?:#.*)?$/);
+        if (kv && section === "paths") {
+          if (kv[1] === "kb_root") kb = kv[2];
+          if (kv[1] === "agenote_dir") agenoteDir = kv[2] || "agenote";
+        }
+      }
+    }
+    if (!kb) kb = join(homedir(), "Documents", "Org");
+    return join(kb.replace(/^~(?=\/|$)/, homedir()), agenoteDir);
+  } catch {
+    return join(homedir(), "Documents", "Org", "agenote");
+  }
+}
+
+/** MEMORY.org 与 memories/ 的 mtime+size 指纹；KB 缺失返回空串（= 不注入）。 */
+export function kbFingerprint() {
+  try {
+    const root = kbDomainRoot();
+    const st = statSync(join(root, "MEMORY.org"));
+    let fp = `${Math.floor(st.mtimeMs)}:${st.size}`;
+    try {
+      const dir = statSync(join(root, "memories"));
+      fp += `|${Math.floor(dir.mtimeMs)}:${dir.size}`;
+    } catch {
+      fp += "|-";
+    }
+    return fp;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * query = prompt 折叠空白取前 200 字符 + 会话 cwd 的 basename 伪词。
+ * 门槛按 prompt 部分判（伪词不计入），否则「继续」+ 项目名也能过门槛。
+ * 不过门槛返回 null。
+ */
+export function buildQuery(prompt, cwd) {
+  const qText = String(prompt || "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(" ")
+    .slice(0, QUERY_MAX_CHARS);
+  if (qText.trim().length < MIN_QUERY) return null;
+  let pseudo = "";
+  try {
+    pseudo = basename(String(cwd || "").replace(/[\\/]+$/, ""));
+  } catch {
+    pseudo = "";
+  }
+  return pseudo && pseudo !== "." ? `${qText} ${pseudo}` : qText;
+}
+
+/**
+ * 调 `agenote context` 取正文；非 ok / 解析失败 / CLI 失败一律空串。
+ * 语义开关（总开关与 per-host 开关）由 CLI 裁决，输出零字节即天然不注入。
+ */
+export function contextContent(host, mode, budget, query = "", cwd = "") {
+  const args = [
+    "context",
+    "--mode",
+    mode,
+    "--budget",
+    String(budget),
+    "--host",
+    host,
+    "--format",
+    "json",
+  ];
+  if (query) args.push("--query", query);
+  const res = runKb(args, { timeoutMs: CLI_TIMEOUT_MS, cwd });
+  if (!res.ok) return "";
+  try {
+    const data = JSON.parse(res.stdout || "{}");
+    return data && data.status === "ok" ? data.content || "" : "";
+  } catch {
+    return "";
+  }
 }
 
 /**

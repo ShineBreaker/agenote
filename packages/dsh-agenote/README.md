@@ -2,7 +2,7 @@
 
 DeepSeek Harness（DSH）的 [agenote](https://github.com/ShineBreaker/agenote) 集成插件。
 
-把 agenote 知识库接进 DSH 会话：**system prompt 注入健康度摘要**、**任务完成时提示 agent 做经验留痕**、**宿主侧写入工具**，外加三个斜杠命令快捷入口。
+把 agenote 知识库接进 DSH 会话：**记忆简报与每轮召回注入**、**system prompt 注入健康度摘要**、**任务完成时提示 agent 做经验留痕**、**宿主侧写入工具**，外加三个斜杠命令快捷入口。
 
 本插件是 `agenote-pi`（pi/omp 扩展）在 DSH 上的对等实现，二者共享同一套行为规范（`agenote-skills`）与同一个 `agenote` CLI，**不重复实现任何知识库逻辑**。
 
@@ -11,6 +11,7 @@ DeepSeek Harness（DSH）的 [agenote](https://github.com/ShineBreaker/agenote) 
 | 触发点             | DSH 事件                | 行为                                                                                      |
 | ------------------ | ----------------------- | ----------------------------------------------------------------------------------------- |
 | system prompt 拼装 | `systemPrompt.section`  | 注入 `agenote health` 摘要（总数/孤立率/过时率/薄弱类别/记忆统计）——背景知识，不产生 turn |
+| 每次请求组装       | `systemPrompt.context`  | 注入记忆简报（`--mode session`）与按最近用户消息的召回（`--mode recall`），指纹 + query 缓存零重复 spawn |
 | 用户消息进入       | `agent/inbox/inserted`  | 记住最近一条**真实用户**发言，用于信号判定                                                |
 | 新一轮开始         | `agent/status`(running) | 作废待发的空闲计时器                                                                      |
 | 工具执行完毕       | `tools/result`          | 标记本轮「真的干过活」（空闲兜底的门槛依据）                                              |
@@ -69,6 +70,8 @@ profile 为 `patchReload: live` 时（web profile 默认如此），新 bundle �
     hooks:
       enabled: true # 总开关
       status: true # system prompt 注入健康度摘要
+      brief: true # 动态上下文注入记忆简报
+      recall: true # 动态上下文注入按用户消息的召回
       completionSignals: true # turn 收尾检测完成信号
       idleFallback: true # 空闲兜底（无人值守场景）
       signals: ["搞定", "done."] # 覆盖内置信号清单
@@ -85,6 +88,7 @@ profile 为 `patchReload: live` 时（web profile 默认如此），新 bundle �
 
 几个刻意的取舍，改动前请先读：
 
+- **记忆注入走 `systemPrompt.context`，是重写型而不是追加型**。DSH 每次请求重新物化动态上下文快照，等价 pi 的 `context` 事件：简报与召回并置同一快照，先前的快照被替换而不是叠加，因此不需要追加型三件套里的累计预算。只保留两道缓存——简报按 KB 指纹（`MEMORY.org` + `memories/` 的 mtime+size），召回按「指纹 + 最近用户消息」——未变时零 spawn 重放。召回 query 从 durable log 取最近一条 `source.kind === 'user'` 的消息，resume / 多标签天然隔离；`isSubagent` 会话返回空。上下文节设 `interpolate: false`，避免记忆正文里的 `{{...}}` 被当成 prompt 变量。
 - **健康度摘要走 system-prompt section，不走 `agent.followup()`**。`followup` 的语义是"排一个独立后续 turn 并**唤醒 driver**"——`agent/created` 时调用它，等于插件在用户开口前替用户"发言"，driver 被唤醒后模型把摘要当指令处理并回复（表现为"新会话一打开 agent 就自说自话"，已修）。背景知识类注入用 `ctx.systemPrompt.section()`，随每次请求进入 system prompt，不产生 turn。
 - **`agent.followup()` 只用于任务提示**（review/curate）。这两个投递点都**没有待执行的 step**；`steer` 只作用于「最近的 step」，会把消息停在 inbox 里等下一次唤醒。`followup` 才等价于 pi 的 `sendUserMessage({deliverAs:'followUp'})`。
 - **subagent 豁免**（`session.header.origin === 'subagent'`）。DSH 的 subagent 是同进程独立 agent，同一个插件实例会收到它们的事件：worker 的内部对话不该投 review 提示（污染 handoff），也不该各自武装 idle 计时器（大量委派时表现为 idle 兜底"反复触发"）。
@@ -105,6 +109,7 @@ profile 为 `patchReload: live` 时（web profile 默认如此），新 bundle �
 | ------------- | ----------------------------------------- | ---------------------------------------------------------------------- |
 | 形态          | 单文件 TS，运行时自动扫描                 | Cordis bundle（`package.json` + YAML patch），经 `plugin_manager` 安装 |
 | 健康度摘要    | pi-ui 欢迎框显示（不注入对话）            | `systemPrompt.section`（进入 system prompt，不产生 turn）              |
+| 记忆注入      | `context` 事件重写首条 user 消息          | `systemPrompt.context` 重写动态上下文快照（简报 + 召回同快照）         |
 | turn 收尾     | `agent_end`                               | `agent/turn-stopping`                                                  |
 | 任务提示投递  | `sendUserMessage({deliverAs:'followUp'})` | `agent.followup(createUserMessage(...))`                               |
 | subagent 守卫 | `isSubagentProcess()` 嗅探子进程 argv/env | `session.header.origin === 'subagent'`（持久化权威字段）               |

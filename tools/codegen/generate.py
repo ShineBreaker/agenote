@@ -183,6 +183,18 @@ def render_pi_timeout(spec: Spec) -> str:
     return f"const BRIEFING_TIMEOUT_MS = {spec.timeout('pi')};"
 
 
+def render_dsh_budgets(spec: Spec) -> str:
+    """dsh 重写型的简报 + 召回预算（两者同一快照，故各给一份）。"""
+    h = spec.host("dsh")
+    return "\n".join(
+        [
+            f"export const BRIEF_BUDGET = Number(process.env.AGENOTE_INJECTION_BRIEF_BUDGET || {h['brief']});",
+            f"export const RECALL_BUDGET = Number(process.env.AGENOTE_INJECTION_RECALL_BUDGET || {h['recall']});",
+            f"export const CLI_TIMEOUT_MS = {spec.timeout('dsh')};",
+        ]
+    )
+
+
 # ══════════════════════════════════════════════════════════════
 # 目标表
 # ══════════════════════════════════════════════════════════════
@@ -212,6 +224,11 @@ TARGETS: list[tuple[str, str, list[Block]]] = [
             ("timing.debounce", render_debounce_js),
             ("timing.idle", render_idle_js),
         ],
+    ),
+    (
+        "packages/dsh-agenote/lib.js",
+        "//",
+        [("hosts.dsh.budgets", render_dsh_budgets)],
     ),
     # —— zcode（ZCode 插件）——
     (
