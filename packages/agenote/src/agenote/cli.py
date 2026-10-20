@@ -574,7 +574,7 @@ def print_help() -> None:
             agenote context                                    会话简报（U→E→P→F→R 选集）
             agenote context --mode recall --query <词>          BM25 召回（带分数下限）
             选项: --budget N(字符) --project NAME --types U,F,P,E,R
-                  --host zcode|claude|codex|pi|opencode|hermes|generic --format text|json
+                  --host zcode|claude|codex|pi|opencode|hermes|dsh|generic --format text|json
             开关关/无条目时 text 零字节；json status=ok|empty|disabled
 
   reindex   重建知识库索引（WEIGHT 随之按 usage/新鲜度公式重算）
@@ -1361,6 +1361,8 @@ def _main() -> None:
         "distill", "reconcile", "extract",
     }
     # dream 保持只读：游标写在 run_dream 内自持 kb_lock，不进全局锁。
+    # inject 同样不进：状态文件在 ~/.cache/agenote/injectors/ 而非 KB 内，
+    # kb_lock 管不到它；写盘由 inject.py 的 mkstemp 原子替换自保证。
     if args.command == "get" and getattr(args, "used", False):
         MUTATING_COMMANDS.add("get")
 
