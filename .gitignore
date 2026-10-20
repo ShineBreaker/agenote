@@ -26,6 +26,9 @@ dist/
 .agents/*
 !.agents/skills/
 
+# 浏览器自动化工具（playwright-mcp）的运行产物
+.playwright-mcp/
+
 # pytest
 .pytest_cache/
 .zcode/plans/
