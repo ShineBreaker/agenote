@@ -8,6 +8,16 @@
 （布局与发布约定见仓库根 `docs/adr/0005-monorepo-unify-seven-components.md`），
 由 `<component>-v<version>` 形式的 tag 触发发布。
 
+## [0.1.1] - 2026-10-20
+
+`runKb` 只读调用补 `AGENOTE_AGENT=pi` 归因，与注入路径口径一致。
+
+---
+
+### Fixed
+
+- `runKb`（agenote-cli shim）补 `AGENOTE_AGENT=pi` env（98fa1d8）
+
 ## [0.1.0] - 2026-10-03
 
 ### Added
