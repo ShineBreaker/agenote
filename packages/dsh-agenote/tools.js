@@ -43,7 +43,7 @@ const WRITE_COMMANDS = [
   "restore",
   "deduplicate",
   "sweep",
-  // 捕获与批处理
+  // 捕获与批处理（dream 游标、reindex 索引写 ~/.cache 与 KB，均超出会话沙箱）
   "inbox",
   "inbox-archive",
   "distill",
@@ -54,6 +54,7 @@ const WRITE_COMMANDS = [
   // 记忆与库级操作
   "memory",
   "commit",
+  "reindex",
   "init",
   "format",
   "lint",

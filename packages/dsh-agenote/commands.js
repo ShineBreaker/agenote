@@ -19,7 +19,9 @@ export const Config = schema.object({
   enabled: schema.boolean(true),
 }, { default: {} });
 
-/** 提示注入用同一个投递路径（followup 排一轮后续 turn 并唤醒 driver）。 */
+/** 提示注入用同一个投递路径（followup 排一轮后续 turn 并唤醒 driver）。
+ * plugin 名必须落在 hooks.js PROMPT_SOURCES 里——手动触发由此计入「已触发」，
+ * 防抖与 idle 兜底靠 durable log 里的这个 source 名识别。 */
 function deliver(agent, text, plugin) {
   agent.followup(
     createUserMessage({

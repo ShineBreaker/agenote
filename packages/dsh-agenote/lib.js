@@ -23,8 +23,9 @@ export const BRIEF_BUDGET = Number(process.env.AGENOTE_INJECTION_BRIEF_BUDGET ||
 export const RECALL_BUDGET = Number(process.env.AGENOTE_INJECTION_RECALL_BUDGET || 4000);
 export const CLI_TIMEOUT_MS = 6000;
 // ─── END GENERATED: hosts.dsh.budgets ───
-// query 有效长度与截断上限（spec [append] 的镜像；CLI 侧仍是最终裁决）。
-export const MIN_QUERY = Number(process.env.AGENOTE_INJECTION_MIN_QUERY || 6);
+// query 有效长度与截断上限（CLI SCHEMA [injection].recall_min_query 的镜像；
+// env 名与 CLI 同源，单侧改阈值不会产生宿主/CLI 两层不一致；CLI 仍是最终裁决）。
+export const MIN_QUERY = Number(process.env.AGENOTE_INJECTION_RECALL_MIN_QUERY || 6);
 export const QUERY_MAX_CHARS = 200;
 
 // ─── CLI 调用 ───────────────────────────────────────────────────────────────

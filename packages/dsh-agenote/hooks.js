@@ -202,6 +202,16 @@ function isSubagent(agent) {
   return agent?.session?.header?.origin === "subagent";
 }
 
+// 「已注入过任务提示」的判据覆盖三个投递名：hooks 的自动提示与 commands
+// 的手动触发（/agenote-summarize、/agenote-curate）都算——手动跑过策展后
+// idle 兜底不该再补一条。tools.js 的纠偏提示（plugin:agenote-tools）
+// 不算任务触发，刻意不收进本集合。
+const PROMPT_SOURCES = new Set([
+  PLUGIN_SOURCE,
+  "agenote-summarize",
+  "agenote-curate",
+]);
+
 /**
  * 防抖与"本会话已触发过"的判定一律从 durable log 推导，不存内存标志。
  *
@@ -216,15 +226,15 @@ function deliveredByUs(session) {
   if (surface === undefined) return events;
   for (const seq of surface) {
     const event = session.eventAt(seq);
-    if (
-      event?.type === "user/message" &&
-      // source 形态：v3 旧日志 {kind:"plugin", plugin}；v4 {kind:"plugin:<名>"}
-      ((event.data?.source?.kind === "plugin" &&
-        event.data.source.plugin === PLUGIN_SOURCE) ||
-        event.data?.source?.kind === `plugin:${PLUGIN_SOURCE}`)
-    ) {
-      events.push(event);
-    }
+    if (event?.type !== "user/message") continue;
+    const source = event.data?.source;
+    // source 形态：v3 旧日志 {kind:"plugin", plugin:<名>}；v4 {kind:"plugin:<名>"}
+    const delivered =
+      (source?.kind === "plugin" && PROMPT_SOURCES.has(source.plugin)) ||
+      (typeof source?.kind === "string" &&
+        source.kind.startsWith("plugin:") &&
+        PROMPT_SOURCES.has(source.kind.slice(7)));
+    if (delivered) events.push(event);
   }
   return events;
 }
