@@ -45,6 +45,8 @@ function healthSummary() {
     out = spawnSync("agenote", ["health"], {
       encoding: "utf-8",
       timeout: 4000,
+      // F8 归因：只读调用也带，与本 hook 发给模型的规则口径一致。
+      env: { ...process.env, AGENOTE_AGENT: "zcode" },
     }).stdout;
   } catch {
     return "";
