@@ -48,9 +48,11 @@ cd packages/agenote && AGENOTE_CONTRACT_UPDATE=1 uv run pytest tests/test_contra
 
 ## 宿主适配
 
-四个插件（zcode / hermes / pi / dsh）职责**仅限**「事件触发 + 命令快捷入口」。
-行为规范由 `agenote-skills` 定义，知识库逻辑由 CLI 实现——两者都不在插件里重复。
-两处需联动修改时放进同一次 monorepo 提交，这是合仓的主要收益。
+四个插件（zcode / hermes / pi / dsh）职责**仅限**「事件触发 + 注入通道 + 命令快捷
+入口」。行为规范由 `agenote-skills` 定义，知识库逻辑由 CLI 实现——两者都不在插件里重复。
+**每个宿主应实现哪些功能、哪些项豁免、验证入口在哪，以
+[`docs/PLUGIN_CAPABILITIES.md`](docs/PLUGIN_CAPABILITIES.md) 为准**：改插件前先对照
+该表，改完同步矩阵。两处需联动修改时放进同一次 monorepo 提交，这是合仓的主要收益。
 
 - **`agenote-pi`**：单文件 TypeScript。omp 运行时自动扫描加载，无需构建、无需在
   `config.yml` 注册；`ExtensionAPI` 是全局类型无需 import。只读 CLI 查询走
@@ -61,9 +63,11 @@ cd packages/agenote && AGENOTE_CONTRACT_UPDATE=1 uv run pytest tests/test_contra
   `@deepseek-ai/*`**（`link:` 部署下解析不到 `$DSH_HOME/profiles/node_modules`）；需要
   上游纯函数就在 `lib.js` 复刻并注明出处。配置默认值单一真相源是导出的 `Config`
   schema，`apply()` 不做二次默认值或静默降级。
-- **追加型注入器**（zcode / claude / codex / hermes）共用三件套防上下文膨胀：
-  指纹未变不重注、recall 门槛、单会话累计预算。
-- **重写型**（opencode / pi）每请求幂等重写，只要简报预算。
+- **追加型注入器**（zcode / claude / codex / hermes）只做协议适配；三件套
+  （指纹去重、recall 门槛、单会话累计预算）与状态文件由 `agenote inject` 单一
+  实现——改行为改 CLI，不要在插件里补一份。
+- **重写型**（opencode / pi / dsh）每请求幂等重写，只要简报预算；宿主侧的指纹
+  缓存只为省一次 spawn，内容与最终裁剪仍由 CLI 决定。
 - 预算与阈值都在 `spec/injection.toml`，见 [§spec](#spec)。
 
 ## spec
@@ -223,7 +227,7 @@ python3 tools/codegen/generate.py --check && python3 tools/codegen/check.py
 
 # 各宿主适配器语法
 node --check packages/agenote-zcode/hooks/*.mjs
-cp packages/dsh-agenote/hooks.js /tmp/dsh-hooks.mjs && node --check /tmp/dsh-hooks.mjs
+for f in packages/dsh-agenote/*.js; do cp "$f" "/tmp/dsh-$(basename "${f%.js}").mjs"; node --check "/tmp/dsh-$(basename "${f%.js}").mjs"; done
 python3 -m py_compile packages/agenote-hermes/__init__.py
 cd packages/agenote-el && emacs -Q --batch -L . -l package -f batch-byte-compile *.el
 

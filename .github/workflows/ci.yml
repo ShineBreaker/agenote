@@ -75,9 +75,11 @@ jobs:
           set -euo pipefail
           for f in packages/agenote-zcode/hooks/*.mjs; do node --check "$f"; echo "  ok $f"; done
           # dsh 包是 "type": "module"，--check 按 CJS 解析会误报 export，
-          # 故复制成 .mjs 再检。
-          cp packages/dsh-agenote/hooks.js /tmp/dsh-hooks.mjs
-          node --check /tmp/dsh-hooks.mjs && echo "  ok packages/dsh-agenote/hooks.js"
+          # 故复制成 .mjs 再检。五个源文件全查（注入逻辑在 hooks.js + lib.js）。
+          for f in packages/dsh-agenote/*.js; do
+            cp "$f" "/tmp/dsh-$(basename "${f%.js}").mjs"
+            node --check "/tmp/dsh-$(basename "${f%.js}").mjs" && echo "  ok $f"
+          done
 
       - name: python 语法检查（hermes 插件）
         run: python3 -m py_compile packages/agenote-hermes/__init__.py
@@ -100,7 +102,7 @@ jobs:
           emacs -Q --batch -L . -l package -f batch-byte-compile *.el
 
   injectors:
-    name: 注入器离线自测（30 项断言）
+    name: 注入器离线自测（7 个宿主 section）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

@@ -33,6 +33,7 @@ dotfiles 仓 `Guix-configs` 通过钉版本锁文件消费本仓的发布产物�
 | 语义 | 真相源 |
 |---|---|
 | 跨宿主复制的信号 / 预算 / 时序 | `spec/injection.toml` |
+| 注入状态机（指纹 / 门槛 / 累计 / 状态文件） | `agenote inject`（`packages/agenote/src/agenote/inject.py`） |
 | CLI 的配置键与默认值 | `packages/agenote/src/agenote/config.py` 的 `SCHEMA` |
 | 各插件的 Config schema 默认值 | 各包导出的 `Config` 声明 |
 | 行为规范（写入流程 / 卡片格式 / 策展策略） | `packages/agenote-skills/*/SKILL.md`——文档即载体，改策略不该发版 |
@@ -55,10 +56,10 @@ dotfiles 仓 `Guix-configs` 通过钉版本锁文件消费本仓的发布产物�
 
 - **跑 CLI 带 `AGENOTE_AGENT=<宿主>`**（`AGENOTE_AGENT=zcode agenote ...`），否则卡片
   归因会落到默认 agent（`omp`）。该变量只打标签，不做写入隔离。
-- **`min_query` 两处不等值是设计，不是漂移**：`spec/injection.toml` 的
-  `[append].min_query = 6` 对应 CLI 的 `recall_min_query`，两边仅通过 env
-  （`AGENOTE_INJECTION_MIN_QUERY`）联动。**CLI 侧始终是最终裁决**，注入器那道门槛只为
-  省一次 spawn。改 `config.toml` 时不必同步它。
+- **注入策略只有 CLI 一份实现**：指纹缓存、recall 门槛、单会话累计预算与状态
+  文件都在 `agenote inject`（`packages/agenote/src/agenote/inject.py`），参数真相源
+  是 CLI SCHEMA 的 `[injection]` 节。宿主插件只传事件与预算——发现问题改 CLI，
+  不要在某个注入器里补一份同名逻辑（ADR 0005 的复制债就是这么长出来的）。
 - **tag 漏推 = GitHub 无 Release**：`release.yml` 认 `on: push: tags`，漏推则远端无
   tag 事件、workflow 根本不跑，而本地一切正常。**每次发版必做自查**：
   `git ls-remote --tags origin | grep <tag>` 确认远端 tag 存在。
