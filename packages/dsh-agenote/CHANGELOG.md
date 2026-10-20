@@ -5,12 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.3] - 2026-10-20
+
+记忆简报与按最近用户消息的每轮召回进入 `systemPrompt.context` 动态上下文
+快照——DSH 侧拿到与 pi / zcode / hermes 对等的记忆注入；顺带修掉纠偏
+白名单、防抖识别与 env 名三处小坑。
+
+---
 
 ### Added
 
-- 记忆注入（`systemPrompt.context`）：会话简报（`--mode session`）与按最近用户消息的召回（`--mode recall`）写进同一动态上下文快照，重写型无累积风险；简报按「会话 cwd + KB 指纹」、召回按「指纹 + query」缓存（cwd 决定简报的项目段，多项目会话不得共用单槽），未变时零 spawn。新增 `hooks.brief` / `hooks.recall` 开关。补齐与 pi / zcode / hermes 的功能对等。
-- 功能基线文档 `docs/PLUGIN_CAPABILITIES.md`：11 项插件功能、7 个宿主对照与豁免记录；`spec/injection.toml` 增补 `[hosts.dsh]` 预算。
+- 记忆注入（`systemPrompt.context`）：会话简报（`--mode session`）与按最近用户消息的召回（`--mode recall`）写进同一动态上下文快照，重写型无累积风险；简报按「会话 cwd + KB 指纹」、召回按「指纹 + query」缓存（cwd 决定简报的项目段，多项目会话不得共用单槽），未变时零 spawn。新增 `hooks.brief` / `hooks.recall` 开关。补齐与 pi / zcode / hermes 的功能对等。（0f2a881 / 0f6d7e3）
+- 功能基线文档 `docs/PLUGIN_CAPABILITIES.md`：11 项插件功能、7 个宿主对照与豁免记录；`spec/injection.toml` 增补 `[hosts.dsh]` 预算。（1b7382c / 0f2a881）
+
+### Fixed
+
+- **`MIN_QUERY` 幻影 env 名**：改读 `AGENOTE_INJECTION_RECALL_MIN_QUERY`，与 CLI SCHEMA 同源——原名 CLI 从不读取，单侧设阈值会让宿主预筛与 CLI 裁决不一致。（2ac10aa）
+- **`agenote_write` 白名单缺 `reindex`**：策展流程第 5 步要跑它，索引写在沙箱外路径，bash 直下会被围栏拦。（2ac10aa）
+- **手动 `/agenote-summarize` / `/agenote-curate` 不计入「已触发」**：`deliveredByUs` 改认三个投递名，手动策展后 idle 兜底不再补一条。（2ac10aa）
 
 ## [0.1.2] - 2026-10-20
 
