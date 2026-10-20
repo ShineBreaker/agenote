@@ -73,7 +73,8 @@ from agenote.curator import (
 )
 from agenote.inbox_archive import cmd_inbox_archive
 from agenote.memory import cmd_memory
-from agenote.context import cmd_context
+from agenote.context import HOSTS, cmd_context
+from agenote.inject import cmd_inject
 from agenote.lint import cmd_lint
 from agenote.orgfmt import cmd_format
 from agenote.health import CARD_STALE_DAYS, cmd_health, cmd_gaps
@@ -958,13 +959,42 @@ def _main() -> None:
     )
     context_parser.add_argument(
         "--host",
-        choices=["zcode", "claude", "codex", "pi", "opencode", "hermes", "generic"],
+        choices=[*HOSTS, "generic"],
         default="generic",
         help="调用方宿主（查 [injection.hosts] 开关；generic 走默认值）",
     )
     context_parser.add_argument(
         "--format", choices=["text", "json"], default="text",
         help="text=注入正文（非 ok 态零字节）；json=带 status 的结构化输出",
+    )
+
+    # ── inject ───────────────────────────────────────────────────────────
+    # 追加型注入器的单一状态机：指纹缓存 / 三件套 / 状态文件都在 CLI 内，
+    # 宿主插件只读事件、调本命令、把 content 封给宿主协议（ADR 0005 复制债）。
+    inject_parser = subparsers.add_parser(
+        "inject", help="状态化注入决策（逐轮回忆与简报缓存；宿主插件调用）"
+    )
+    inject_parser.add_argument(
+        "--host", choices=[*HOSTS, "generic"], default="generic",
+        help="调用方宿主（查 [injection.hosts] 开关；generic 走默认值）",
+    )
+    inject_parser.add_argument(
+        "--session-id", default="", help="宿主会话 id（缺省退化为按宿主单文件）",
+    )
+    inject_parser.add_argument(
+        "--event", choices=["session", "prompt"], default="session",
+        help="session=会话边界（重置 + 简报缓存）；prompt=每轮通道（三件套）",
+    )
+    inject_parser.add_argument(
+        "--prompt", default="", help="prompt 事件必填：本轮用户消息",
+    )
+    inject_parser.add_argument(
+        "--budget", type=int, default=None,
+        help="单次注入预算（宿主按 spec 传入；缺省取 [injection].default_budget）",
+    )
+    inject_parser.add_argument(
+        "--format", choices=["text", "json"], default="text",
+        help="text=注入正文（非 inject 态零字节）；json=带 status/action/cached",
     )
 
     # ── reindex ───────────────────────────────────────────────────────────
@@ -1376,6 +1406,8 @@ def _main() -> None:
         "scan-memories": cmd_scan_memories,
         # 注入简报（只读，免锁；不进 MUTATING_COMMANDS）
         "context": cmd_context,
+        # 状态化注入决策（写注入状态缓存，不写知识库；免 KB 锁）
+        "inject": cmd_inject,
     }
     if args.command in commands:
         # 初始化上下文、确保目录和读取参数都在同一公共错误边界内；否则
@@ -1394,7 +1426,7 @@ def _main() -> None:
             # init 自举目录；config/completions 纯配置产物；context 只读免锁——
             # 三者外加豁免 ensure_dirs：全新 KB 首跑不得写出骨架（C1 零写盘副作用）
             if ctx is not None and args.command not in (
-                "init", "config", "completions", "context",
+                "init", "config", "completions", "context", "inject",
             ):
                 ensure_dirs(ctx)
         except SystemExit:

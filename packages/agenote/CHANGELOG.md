@@ -6,6 +6,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`agenote inject` 子命令**：状态化注入决策（`--event session|prompt`），把指纹缓存、recall 门槛、单会话累计预算、状态文件与会话重置收成 CLI 的单一实现。此前这套三件套在 bash / JS / Python 四份副本里各写一遍（ADR 0005 记录的复制债），行为漂移只能靠人工同步。注入器退化为协议适配层，只传事件与预算。
+- **`[injection.hosts].dsh_enabled`**：DSH 宿主的 per-host 语义开关（`AGENOTE_INJECTION_HOSTS_DSH_ENABLED`）。
+
 ## [0.2.1] - 2026-10-12
 
 记忆质量门禁三件套：出处溯源、KB 链接完整性检查、记忆条目预算控制——参照 Cognition agent-memory-repo，把记忆质量押在读写纪律而非检索算法。

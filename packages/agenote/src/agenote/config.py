@@ -296,6 +296,9 @@ SCHEMA: dict[str, dict[str, Key]] = {
         "hermes_enabled": Key(
             True, env="AGENOTE_INJECTION_HOSTS_HERMES_ENABLED", comment="hermes 注入开关",
         ),
+        "dsh_enabled": Key(
+            True, env="AGENOTE_INJECTION_HOSTS_DSH_ENABLED", comment="DSH 注入开关",
+        ),
     },
     "reconcile": {
         "min_fact_len": Key(15, comment="事实最短长度（更短视为噪声，dream 同用）"),

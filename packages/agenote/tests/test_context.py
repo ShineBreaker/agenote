@@ -200,6 +200,11 @@ def test_host_switch_chain(kb, monkeypatch):
     assert build_context_result(_args(host="zcode"), kb)["status"] == "disabled"
     assert build_context_result(_args(host="generic"), kb)["status"] == "ok"
     assert build_context_result(_args(host="hermes"), kb)["status"] == "ok"
+    assert build_context_result(_args(host="dsh"), kb)["status"] == "ok"
+    # per-host 开关对新增宿主同样生效（dsh 不是 generic 的别名）
+    monkeypatch.setenv("AGENOTE_INJECTION_HOSTS_DSH_ENABLED", "false")
+    assert build_context_result(_args(host="dsh"), kb)["status"] == "disabled"
+    monkeypatch.delenv("AGENOTE_INJECTION_HOSTS_DSH_ENABLED")
     # 总开关优先于 host 开关
     monkeypatch.setenv("AGENOTE_INJECTION_ENABLED", "false")
     monkeypatch.setenv("AGENOTE_INJECTION_HOSTS_HERMES_ENABLED", "true")

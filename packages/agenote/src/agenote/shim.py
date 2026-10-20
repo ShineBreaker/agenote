@@ -19,7 +19,8 @@ import argparse
 import sys
 
 from agenote.core import agenote_context, ensure_dirs, safe_error_message
-from agenote.context import cmd_context
+from agenote.context import HOSTS, cmd_context
+from agenote.inject import cmd_inject
 from agenote.health import cmd_health
 
 
@@ -69,7 +70,7 @@ def _main() -> None:
     )
     context_parser.add_argument(
         "--host",
-        choices=["zcode", "claude", "codex", "pi", "opencode", "hermes", "generic"],
+        choices=[*HOSTS, "generic"],
         default="generic",
         help="调用方宿主（查 [injection.hosts] 开关；generic 走默认值）",
     )
@@ -77,12 +78,40 @@ def _main() -> None:
         "--format", choices=["text", "json"], default="text",
         help="text=注入正文（非 ok 态零字节）；json=带 status 的结构化输出",
     )
+    # inject：状态化注入决策（参数集与 cli.py 对齐，转发同一 cmd_inject）。
+    inject_parser = sub.add_parser(
+        "inject", help="状态化注入决策（逐轮回忆与简报缓存；宿主插件调用）"
+    )
+    inject_parser.add_argument(
+        "--host", choices=[*HOSTS, "generic"], default="generic",
+        help="调用方宿主（查 [injection.hosts] 开关；generic 走默认值）",
+    )
+    inject_parser.add_argument(
+        "--session-id", default="", help="宿主会话 id（缺省退化为按宿主单文件）",
+    )
+    inject_parser.add_argument(
+        "--event", choices=["session", "prompt"], default="session",
+        help="session=会话边界（重置 + 简报缓存）；prompt=每轮通道（三件套）",
+    )
+    inject_parser.add_argument("--prompt", default="", help="prompt 事件必填：本轮用户消息")
+    inject_parser.add_argument(
+        "--budget", type=int, default=None,
+        help="单次注入预算（宿主按 spec 传入；缺省取 [injection].default_budget）",
+    )
+    inject_parser.add_argument(
+        "--format", choices=["text", "json"], default="text",
+        help="text=注入正文（非 inject 态零字节）；json=带 status/action/cached",
+    )
     args = parser.parse_args()
 
     if args.cmd == "context":
         # 与主 CLI 同口径：context 走 agenote 域、只读免锁、不 ensure_dirs
         # （全新 KB 按 empty 处理，零写盘副作用）。
         cmd_context(args, agenote_context())
+        return
+    if args.cmd == "inject":
+        # 状态缓存写在 ~/.cache，不碰 KB；同样不 ensure_dirs（新旧 KB 都可用）。
+        cmd_inject(args, agenote_context())
         return
 
     ctx = agenote_context()

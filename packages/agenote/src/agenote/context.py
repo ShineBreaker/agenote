@@ -44,7 +44,7 @@ from agenote.orgserde import parse_memory_date
 from agenote.ranking import BM25, tokenize
 
 MARKER_VERSION = "v1"  # 代码常量：marker 版本（不进配置、无时间戳）
-HOSTS = ("zcode", "claude", "codex", "pi", "opencode", "hermes")
+HOSTS = ("zcode", "claude", "codex", "pi", "opencode", "hermes", "dsh")
 ENTRY_TYPES = ("U", "F", "P", "E", "R")
 # 预算裁剪的「先裁」顺序（保头降级：U 画像最后裁）
 TRIM_ORDER = ("R", "F", "P", "E", "U")

@@ -53,6 +53,7 @@ COMMANDS: dict[str, str] = {
     "extract": "跨 agent 对话抽取为 Org 文件",
     "scan-memories": "只读扫描各 agent 记忆库",
     "context": "生成注入简报（只读免锁）",
+    "inject": "状态化注入决策（宿主插件调用）",
     "completions": "生成 shell 补全脚本",
 }
 
