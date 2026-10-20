@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import threading
 
 import pytest
@@ -120,6 +121,109 @@ def test_kb_lock_mutual_exclusion(tmp_path):
     # 释放后可再次获得
     with kb_lock(lock, timeout=1.0):
         pass
+
+
+# ── 锁文件位置与只读共享锁（只读文件系统 / 沙箱下的可用性）────────────────────
+
+
+def test_write_lock_creates_lock_file_in_kb(tmp_path):
+    """写锁文件在 KB 内：同一 KB 的所有进程天然同 inode（跨 env / 用户不分裂）。"""
+    kb = tmp_path / "kb"
+    kb.mkdir()
+    with kb_lock(kb / ".agenote.lock"):
+        assert (kb / ".agenote.lock").exists()
+
+
+def test_shared_lock_does_not_create_lock_file(tmp_path):
+    """只读命令不创建锁文件（只读文件系统上 O_CREAT 会 EROFS）。"""
+    kb = tmp_path / "kb"
+    kb.mkdir()
+    with kb_lock(kb / ".agenote.lock", shared=True):
+        pass
+    assert list(kb.iterdir()) == []
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root 无视目录权限，模拟不了只读 KB")
+def test_shared_lock_on_readonly_kb(tmp_path):
+    """只读 KB（chmod 555、无锁文件）上共享锁免锁放行，且不写 KB。"""
+    kb = tmp_path / "kb"
+    kb.mkdir()
+    kb.chmod(0o555)
+    try:
+        with kb_lock(kb / ".agenote.lock", shared=True):
+            pass
+    finally:
+        kb.chmod(0o755)
+    assert list(kb.iterdir()) == []
+
+
+def test_shared_lock_opens_existing_lock_file(tmp_path):
+    """锁文件已存在时只读命令取共享锁（走真实 flock 路径，不总是免锁）。"""
+    kb = tmp_path / "kb"
+    kb.mkdir()
+    with kb_lock(kb / ".agenote.lock"):
+        pass  # 写者创建锁文件后释放
+    with kb_lock(kb / ".agenote.lock", shared=True, timeout=1.0):
+        pass
+
+
+def test_writer_blocks_shared_lock(tmp_path):
+    """写者持独占锁时共享锁按超时失败：只读命令不会绕过正在写入的临界区。"""
+    kb = tmp_path / "kb"
+    kb.mkdir()
+    acquired = threading.Event()
+    release = threading.Event()
+
+    def holder():
+        with kb_lock(kb / ".agenote.lock"):
+            acquired.set()
+            release.wait(timeout=5)
+
+    t = threading.Thread(target=holder)
+    t.start()
+    assert acquired.wait(timeout=5)
+    try:
+        with pytest.raises(TimeoutError):
+            with kb_lock(kb / ".agenote.lock", shared=True, timeout=0.1):
+                pass
+    finally:
+        release.set()
+        t.join(timeout=5)
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root 无视目录权限，模拟不了只读 KB")
+def test_write_lock_on_readonly_kb_raises(tmp_path):
+    """只读 KB 上写锁无法创建锁文件：写命令本就不能工作，直接暴露 EROFS/EACCES。"""
+    import errno
+
+    kb = tmp_path / "kb"
+    kb.mkdir()
+    kb.chmod(0o555)
+    try:
+        with pytest.raises(OSError) as exc:
+            with kb_lock(kb / ".agenote.lock"):
+                pass
+        assert exc.value.errno in (errno.EROFS, errno.EACCES)
+    finally:
+        kb.chmod(0o755)
+
+
+def test_atomic_write_failure_reports_target_path(tmp_path, monkeypatch):
+    """写入失败的报错路径是用户目标，而不是内部 .tmp- 文件名。"""
+    import errno
+
+    target = tmp_path / "kb" / "agent" / "card.org"
+    target.parent.mkdir(parents=True)
+    monkeypatch.setattr("agenote.core.KB_ROOT", tmp_path)
+
+    def boom(src, dst):
+        raise OSError(errno.EROFS, "Read-only file system", str(src))
+
+    monkeypatch.setattr("agenote.safeio.os.replace", boom)
+    with pytest.raises(OSError) as exc:
+        atomic_write(target, "内容")
+    assert exc.value.filename == str(target)
+    assert ".tmp-" not in str(exc.value.filename)
 
 
 # ── kb_lock 超时配置化（[safeio].lock_timeout_seconds）─────────────────────────

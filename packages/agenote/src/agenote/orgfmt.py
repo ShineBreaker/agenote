@@ -28,6 +28,7 @@
   9. _normalize_blank_lines — 空行规则（最后跑，基于已规范化的结构）
 """
 
+import errno
 import os
 import re
 import sys
@@ -130,8 +131,11 @@ def cmd_format(args, ctx=None) -> None:
         try:
             changes = format_file(filepath, strict=True, dry_run=do_check)
         except OSError as exc:
+            # 带 errno 名与真实路径：只读 KB / 沙箱下「读取或写入失败」必须可定位
+            code = errno.errorcode.get(exc.errno, type(exc).__name__)
+            where = f"（{exc.filename}）" if exc.filename else ""
             print(
-                f"错误 {filepath}: 读取或写入失败（{type(exc).__name__}）",
+                f"错误 {filepath}: 读取或写入失败（{code}）{where}",
                 file=sys.stderr,
             )
             failed_files += 1

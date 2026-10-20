@@ -5,7 +5,10 @@
 
 移植自 claude-obsidian 的「崩溃后可确定性恢复」哲学（裁剪版）：
 - atomic_write：同目录 tmp → fsync → os.replace，写一半崩溃不留半文件
-- kb_lock：fcntl.flock 独占锁 + 超时退出，多 agent 并发 CLI 调用互斥
+- kb_lock：fcntl.flock 进程锁（写调用独占 / 只读调用共享）+ 超时退出，多 agent 并发 CLI 调用互斥
+
+锁文件在 KB 内（`<KB 根>/.agenote.lock`）：同一 KB 的所有进程天然落在同一
+inode 上互斥；只读调用不创建锁文件，锁文件不存在时免锁（见 kb_lock）。
 
 agenote 是单命令即时写入；跨文件读改写由调用方用 restore_text_files() 做补偿，
 单文件写入本身由 atomic_write() 保证不留半文件。KB 自身的 git 仓库是最终备份层。
@@ -64,8 +67,12 @@ def _atomic_replace_bytes(path: Path, data: bytes) -> None:
     try:
         # tmp 写入后 rename：崩溃窗口最坏丢整次写入（回退旧内容），不会留半文件。
         # 不做 fsync：物理持久性由 KB git 兜底，个人工具不值得为此复杂化。
-        tmp.write_bytes(data)
-        os.replace(tmp, path)
+        try:
+            tmp.write_bytes(data)
+            os.replace(tmp, path)
+        except OSError as exc:
+            # 报错路径必须是用户目标：内部 tmp 事后会被清掉，用户拿它无法定位。
+            raise OSError(exc.errno, exc.strerror, str(path)) from exc
     except BaseException:
         try:
             tmp.unlink(missing_ok=True)
@@ -137,22 +144,44 @@ class KBLockTimeoutError(TimeoutError):
 
 
 @contextlib.contextmanager
-def kb_lock(lock_path: Path, timeout: float | None = None) -> Iterator[None]:
-    """进程级互斥锁：fcntl.flock 独占，等待超时抛 KBLockTimeoutError 而非死等。
+def kb_lock(
+    lock_path: Path, timeout: float | None = None, *, shared: bool = False
+) -> Iterator[None]:
+    """进程级互斥锁：fcntl.flock，等待超时抛 KBLockTimeoutError 而非死等。
 
     timeout 未显式传时运行时读配置 [safeio].lock_timeout_seconds——不可用
     默认参数绑定 LOCK_TIMEOUT_SECONDS（定义时求值会把值焊死在函数对象上，
     env/配置覆盖随之失效）。
+
+    锁文件固定在 KB 内（调用方传 <KB 根>/.agenote.lock）：同一 KB 的所有进程
+    ——不论 env / cwd / 用户 / 挂载路径——都落在同一 inode 上，互斥不分裂。
+    （曾尝试移出 KB 到运行时目录，但锁目录按环境变量选择会让混合 env 的进程
+    静默拿到两把不同的锁，属数据完整性回归，已放弃。）
+
+    shared=True 供只读命令使用：O_RDONLY 打开**已存在**的锁文件取 LOCK_SH，
+    不创建锁文件——只读文件系统（沙箱 / 只读挂载）上 O_CREAT 会 EROFS。锁文件
+    不存在说明尚无写者建立临界区，直接免锁：单文件由 atomic_write 整文件替换
+    保证不读半文件；跨文件视图在首个写者出现前可能有短暂混合窗口（取舍，见
+    CHANGELOG）。写调用仍 O_CREAT + LOCK_EX，在只读 KB 上由 EROFS 直接暴露。
     """
     if timeout is None:
         timeout = _lock_timeout_from_config()
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+    if shared:
+        try:
+            fd = os.open(lock_path, os.O_RDONLY)
+        except OSError:
+            # 只读免锁：锁文件不存在（尚无写者）或不可读，均不阻断读操作
+            yield
+            return
+    else:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
     deadline = time.monotonic() + timeout
     try:
+        mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
         while True:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fd, mode | fcntl.LOCK_NB)
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:

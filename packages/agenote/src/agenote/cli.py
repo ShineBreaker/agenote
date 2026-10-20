@@ -123,6 +123,10 @@ def cmd_init(args: argparse.Namespace, ctx=None) -> None:
 
     # 创建目录和模板文件（复用 ensure_dirs 逻辑）
     ensure_dirs(ctx)
+    # ensure_dirs 在只读文件系统上降级跳过；init 是写命令，必须确认骨架真落盘，
+    # 否则会打印「已创建」而实际什么都没写（假成功）。
+    if not (ctx.experiences.is_dir() and ctx.memories.is_dir()):
+        die(f"目录结构创建失败（KB 不在可写范围？）: {root}")
     print(f"目录结构已创建: {root}")
 
     # git 初始化（默认启用，--no-git 跳过）
@@ -583,7 +587,7 @@ def print_help() -> None:
   lint      格式校验与报告（格式问题 + 语义问题：枚举漂移、缺失字段）
             agenote lint                 检查所有卡片（格式 + 语义）
             agenote lint --fix           自动修复可安全自动化的（= format）
-            agenote lint --check         仅检查，退出码=问题数（CI 用）
+            agenote lint --check         仅检查，退出码 1=有问题 / 0=干净（CI 用）
             agenote lint --fix file.org  修复指定文件
 
   format   格式化卡片（默认直接写盘，agent 写完卡片调用一次即可）
@@ -693,6 +697,54 @@ def print_help() -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 # 主入口
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _read_only_invocation(args: argparse.Namespace) -> bool:
+    """MUTATING_COMMANDS 中按参数只读的调用形态。
+
+    lint/format/commit 的写路径需要独占锁，但检查模式（lint 无 --fix、
+    format --check、commit --dry-run）只读 KB。
+    """
+    if args.command == "lint":
+        return not args.fix
+    if args.command == "format":
+        return bool(getattr(args, "check", False))
+    if args.command == "commit":
+        return bool(getattr(args, "dry_run", False))
+    return False
+
+
+# 纯只读命令：不进 MUTATING_COMMANDS（因此不持 KB 锁），也不写 KB。只读调用
+# 跳过 ensure_dirs 的骨架自愈——只读文件系统（沙箱 / 只读挂载）上建骨架会挂掉。
+_PURE_READ_COMMANDS = {
+    "list", "search", "fields", "tags", "stats", "health", "gaps",
+    "doctor", "trace", "review", "deduplicate", "scan-memories",
+}
+
+
+def _read_only_kb_invocation(args: argparse.Namespace) -> bool:
+    """本次调用是否只读 KB（不写任何文件）。
+
+    用途一：跳过 ensure_dirs 的骨架自愈（只读命令不得因建骨架失败而挂）。
+    用途二：MUTATING_COMMANDS 里的检查形态（lint 无 --fix、format --check、
+    commit --dry-run）取共享锁而非独占锁。
+
+    未识别的命令按写调用处理——宁可多建骨架，也不漏锁。注意 memory --export
+    不在只读之列：它在 AGENOTE_ROOT 内读改写 `.memory-export.json`。
+    """
+    if args.command in _PURE_READ_COMMANDS:
+        return True
+    if args.command == "get":
+        return not getattr(args, "used", False)
+    if args.command == "memory":
+        return bool(
+            getattr(args, "list", False)
+            or getattr(args, "conflicts", False)
+            or getattr(args, "get", False)
+        )
+    if args.command in ("lint", "format", "commit"):
+        return _read_only_invocation(args)
+    return False
 
 
 def main() -> None:
@@ -1008,7 +1060,7 @@ def _main() -> None:
         "--fix", action="store_true", help="自动修复可安全自动化的（= format）"
     )
     lint_parser.add_argument(
-        "--check", action="store_true", help="仅检查，退出码=min(问题数,127)"
+        "--check", action="store_true", help="仅检查，退出码 1=有问题 / 0=干净"
     )
     lint_parser.add_argument(
         "--json", action="store_true", help="分类结构化输出（agent 可消费、可差分）"
@@ -1425,10 +1477,15 @@ def _main() -> None:
                 args._cross_domain = True
             else:
                 ctx = agenote_context()
-            # init 自举目录；config/completions 纯配置产物；context 只读免锁——
-            # 三者外加豁免 ensure_dirs：全新 KB 首跑不得写出骨架（C1 零写盘副作用）
-            if ctx is not None and args.command not in (
-                "init", "config", "completions", "context", "inject",
+            # init 自举目录；config/completions 纯配置产物；context 只读免锁；
+            # inject 只写 KB 外状态文件——均豁免 ensure_dirs。只读调用同样豁免：
+            # 骨架自愈是写路径的前提，不能把只读命令拖成写命令（只读 KB 上
+            # 建目录/骨架会 EACCES/EROFS 直接挂掉）。
+            if (
+                ctx is not None
+                and args.command
+                not in ("init", "config", "completions", "context", "inject")
+                and not _read_only_kb_invocation(args)
             ):
                 ensure_dirs(ctx)
         except SystemExit:
@@ -1449,7 +1506,10 @@ def _main() -> None:
                 args.command == "memory" and bool(getattr(args, "export", False))
             )
             if args.command in MUTATING_COMMANDS and not no_lock:
-                with kb_lock(agenote_context().root / ".agenote.lock"):
+                with kb_lock(
+                    agenote_context().root / ".agenote.lock",
+                    shared=_read_only_kb_invocation(args),
+                ):
                     command(args, ctx)
             else:
                 command(args, ctx)

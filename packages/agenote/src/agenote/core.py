@@ -4,6 +4,7 @@
 
 """kb_core — 知识库核心模块：常量、工具函数、索引管理、Org 解析、搜索辅助"""
 
+import errno
 import json
 import re
 import sys
@@ -385,6 +386,26 @@ class ReconcileIndexError(PublicError):
     """reconcile 索引损坏或结构非法。"""
 
 
+def _os_error_message(exc: OSError) -> str:
+    """OSError 的可操作说明：errno 名 + 调用方传入的路径，只读/无权限单列提示。
+
+    只取 errno 名与 exc.filename（均由本进程传入，不含外部命令输出），不转发
+    异常正文；无 errno 的 OSError（如 SafeReadError）仍由调用方按类型脱敏。
+    """
+    code = (
+        errno.errorcode.get(exc.errno, type(exc).__name__)
+        if exc.errno
+        else type(exc).__name__
+    )
+    where = f"：{exc.filename}" if exc.filename else ""
+    if exc.errno in (errno.EROFS, errno.EACCES, errno.EPERM):
+        # 只读挂载 / 沙箱文件策略 / 目录权限不足——三类都表现为写盘失败。
+        # 措辞不写死「KB」：注入缓存（~/.cache）、viz --output、extract 输出
+        # 目录都在 KB 外，路径本身已能说明是哪个目标。
+        return f"不在可写范围（{code}）{where}"
+    return f"操作失败（{type(exc).__name__} {code}）{where}"
+
+
 def safe_error_message(exc: BaseException) -> str:
     """只向公共边界暴露受控错误或异常类型，不转发内部异常正文。"""
     if isinstance(exc, PublicError):
@@ -393,6 +414,10 @@ def safe_error_message(exc: BaseException) -> str:
         # 锁超时消息由代码自生成（等待时长 + 持锁提示），是可操作的用户提示
         # 而非内部信息，完整透出；其余未知异常维持脱敏。
         return str(exc)
+    if isinstance(exc, OSError) and exc.errno is not None:
+        # 文件系统错误带 errno 才有诊断价值（EROFS/EACCES 等）；裸 OSError
+        # 的 errno 为 None，维持类型名脱敏。
+        return _os_error_message(exc)
     return f"操作失败（{type(exc).__name__}）"
 
 
@@ -453,31 +478,42 @@ def _init_memory_template_for_ctx(ctx: "KBContext") -> None:
 
 
 def ensure_dirs(ctx: "KBContext | None" = None) -> None:
-    """确保知识库目录和基础文件存在。
+    """确保知识库目录和基础文件存在（尽力而为）。
 
     自愈机制：所有目录和模板文件在缺失时自动重建。
     删除任意文件或整个 KB_ROOT 后重新运行 kb 命令即可恢复骨架。
     注意：仅重建结构，不恢复卡片内容。
+
+    只读文件系统（沙箱 / 只读挂载）上自愈必然失败：跳过而不是抛出——只读
+    命令（list/stats/health/lint --check 等）不得因骨架自愈失败而挂掉；写命令
+    随后在真正的写盘点报 EROFS/EACCES（safe_error_message 带 errno 与路径）。
     """
     ctx = ctx or default_context()
-    # ── 目录 ────────────────────────────────────────────────────────────────
-    ctx.experiences.mkdir(parents=True, exist_ok=True)
-    ctx.memories.mkdir(parents=True, exist_ok=True)
-    ctx.projects.mkdir(parents=True, exist_ok=True)
+    try:
+        # ── 目录 ────────────────────────────────────────────────────────────
+        ctx.experiences.mkdir(parents=True, exist_ok=True)
+        ctx.memories.mkdir(parents=True, exist_ok=True)
+        ctx.projects.mkdir(parents=True, exist_ok=True)
 
-    # ── inbox.org ──────────────────────────────────────────────────────────
-    if not ctx.inbox.exists():
-        atomic_write(ctx.inbox, f"#+title: inbox\n#+date: [{now()}]\n\n")
+        # ── inbox.org ───────────────────────────────────────────────────────
+        if not ctx.inbox.exists():
+            atomic_write(ctx.inbox, f"#+title: inbox\n#+date: [{now()}]\n\n")
 
-    # ── MEMORY.org（含所有标准节）──────────────────────────────────────────
-    if not ctx.memory_org.exists():
-        _init_memory_template_for_ctx(ctx)
+        # ── MEMORY.org（含所有标准节）──────────────────────────────────────
+        if not ctx.memory_org.exists():
+            _init_memory_template_for_ctx(ctx)
 
-    # ── index.json（空索引）────────────────────────────────────────────────
-    if not ctx.index.exists():
-        from agenote.index import _save_index  # lazy：core 顶层不依赖 index（避免循环）
+        # ── index.json（空索引）────────────────────────────────────────────
+        if not ctx.index.exists():
+            from agenote.index import _save_index  # lazy：core 顶层不依赖 index（避免循环）
 
-        _save_index({"version": 1, "updated": "", "total": 0, "cards": []}, ctx)
+            _save_index({"version": 1, "updated": "", "total": 0, "cards": []}, ctx)
+    except OSError as exc:
+        # 只读挂载 / 沙箱文件策略：骨架自愈不是读写的前提，跳过，写命令在真正的
+        # 写点报 EROFS/EACCES。其余文件系统故障（ENOSPC / ENOTDIR / EMFILE 等）
+        # 照常抛出——吞掉它们会把写失败静默成「成功」。
+        if exc.errno not in (errno.EROFS, errno.EACCES, errno.EPERM):
+            raise
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

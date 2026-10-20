@@ -42,7 +42,8 @@ dotfiles 仓 `Guix-configs` 通过钉版本锁文件消费本仓的发布产物�
 ## 3. 全仓铁律
 
 - **落盘**：`safeio.atomic_write` + `kb_lock`（fcntl.flock，默认 10s 超时，可在
-  `[safeio].lock_timeout_seconds` 覆盖）。
+  `[safeio].lock_timeout_seconds` 覆盖）。锁文件在 `<KB>/.agenote.lock`；只读调用
+  不创建锁文件（不存在即免锁），`ensure_dirs` 在只读文件系统上降级跳过。
 - **配置**：只改 `config.py` 的 `SCHEMA`，其他模块从 schema 读。
 - **生成块**：`COMPLETION_SIGNALS` 等 `BEGIN`/`END` 标记之间的内容由
   `tools/codegen/generate.py` 从 spec 写入。改语义改 spec 再重新生成；生成物随仓提交

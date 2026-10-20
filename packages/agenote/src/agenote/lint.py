@@ -14,7 +14,7 @@
 命令形态：
   - agenote lint            报告格式 + 语义问题
   - agenote lint --fix      只自动修可安全自动化的（= 调 format_org）
-  - agenote lint --check    报告 + 退出码=问题数（CI/pre-commit 用）
+  - agenote lint --check    报告 + 退出码 1=有问题 / 0=干净（CI/pre-commit 用）
 """
 
 import argparse
@@ -52,7 +52,8 @@ def cmd_lint(args: argparse.Namespace, ctx=None) -> None:
     格式问题：调 format_org(text, strict=True) 做 diff，报告所有变更。
     语义问题：枚举漂移、缺失字段、fingerprint 字段数、卡片骨架章节缺失。
     --fix 只修格式问题（= format），语义问题始终只报告。
-    --check 设退出码 = 问题数（≤127）。
+    --check 有问题退 1、无问题退 0——二值化：问题数走 stdout，退出码只表达
+    成败（旧版退问题数，127 与 shell 的 command-not-found 撞码，工具侧误判）。
     --json 输出分类结构化报告（agent 可消费、可差分），与 --fix/--check 可并存。
     """
     ctx = ctx or default_context()
@@ -111,7 +112,7 @@ def cmd_lint(args: argparse.Namespace, ctx=None) -> None:
         )
 
     if args.check:
-        sys.exit(min(total_issues, 127))
+        sys.exit(1 if total_issues else 0)
 
 
 def _lint_file(filepath: str, do_fix: bool, formal_types: set[str]) -> list[tuple[str, str]]:

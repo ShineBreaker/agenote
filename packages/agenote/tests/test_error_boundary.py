@@ -11,14 +11,16 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import fcntl
 import os
 import sys
+import threading
 
 import pytest
 
 from agenote.cards import cmd_add
-from agenote.core import KBContext, PublicError, safe_error_message
+from agenote.core import KBContext, PublicError, ensure_dirs, safe_error_message
 from agenote.safeio import KBLockTimeoutError, kb_lock
 
 
@@ -74,25 +76,62 @@ def test_safe_error_message_passes_lock_timeout_hint():
 
 def test_safe_error_message_still_masks_other_errors():
     """白名单只收锁超时：其余异常类型维持脱敏，PublicError 维持原文。"""
+    # 裸 OSError（errno=None）无诊断价值，仍按类型脱敏
     assert safe_error_message(OSError("disk full /secret/path")) == "操作失败（OSError）"
     assert safe_error_message(ValueError("内部细节")) == "操作失败（ValueError）"
     assert safe_error_message(PublicError("受控错误")) == "受控错误"
+
+
+def test_safe_error_message_exposes_rofs_with_path():
+    """只读文件系统（沙箱 / 只读挂载）：errno 名 + 路径 + 可操作提示，不再压成裸类型名。"""
+    exc = OSError(errno.EROFS, "Read-only file system", "/kb/agenote/card.org")
+    msg = safe_error_message(exc)
+    assert "EROFS" in msg
+    assert "/kb/agenote/card.org" in msg
+    assert "不在可写范围" in msg
+
+
+def test_safe_error_message_exposes_eacces_with_path():
+    """权限不足同样给出可操作提示（沙箱按 EACCES 拒绝时与真实权限错误同形）。"""
+    exc = PermissionError(errno.EACCES, "Permission denied", "/kb/agenote/MEMORY.org")
+    msg = safe_error_message(exc)
+    assert "EACCES" in msg
+    assert "/kb/agenote/MEMORY.org" in msg
+    assert "不在可写范围" in msg
+
+
+def test_safe_error_message_other_errno_keeps_path():
+    """其余 errno（如 ENOSPC）带 errno 名与路径，便于定位；不转发异常正文。"""
+    exc = OSError(errno.ENOSPC, "内部细节 /secret", "/kb/x.org")
+    msg = safe_error_message(exc)
+    assert "ENOSPC" in msg
+    assert "/kb/x.org" in msg
+    assert "/secret" not in msg
 
 
 def test_kb_lock_timeout_raises_actionable_error(tmp_path):
     """真实 flock 竞争下 kb_lock 抛 KBLockTimeoutError（仍是 TimeoutError）。"""
     lock = tmp_path / "kb" / ".agenote.lock"
     lock.parent.mkdir(parents=True)
-    fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o644)
+    acquired = threading.Event()
+    release = threading.Event()
+
+    def holder():
+        with kb_lock(lock):
+            acquired.set()
+            release.wait(timeout=5)
+
+    t = threading.Thread(target=holder)
+    t.start()
+    assert acquired.wait(timeout=5)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
         with pytest.raises(KBLockTimeoutError, match="另一个 agenote 进程") as exc:
             with kb_lock(lock, timeout=0.05):
                 pass
         assert isinstance(exc.value, TimeoutError)
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
+        release.set()
+        t.join(timeout=5)
 
 
 def test_lock_timeout_reaches_cli_stderr(kb_root, monkeypatch, capsys):
@@ -103,13 +142,15 @@ def test_lock_timeout_reaches_cli_stderr(kb_root, monkeypatch, capsys):
     ctx = _ctx(kb_root)
     cmd_add(_add_args("原始"), ctx)
     card = next(ctx.experiences.rglob("*.org"))
-    lock_path = ctx.root / ".agenote.lock"
-    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+    # 锁文件在 KB 内，cli 与测试拿到同一 inode
+    fd = os.open(ctx.root / ".agenote.lock", os.O_RDWR | os.O_CREAT, 0o644)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)  # 测试进程持锁，模拟并发占用
         monkeypatch.setattr(cli, "agenote_context", lambda: ctx)
         # 真实 kb_lock + 短超时：走真的 flock 竞争路径，而非伪造异常
-        monkeypatch.setattr(cli, "kb_lock", lambda path: real_kb_lock(path, timeout=0.1))
+        monkeypatch.setattr(
+            cli, "kb_lock", lambda path, **kw: real_kb_lock(path, timeout=0.1)
+        )
         monkeypatch.setattr(sys, "argv", ["agenote", "touch", str(card)])
         with pytest.raises(SystemExit) as exc:
             cli.main()
@@ -123,3 +164,27 @@ def test_lock_timeout_reaches_cli_stderr(kb_root, monkeypatch, capsys):
     assert "Traceback" not in err
     # 命中白名单后不应再出现脱敏兜底消息
     assert "操作失败" not in err
+
+
+def test_ensure_dirs_skips_readonly_filesystem(tmp_path, monkeypatch):
+    """EROFS/EACCES：骨架自愈跳过而不抛，只读命令不因建骨架失败而挂。"""
+    ctx = _ctx(tmp_path / "kb")
+
+    def boom(self, *args, **kwargs):
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    monkeypatch.setattr(type(ctx.experiences), "mkdir", boom)
+    ensure_dirs(ctx)  # 不抛
+
+
+def test_ensure_dirs_reraises_other_filesystem_errors(tmp_path, monkeypatch):
+    """ENOSPC / ENOTDIR 等非权限故障必须照抛，不能把写失败吞成「成功」。"""
+    ctx = _ctx(tmp_path / "kb")
+
+    def boom(self, *args, **kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(type(ctx.experiences), "mkdir", boom)
+    with pytest.raises(OSError) as exc:
+        ensure_dirs(ctx)
+    assert exc.value.errno == errno.ENOSPC
