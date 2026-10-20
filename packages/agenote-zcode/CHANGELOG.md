@@ -8,13 +8,24 @@
 （布局与发布约定见仓库根 `docs/adr/0005-monorepo-unify-seven-components.md`），
 由 `<component>-v<version>` 形式的 tag 触发发布。
 
-## [Unreleased]
+## [0.1.1] - 2026-10-20
+
+注入状态机移到 CLI——hooks 不再自己算指纹、拼 query、读写状态文件，
+改为调 `agenote inject` 只做协议封包；改语义只动 CLI，不再跨宿主同步。
+**依赖 agenote CLI ≥ 0.2.2**（旧版 CLI 无 `inject` 子命令）。
+
+---
 
 ### Changed
 
 - **注入状态机移到 CLI**：`hooks/lib.mjs` 不再自己算指纹、拼 query、读写状态文件；
   改为调 `agenote inject` 并只做协议封包。三件套的单一实现在 CLI，zcode 侧
-  改行为不再需要与 claude/codex/hermes 同步同一段逻辑。
+  改行为不再需要与 claude/codex/hermes 同步同一段逻辑。（41a8d02）
+
+### Fixed
+
+- **`agenote health` 调用补 `AGENOTE_AGENT=zcode`**：只读调用也带归因 env，
+  与本 hook 下发给模型的规则口径一致。（1930145）
 
 ## [0.1.0] - 2026-10-03
 
