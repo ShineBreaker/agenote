@@ -186,9 +186,9 @@ def _render_brief(session_info: dict[str, str]) -> str:
     )
 
 
-def _recall_context(session_id: str, user_text: str) -> str:
+def _recall_context(session_id: str, user_text: str, cwd: str = "") -> str:
     """每回合 recall：三件套判定在 CLI 内；不注返回空串。"""
-    return _inject(session_id, "prompt", user_text or "")
+    return _inject(session_id, "prompt", user_text or "", cwd=cwd)
 
 
 # ── 完成信号（既有逻辑，保持不变）─────────────────────────────────
@@ -230,6 +230,7 @@ def _pre_llm_call(
     session_id: str = "",
     user_message: str = "",
     platform: str = "",
+    cwd: str = "",
     **_: Any,
 ) -> dict[str, str] | None:
     """召回记忆注入 + 完成信号检测。两者独立触发，命中合并为一个 context。"""
@@ -245,7 +246,7 @@ def _pre_llm_call(
 
     parts: list[str] = []
 
-    recall = _recall_context(session_id, text)
+    recall = _recall_context(session_id, text, cwd)
     if recall:
         parts.append(recall)
 
