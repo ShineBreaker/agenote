@@ -85,7 +85,7 @@ SCHEMA（同agenote-curator skill 的「注入器与开关」节）。
 | `AGENOTE_INJECTION_BRIEF_BUDGET` | 8000（codex 2800） | 简报单次预算（字符） |
 | `AGENOTE_INJECTION_RECALL_BUDGET` | 4000（codex 2800） | recall 单次预算（字符） |
 | `AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET` | 24000 | 单会话累计预算（由 `agenote inject` 读取；SessionStart/compact 重置） |
-| `AGENOTE_INJECTION_MIN_QUERY` | 6 | recall 有效 query 最短字符（由 `agenote inject` 读取） |
+| `AGENOTE_INJECTION_RECALL_MIN_QUERY` | 6 | recall 有效 query 最短字符（由 `agenote inject` 读取） |
 | `AGENOTE_INJECTOR_STATE_DIR` | `~/.cache/agenote/injectors` | 状态目录 |
 | `KB_ROOT` | — | 与 CLI 同名 env 同口径（指纹定位用） |
 

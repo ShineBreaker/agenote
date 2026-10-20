@@ -40,7 +40,7 @@ if [[ -z "$BIN" ]] && command -v agenote >/dev/null 2>&1 \
   BIN="$(command -v agenote)"
 fi
 if [[ -z "$BIN" ]]; then
-  printf 'SKIP: 找不到含 context 子命令的 agenote（设 AGENOTE_BIN 或先 uv sync）\n' >&2
+  printf 'SKIP: 找不到含 inject 子命令的 agenote（设 AGENOTE_BIN 或先 uv sync）\n' >&2
   exit 1
 fi
 

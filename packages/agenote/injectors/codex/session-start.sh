@@ -25,9 +25,6 @@ set -uo pipefail
 # 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
 : "${AGENOTE_INJECTION_BRIEF_BUDGET:=2800}"
 # ─── END GENERATED: hosts.codex.brief ───
-# ─── BEGIN GENERATED: hosts.codex.recall ───
-: "${AGENOTE_INJECTION_RECALL_BUDGET:=2800}"
-# ─── END GENERATED: hosts.codex.recall ───
 
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib.sh

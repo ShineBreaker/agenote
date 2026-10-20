@@ -44,9 +44,11 @@ _agenote_inject() {  # $1=host  $2=event(session|prompt)  $3=session_id  $4=prom
     args+=(--budget "$AGENOTE_INJECTION_BRIEF_BUDGET")
   fi
 
+  # CLI 必须限时：hook 里挂起的子进程会拖住宿主整个钩子（F10 故障静默——
+  # 超时也按"本轮不注入"降级）。数值取 hook 超时余量内的保守值。
   local out
   out="$( cd "$cwd" 2>/dev/null || true
-    AGENOTE_AGENT="$host" agenote "${args[@]}" 2>/dev/null
+    AGENOTE_AGENT="$host" timeout 10 agenote "${args[@]}" 2>/dev/null
   )" || return 0
 
   printf '%s' "$out" | python3 -c '
