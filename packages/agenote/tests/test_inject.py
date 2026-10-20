@@ -103,6 +103,32 @@ def test_session_resets_cumulative_and_recall_key(kb, capsys):
     assert after["cumulative"] == 0 and "recall_key" not in after
 
 
+def test_session_reset_survives_missing_kb(kb, capsys):
+    """KB 临时不可用也要重置：否则恢复后会把上一会话的 key 误判成 duplicate。"""
+    _run(kb, capsys, event="prompt", prompt="BM25 检索参数是什么来着", budget=4000)
+    state_path = _state_path("zcode", "s1")
+    assert json.loads(state_path.read_text())["cumulative"] > 0
+
+    kb.memory_org.unlink()
+    res = _run(kb, capsys)  # session 事件，指纹为空
+    assert res["status"] == "empty" and res["action"] == "skip"
+
+    after = json.loads(state_path.read_text())
+    assert after["cumulative"] == 0 and "recall_key" not in after
+
+
+def test_corrupt_state_does_not_crash(kb, capsys):
+    """状态文件被改坏（cumulative 非数字）时按无状态处理，不打断注入。"""
+    state_path = _state_path("zcode", "s1")
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        '{"cumulative": "oops", "recall_key": "stale"}', encoding="utf-8",
+    )
+
+    res = _run(kb, capsys, event="prompt", prompt="BM25 检索参数是什么来着", budget=4000)
+    assert res["action"] == "inject" and "mode=recall" in res["content"]
+
+
 def test_disabled_switch_zero_bytes_and_no_cache(kb, capsys, monkeypatch):
     monkeypatch.setenv("AGENOTE_INJECTION_ENABLED", "false")
     res = _run(kb, capsys)

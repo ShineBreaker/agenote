@@ -33,6 +33,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 from agenote import config
@@ -70,13 +71,31 @@ def _read_state(path: Path) -> dict:
 def _write_state(path: Path, state: dict) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(state, fh, ensure_ascii=False)
-        os.replace(tmp, path)
+        # 临时名必须唯一：同一会话的 session/prompt 事件可能并发写同一文件，
+        # 固定 `.tmp` 会让两个进程互相截断、丢一次更新。
+        fd, tmp = tempfile.mkstemp(
+            dir=path.parent, prefix=path.name + ".", suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(state, fh, ensure_ascii=False)
+            os.replace(tmp, path)
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
     except OSError:
         # 状态写失败宁可下轮重复注入，也不中断本轮。
         pass
+
+
+def _safe_int(value, fallback: int = 0) -> int:
+    """状态文件可能被外部改坏；坏值按 0 处理，不让注入器整轮崩掉。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
 
 
 def _fingerprint(ctx) -> str:
@@ -135,18 +154,23 @@ def _build_query(prompt: str) -> str | None:
 
 
 def _session_event(args, ctx, state: dict, path: Path) -> None:
-    fingerprint = _fingerprint(ctx)
-    if not fingerprint:
-        # KB 缺失：不生成内容，也不写空缓存（KB 建好后立即生效）。
-        _emit(args, "skip", "empty", "")
-        return
-    # SessionStart/compact 语义 = 重置：累计清零、recall 解禁；简报缓存按指纹保留。
+    # 会话边界无条件重置：即使 KB 暂时不可用（指纹为空），也不能把上一会话的
+    # 累计与去重键带进下一会话——否则 KB 恢复后同 query 会被误判 duplicate。
     state.pop("recall_key", None)
     state["cumulative"] = 0
 
-    if fingerprint and state.get("brief_key") == fingerprint and state.get("brief_content"):
+    fingerprint = _fingerprint(ctx)
+    if not fingerprint:
+        # KB 缺失：不生成内容、不缓存简报（建好后立即生效）；重置仍照常落盘。
         _write_state(path, state)
-        _emit(args, "inject", "ok", state["brief_content"], cached=True)
+        _emit(args, "skip", "empty", "")
+        return
+
+    cached_brief = state.get("brief_content")
+    if (state.get("brief_key") == fingerprint
+            and isinstance(cached_brief, str) and cached_brief):
+        _write_state(path, state)
+        _emit(args, "inject", "ok", cached_brief, cached=True)
         return
 
     res = build_context_result(_context_args(args.host, "session", args.budget), ctx)
@@ -183,7 +207,7 @@ def _prompt_event(args, ctx, state: dict, path: Path) -> None:
         _emit(args, "skip", "duplicate", "")
         return
 
-    cumulative = int(state.get("cumulative") or 0)
+    cumulative = _safe_int(state.get("cumulative"))
     limit = _config_int("injection", "session_cumulative_budget", 24000)
     if cumulative >= limit:  # 三件套③：触顶停 recall，记键防重复生成
         state["recall_key"] = key
