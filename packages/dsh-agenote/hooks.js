@@ -265,12 +265,17 @@ export function apply(ctx, cfg) {
   // 召回 query 取 durable log 里最近一条真实用户消息，resume / 多标签天然隔离。
   const recallCache = new Map();
   if (cfg.brief || cfg.recall) {
-    let briefCache = { fingerprint: "", content: "" };
+    // 简报含「当前项目」段（CLI 按 cwd 选 P 条目），DSH 是多会话服务进程，
+    // 进程 cwd 不是会话目录——必须把会话 cwd 传给 CLI。缓存也按 cwd 分槽：
+    // 单槽会在两个项目的会话之间互相覆盖、把 A 项目的简报注给 B。
+    const briefCache = new Map();
 
-    const briefOf = (fingerprint) => {
-      if (briefCache.fingerprint === fingerprint) return briefCache.content;
-      const content = contextContent("dsh", "session", BRIEF_BUDGET);
-      briefCache = { fingerprint, content };
+    const briefOf = (agent, fingerprint) => {
+      const cwd = agent?.session?.header?.cwd || "";
+      const cached = briefCache.get(cwd);
+      if (cached?.fingerprint === fingerprint) return cached.content;
+      const content = contextContent("dsh", "session", BRIEF_BUDGET, "", cwd);
+      briefCache.set(cwd, { fingerprint, content });
       return content;
     };
 
@@ -299,7 +304,7 @@ export function apply(ctx, cfg) {
           if (!fingerprint) return "";
           const parts = [];
           if (cfg.brief) {
-            const brief = briefOf(fingerprint);
+            const brief = briefOf(agent, fingerprint);
             if (brief) parts.push(brief);
           }
           if (cfg.recall) {

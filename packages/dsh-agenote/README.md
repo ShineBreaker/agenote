@@ -88,7 +88,7 @@ profile 为 `patchReload: live` 时（web profile 默认如此），新 bundle �
 
 几个刻意的取舍，改动前请先读：
 
-- **记忆注入走 `systemPrompt.context`，是重写型而不是追加型**。DSH 每次请求重新物化动态上下文快照，等价 pi 的 `context` 事件：简报与召回并置同一快照，先前的快照被替换而不是叠加，因此不需要追加型三件套里的累计预算。只保留两道缓存——简报按 KB 指纹（`MEMORY.org` + `memories/` 的 mtime+size），召回按「指纹 + 最近用户消息」——未变时零 spawn 重放。召回 query 从 durable log 取最近一条 `source.kind === 'user'` 的消息，resume / 多标签天然隔离；`isSubagent` 会话返回空。上下文节设 `interpolate: false`，避免记忆正文里的 `{{...}}` 被当成 prompt 变量。
+- **记忆注入走 `systemPrompt.context`，是重写型而不是追加型**。DSH 每次请求重新物化动态上下文快照，等价 pi 的 `context` 事件：简报与召回并置同一快照，先前的快照被替换而不是叠加，因此不需要追加型三件套里的累计预算。只保留两道缓存——简报按「会话 cwd + KB 指纹」（`MEMORY.org` + `memories/` 的 mtime+size；cwd 决定简报里的项目段，多项目会话不能共用单槽），召回按「指纹 + 最近用户消息」——未变时零 spawn 重放。召回 query 从 durable log 取最近一条 `source.kind === 'user'` 的消息，resume / 多标签天然隔离；`isSubagent` 会话返回空。上下文节设 `interpolate: false`，避免记忆正文里的 `{{...}}` 被当成 prompt 变量。
 - **健康度摘要走 system-prompt section，不走 `agent.followup()`**。`followup` 的语义是"排一个独立后续 turn 并**唤醒 driver**"——`agent/created` 时调用它，等于插件在用户开口前替用户"发言"，driver 被唤醒后模型把摘要当指令处理并回复（表现为"新会话一打开 agent 就自说自话"，已修）。背景知识类注入用 `ctx.systemPrompt.section()`，随每次请求进入 system prompt，不产生 turn。
 - **`agent.followup()` 只用于任务提示**（review/curate）。这两个投递点都**没有待执行的 step**；`steer` 只作用于「最近的 step」，会把消息停在 inbox 里等下一次唤醒。`followup` 才等价于 pi 的 `sendUserMessage({deliverAs:'followUp'})`。
 - **subagent 豁免**（`session.header.origin === 'subagent'`）。DSH 的 subagent 是同进程独立 agent，同一个插件实例会收到它们的事件：worker 的内部对话不该投 review 提示（污染 handoff），也不该各自武装 idle 计时器（大量委派时表现为 idle 兜底"反复触发"）。

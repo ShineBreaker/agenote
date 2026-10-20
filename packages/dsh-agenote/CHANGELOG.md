@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- 记忆注入（`systemPrompt.context`）：会话简报（`--mode session`）与按最近用户消息的召回（`--mode recall`）写进同一动态上下文快照，重写型无累积风险；简报按 KB 指纹、召回按「指纹 + query」缓存，未变时零 spawn。新增 `hooks.brief` / `hooks.recall` 开关。补齐与 pi / zcode / hermes 的功能对等。
+- 记忆注入（`systemPrompt.context`）：会话简报（`--mode session`）与按最近用户消息的召回（`--mode recall`）写进同一动态上下文快照，重写型无累积风险；简报按「会话 cwd + KB 指纹」、召回按「指纹 + query」缓存（cwd 决定简报的项目段，多项目会话不得共用单槽），未变时零 spawn。新增 `hooks.brief` / `hooks.recall` 开关。补齐与 pi / zcode / hermes 的功能对等。
 - 功能基线文档 `docs/PLUGIN_CAPABILITIES.md`：11 项插件功能、7 个宿主对照与豁免记录；`spec/injection.toml` 增补 `[hosts.dsh]` 预算。
 
 ## [0.1.2] - 2026-10-20

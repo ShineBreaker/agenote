@@ -95,7 +95,7 @@ EOF
 
 cat > "$T/bin/agenote" <<EOF
 #!/usr/bin/env bash
-echo "ARGS: \$*" >> "\$SPY_LOG"
+printf 'ARGS: %s\nPWD: %s\n' "\$*" "\$PWD" >> "\$SPY_LOG"
 exec "$BIN" "\$@"
 EOF
 chmod +x "$T/bin/agenote"
@@ -321,6 +321,19 @@ const spawns = () => {
       .split("\n").filter((l) => l.startsWith("ARGS: context")).length;
   } catch { return 0; }
 };
+// CLI 进程的 cwd 决定简报里的项目段（session 模式按 cwd 匹配 P 条目）。
+// DSH 是多会话服务进程，进程 cwd 不等于会话 cwd，必须显式传递。
+const sessionCwdOf = () => {
+  try {
+    const lines = readFileSync(process.env.SPY_LOG, "utf8").split("\n");
+    for (let i = 0; i < lines.length; i += 1) {
+      if (lines[i].startsWith("ARGS: context") && lines[i].includes("--mode session")) {
+        return (lines[i + 1] || "").replace(/^PWD: /, "");
+      }
+    }
+  } catch { /* 无日志按未传递处理 */ }
+  return "";
+};
 const userEvent = (text) => ({
   type: "user/message",
   data: { source: { kind: "user" }, content: [{ type: "text", text }] },
@@ -355,6 +368,7 @@ handlers.get("agent/turn-stopping")({ agent });
 
 console.log(JSON.stringify({
   session: text.includes("mode=session"),
+  sessionCwd: sessionCwdOf() === tmp,
   recall: text.includes("mode=recall"),
   idempotent: again === text && spawns() === s1,
   short: shortText.includes("mode=session") && !shortText.includes("mode=recall") && shortSpawns === s1,
@@ -366,6 +380,8 @@ JSEOF
   )" 2>/dev/null
   printf '%s' "$DOUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["session"],d' 2>/dev/null \
     && ok "简报注入上下文（mode=session）✓" || bad "缺乏会话简报注入"
+  printf '%s' "$DOUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["sessionCwd"],d' 2>/dev/null \
+    && ok "简报 CLI 调用携带会话 cwd ✓" || bad "简报未携带会话 cwd（项目段会错配）"
   printf '%s' "$DOUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["recall"],d' 2>/dev/null \
     && ok "按最近用户消息召回（mode=recall）✓" || bad "缺乏每轮召回"
   printf '%s' "$DOUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["idempotent"] and d["spawns"]==2,d' 2>/dev/null \
