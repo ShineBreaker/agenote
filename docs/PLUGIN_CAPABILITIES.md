@@ -88,6 +88,7 @@
 | pi | F2 每轮召回 | 重写型注入：每 LLM 调用重写简报块，已覆盖长期记忆；召回由 agent 按需 `agenote search` 补足 | 需要按用户消息做逐轮检索时 |
 | opencode | F2 每轮召回 | 同上（`experimental.chat.messages.transform` 重写型） | 同上 |
 | claude / codex / opencode | F5 / F6 / F7 / F9 | 注入器边界：只做记忆注入，不承担完成信号、命令入口与 turn 生命周期 | 升级为完整插件（新增触发与命令实现） |
+| zcode / hermes / pi / claude / codex / opencode | F11 写侧适配 | 宿主无文件沙箱或沙箱不拦 KB 路径，`agenote` CLI 经 bash 直接可写；条件不成立，功能不适用 | 宿主引入文件围栏挡住 KB_ROOT 时（dsh 即此形态） |
 
 ## 新增一个宿主插件时
 
