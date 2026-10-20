@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-20
+
+`agenote_write` 把知识库写入从会话文件沙箱里解放出来——`workspace-write` / `read-only` 会话都能留痕，`never` 审批下也不再静默丢失；同时修掉插件在 dsh 0.2.x 被整行跳过的问题。
+
+---
+
+### Added
+
+- 宿主侧 `agenote_write` 工具（`tools.js`）：白名单透传 agenote 写命令，`stdin` 承载正文，写入不受会话文件沙箱约束。
+- `lib.js` 新增 `runKbAsync`：`spawn` + Promise，工具执行不阻塞宿主事件循环。
+
+### Fixed
+
+- 兼容 cohort 抬到 dsh 0.2.1-rc.2，`peerDependencies` 与 `dsh.engines.dsh` 同步抬升；此前停在 `0.1.7-rc.2`，运行时 0.2.x 下整行 bundle 被跳过，健康度摘要与 review 提示全部静默失效。
+
 ## [0.1.1] - 2026-10-03
 
 ### Changed

@@ -1,12 +1,13 @@
 # AGENTS.md — dsh-agenote
 
-DeepSeek Harness（DSH）的 agenote 集成插件：Cordis bundle，纯 ESM、无构建步骤。职责仅限事件触发与命令快捷入口；行为规范归 `agenote-skills`，知识库操作归 `agenote` CLI，二者不在本仓库重复实现。
+DeepSeek Harness（DSH）的 agenote 集成插件：Cordis bundle，纯 ESM、无构建步骤。职责限于事件触发、命令快捷入口与宿主侧写入工具；行为规范归 `agenote-skills`，知识库操作归 `agenote` CLI，二者不在本仓库重复实现。
 
 动事件投递或信号检测逻辑前，先读 `README.md` 的「设计要点」——每条规则的完整取舍分析都在那里。
 
 ## 改码规则
 
-- CLI 调用一律走 `lib.js` 的 `runKb`：数组传参（无 shell 注入面）、`AGENOTE_AGENT=dsh` 归因、统一超时与错误降级，全部收敛在它里面。
+- CLI 调用一律收敛在 `lib.js`：只读/毫秒级调用走 `runKb`（`spawnSync`），工具执行走 `runKbAsync`（`spawn` + Promise，不阻塞宿主事件循环）。两者同契约：数组传参（无 shell 注入面）、`AGENOTE_AGENT=dsh` 归因、统一超时与错误降级。
+- **宿主侧工具（`tools.js`）是沙箱边界的补丁，不是通用逃逸口**：DSH 文件沙箱只放行会话 cwd + `/tmp`，知识库在 `~/Documents/Org/agenote`，所以写入必须由宿主进程 spawn。可执行命令钉死在 agenote 写命令白名单上——不接受任意 `argv[0]`、不导入 shell；`viz`（会开宿主窗口）与只读命令不入表。
 - 投递二分：背景知识（健康度摘要）走 `ctx.systemPrompt.section()`——随请求进 system prompt，不产生 turn；任务提示（review/curate）走 `agent.followup()`——排独立 turn 并唤醒 driver。
 - subagent 一律豁免（判据 `session.header.origin === 'subagent'`），其事件不进信号检测、不武装 idle 计时器。
 - 状态二分：瞬态（timer、最近用户文本）放 per-session `Map`；跨 resume/重启必须存活的（防抖、「已触发」）从 durable log 推导（`deliveredByUs()`）。模块级可变状态两头都不沾——多会话串台、resume 即重置——不许存在。
@@ -19,12 +20,13 @@ DeepSeek Harness（DSH）的 agenote 集成插件：Cordis bundle，纯 ESM、�
 
 无自动化测试。改完源码按序执行，前一步通过才进下一步：
 
-1. 语法：`node --check index.js hooks.js commands.js lib.js`——四个文件全部无输出退出。
+1. 语法：`node --check index.js hooks.js commands.js tools.js lib.js`——五个文件全部无输出退出。
 2. 配置 schema：`node --input-type=module -e "import('./index.js').then(m=>{const v=m.Config['~standard'].validate;console.log(JSON.stringify(v(undefined)));console.log(JSON.stringify(v({hooks:{debounceMs:-1}}).issues??null))})"`——第一行是全默认值配置；第二行打出 issues 数组（path 指向 `hooks.debounceMs`），把 `-1` 换成合法值则第二行为 `null`。
 3. 逻辑（需 `agenote` 在 PATH）：`node --input-type=module -e "import('./lib.js').then(m=>console.log(m.healthSummary(m.runKb)))"`——打印出健康度摘要而非异常。
-4. 激活：`dsh --profile <profile> --no-open --port 3099` 冷启动——日志无 `failed to import`。
+4. 工具：`node --input-type=module -e "import('./tools.js').then(m=>{const d=[];m.apply({tools:{register:x=>d.push(x)}},{enabled:true});console.log(d[0].name, typeof d[0].output.render)})"`——打印 `agenote_write function`；端到端写入再用 `d[0].execute({command:'add',args:['--title',…,'--stdin'],stdin:'…'},{})` 打一张真实卡片。
+5. 激活：`dsh --profile <profile> --no-open --port 3099` 冷启动——日志无 `failed to import`。
 
-改了源码就必须冷启动，运行中进程持有旧模块图。运行中进程上的 `plugin_manager set_bundle` 报 `failed to import` 是该次调用自身的诊断，不代表 bundle 未被采用——能否采用只看第 4 步的冷启动日志与会话里是否真的出现注入，不要据此改代码。
+改了源码就必须冷启动，运行中进程持有旧模块图。运行中进程上的 `plugin_manager set_bundle` 报 `failed to import` 是该次调用自身的诊断，不代表 bundle 未被采用——能否采用只看第 5 步的冷启动日志与会话里是否真的出现注入，不要据此改代码。
 
 ## 发布
 
@@ -37,6 +39,6 @@ DeepSeek Harness（DSH）的 agenote 集成插件：Cordis bundle，纯 ESM、�
 
 - **新增源文件必须登记进 `package.json` 的 `files`。** npm tarball 只含那 8 个条目，
   没登记的文件不会随包发布——`build.py` 的打包产物直接来自这份列表。
-- **推送前按「验证」第 4 步冷启动一遍**（新 manifest 也要过：确认无 `failed to import`、
+- **推送前按「验证」第 5 步冷启动一遍**（新 manifest 也要过：确认无 `failed to import`、
   无 `incompatible-version`、行未 disabled）。运行中进程持有旧模块图，冷启动才是判据。
 - **DSH 出新 cohort 时必须同步抬 `peerDependencies["@deepseek-ai/dsh"]` 与 `dsh.engines.dsh` 下限，两条保持一致**。0.1.7-rc.1 起安装前与启动时按该范围强制校验（`evaluatePluginCompatibility`，可在本地 app-boot 实测）：不声明则跳过检查（现状安全但无保护），声明了不匹配则安装抛 `incompatible-version`、启动整行 disabled，豁免需 `dsh plugin allow-version`。peer 是兼容性声明不是 import，不触犯禁 import 硬禁令；profile 侧 `autoInstallPeers: false` 保证它不会被平铺成第二份核心包。

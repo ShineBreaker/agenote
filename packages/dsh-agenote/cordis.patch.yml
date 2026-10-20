@@ -23,10 +23,12 @@
 #         statusTtlMs: 300000     # 健康度摘要缓存时长（0 = 每个请求重算）
 #       commands:
 #         enabled: true
+#       tools:
+#         enabled: true            # 宿主侧 agenote_write 工具（沙箱外写知识库）
 #
 # config 由 index.js 导出的 Config schema（Standard Schema v1）校验并填默认值，
 # 非法值在加载期抛 ValidationError；字段与默认值的单一真相源在 hooks.js /
-# commands.js 的 Config 声明里。
+# commands.js / tools.js 的 Config 声明里。
 - insert:
     - id: agenote
       name: 'dsh-agenote'

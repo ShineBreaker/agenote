@@ -1,8 +1,8 @@
 {
   "name": "dsh-agenote",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
-  "description": "DeepSeek Harness 的 agenote 集成插件：会话开始注入知识库健康度、turn 结束检测完成信号并转交 agenote-review 流程，外加 /agenote-summarize|curate|health 斜杠命令。行为规范由 agenote-skills 定义，插件只做事件触发与命令快捷入口。",
+  "description": "DeepSeek Harness 的 agenote 集成插件：会话开始注入知识库健康度、turn 结束检测完成信号并转交 agenote-review 流程、宿主侧 agenote_write 写入工具，外加 /agenote-summarize|curate|health 斜杠命令。行为规范由 agenote-skills 定义，插件只做事件触发、命令快捷入口与写入通道。",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -14,7 +14,7 @@
   },
   "homepage": "https://github.com/ShineBreaker/agenote/tree/main/packages/dsh-agenote",
   "peerDependencies": {
-    "@deepseek-ai/dsh": "^0.1.7-rc.2"
+    "@deepseek-ai/dsh": "^0.2.1-rc.2"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh": {
@@ -26,6 +26,7 @@
     ".": "./index.js",
     "./hooks": "./hooks.js",
     "./commands": "./commands.js",
+    "./tools": "./tools.js",
     "./lib": "./lib.js",
     "./package.json": "./package.json"
   },
@@ -33,6 +34,7 @@
     "index.js",
     "hooks.js",
     "commands.js",
+    "tools.js",
     "lib.js",
     "cordis.patch.yml",
     "README.md",
@@ -45,7 +47,7 @@
       "patch": "./cordis.patch.yml"
     },
     "engines": {
-      "dsh": ">=0.1.7-rc.2"
+      "dsh": ">=0.2.1-rc.2"
     }
   }
 }

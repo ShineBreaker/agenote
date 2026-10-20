@@ -10,7 +10,7 @@
 // 职责边界：本层只做「进程调用 + 文本解析」的纯机械工作，不含任何行为规范。
 // 信号清单、写入流程、卡片格式由 agenote-{base,curator,review} skill 定义。
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -85,6 +85,88 @@ function firstLine(text) {
     .split("\n")
     .find((l) => l.trim().length > 0);
   return line ? line.trim() : "(无输出)";
+}
+
+/**
+ * 异步调用 agenote CLI：spawn + Promise，不阻塞宿主事件循环。
+ *
+ * 工具执行走这里（写盘可能等 safeio 锁，最长按秒计）；hooks 的只读调用仍用
+ * runKb（spawnSync，毫秒级）。契约与 runKb 一致：数组传参、AGENOTE_AGENT 归因、
+ * 非零退出即失败。stdin 显式写入后关闭；超时、abort、输出超限都会终止子进程。
+ */
+export function runKbAsync(args, options = {}) {
+  const timeout = options.timeoutMs ?? 60_000;
+  const maxBuffer = options.maxBuffer ?? 4 * 1024 * 1024;
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(KB_SCRIPT, args, {
+        env: { ...process.env, AGENOTE_AGENT: options.agent ?? "dsh" },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (err) {
+      resolve({ ok: false, stdout: "", stderr: String(err?.message ?? err) });
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let overflow = false;
+
+    const settle = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
+    const kill = () => child.kill("SIGKILL");
+    const onAbort = () => kill();
+
+    const timer = setTimeout(() => {
+      kill();
+      settle({ ok: false, stdout, stderr: stderr || `超时 ${timeout}ms` });
+    }, timeout);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    // 已取消的调用不再起跑：addEventListener 对已 aborted 的信号不回调。
+    if (options.signal?.aborted) onAbort();
+    // 子进程不读 stdin 时会 EPIPE，属正常收尾，不让它冒成未捕获异常。
+    child.stdin.on("error", () => {});
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      if (stdout.length > maxBuffer) {
+        overflow = true;
+        kill();
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      if (stderr.length > maxBuffer) {
+        overflow = true;
+        kill();
+      }
+    });
+    child.on("error", (err) => {
+      settle({ ok: false, stdout: "", stderr: String(err?.message ?? err) });
+    });
+    child.on("close", (code, signal) => {
+      if (overflow) {
+        settle({ ok: false, stdout, stderr: stderr || "输出超过 maxBuffer 上限" });
+        return;
+      }
+      if (code !== 0) {
+        const why = signal ? `被信号 ${signal} 终止` : `退出码 ${code}`;
+        settle({ ok: false, stdout, stderr: stderr || why });
+        return;
+      }
+      settle({ ok: true, stdout, stderr });
+    });
+
+    if (options.stdin !== undefined) child.stdin.end(options.stdin);
+    else child.stdin.end();
+  });
 }
 
 // ─── 健康度摘要 ─────────────────────────────────────────────────────────────
