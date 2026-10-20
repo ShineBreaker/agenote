@@ -4,6 +4,25 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.3] - 2026-10-20
+
+在受限文件系统（DSH 沙箱、只读挂载）上 agenote 不再是「能读不能跑」：只读命令不再因取写锁而 EROFS 挂掉，文件系统错误带上 errno 与目标路径；新卡片写入即格式化，`lint` 从每次会话的例行步骤收回策展环节。
+
+---
+
+### Changed
+
+- **`memory --export` 归为写调用**：它在 `AGENOTE_ROOT` 内读改写 `.memory-export.json`，此前被误判为只读（只因其不持 CLI 锁而未暴露）。（2910dde）
+- **`add` 写入即格式化**（`cards.py`）：新卡落盘前经 `format_org(strict=True)`（属性对齐、MD→Org、空行与列表符号规范化），格式由机器保证而非调用方手写。`agenote-review` 流程随之删除「写完跑全库 `lint`」一步——单卡自检与全库体检职责分离，格式债统一在 `agenote-curator` 的 Step 1 入场与 Step 9 收尾用 `lint --fix` 清理。`format_org` 幂等，`lint --fix` 行为不变。（4e69aba）
+
+### Fixed
+
+- **只读命令在只读 KB 上必挂**（`safeio.py` / `cli.py`）：锁文件在 KB 内且 `kb_lock` 一律 `O_RDWR|O_CREAT`，只读文件系统上 `agenote lint --check` 等直接 EROFS。现在只读调用以 `O_RDONLY` 取共享锁（`LOCK_SH`）且**不创建锁文件**，锁文件不存在即免锁——单文件读取由 `atomic_write` 的整文件替换兜底；首个写者出现前的跨文件视图可能有短暂混合窗口（取舍）。写调用维持 `O_CREAT + LOCK_EX`，在只读 KB 上由 EROFS/EACCES 直接暴露。锁文件**仍留在 `<KB>/.agenote.lock`**：曾尝试移到运行时目录，但锁目录按环境变量选择会让混合 env 的进程各拿一把锁、静默失去互斥，已放弃。（2910dde）
+- **只读命令触发 `ensure_dirs` 骨架自愈**（`core.py` / `cli.py`）：只读 KB 上建目录/骨架直接 EACCES，把查询命令拖成写命令。只读调用（`list/search/stats/health/...`，以及 `lint` 无 `--fix`、`format --check`、`commit --dry-run`、`memory --list/--get`、`get` 无 `--used`）跳过 CLI 层 `ensure_dirs`；`ensure_dirs` 只吞 EROFS/EACCES/EPERM，ENOSPC/ENOTDIR 等仍照抛，不会把写失败吞成成功。（2910dde）
+- **`init` 在只读 KB 上假成功**（`cli.py`）：`ensure_dirs` 静默跳过后仍打印「目录结构已创建」。现在 init 校验骨架真落盘，否则非零退出。（2910dde）
+- **`OSError` 被压成「操作失败（OSError）」**（`core.py` / `safeio.py`）：只有类型名，没有 errno 与路径。`safe_error_message` 现带 errno 名与路径；EROFS/EACCES/EPERM 提示「不在可写范围」。原子写失败重抛时把内部 `.tmp-*` 文件名换成用户目标路径；`format` 的读写失败同步带 errno。（2910dde）
+- **`lint --check` 退出码与工具通道冲突**（`lint.py`）：旧版退问题数（封顶 127），127 在 shell 里是 command-not-found，工具侧误判成命令不存在。二值化为 `1=有问题 / 0=干净`，问题数改由 stdout 汇总与 `--json` 承载。（2910dde）
+
 ## [0.2.2] - 2026-10-20
 
 新增 `agenote inject` 子命令：指纹缓存、recall 门槛、单会话累计预算与状态

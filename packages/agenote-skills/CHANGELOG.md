@@ -8,6 +8,17 @@
 （布局与发布约定见仓库根 `docs/adr/0005-monorepo-unify-seven-components.md`），
 由 `<component>-v<version>` 形式的 tag 触发发布。
 
+## [0.2.1] - 2026-10-20
+
+写入侧与校验侧职责归位：卡片格式由 CLI 在写入时保证，`lint` 从每次会话的例行步骤收回策展环节——会话总结不再被全库报告拖住，格式债集中清理。
+
+---
+
+### Changed
+
+- **agenote-review 删除「写完跑全库 `lint`」一步**：`agenote add` 现于写入时自动格式化（属性对齐 / MD→Org / 空行），单卡自检无需再扫全库；写入流程重编号，`references/writing-guide.md` 的写入后清单同步（4e69aba）
+- **agenote-curator Step 1 增加 `lint --fix`**：入场先清格式债，后续 merge/update 在干净文本上进行；Step 9 收尾的 `--fix` 保留兜本轮写入。完成检查清单明确 `missing_sections` 是信息性提示、不计入待修（4e69aba）
+
 ## [0.2.0] - 2026-10-12
 
 策展模型从「保存者」翻转为「蒸馏器」：举证责任在卡片——证明不了复用价值的卡默认出局，KB 活跃卡数随时间下降、密度上升。配套写入侧门禁与高频卡机制化退役路径。
