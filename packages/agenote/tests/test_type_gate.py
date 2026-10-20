@@ -151,7 +151,7 @@ def test_update_type_full_reclassify(kb_root):
     card_id = re.search(r":ID:\s+(\S+)", content).group(1)
     assert new_card.name != old_name
     assert new_card.name == f"{card_id}-workflow-general.org"
-    assert ":TYPE:     workflow" in content
+    assert re.search(r":TYPE:\s+workflow", content)
     assert ":general:workflow:ai::" in content
     idx = json.loads(ctx.index.read_text(encoding="utf-8"))
     entry = next(c for c in idx["cards"] if c["id"] == card_id)

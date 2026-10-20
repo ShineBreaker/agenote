@@ -84,7 +84,7 @@
 
 每次写入卡片后，按顺序确认：
 
-1. `agenote lint` — 格式正确（无 Markdown 残留）
+1. 格式 — 已由 `agenote add` 写入时自动格式化（属性对齐 / MD→Org / 空行），无需再跑 lint
 2. `agenote search` — 无矛盾或重复（有则处理）
 3. `agenote connect` — 与相关卡片建立链接（至少检查一次关联）
 4. 置信度 — 不确定结论已标注 `(推测)` / `(单源)`

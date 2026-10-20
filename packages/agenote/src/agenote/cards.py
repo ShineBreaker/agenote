@@ -47,6 +47,7 @@ from agenote.core import (
     default_context,
     agenote_context,
 )
+from agenote.orgfmt import format_org
 from agenote.orgserde import (
     has_top_property_drawer,
     parse_org_prop,
@@ -234,9 +235,14 @@ def cmd_add(args: argparse.Namespace, ctx=None) -> None:
         lines.append("")
         lines.extend(_build_template(entry_type, body))
 
+    # 写入即格式化：属性对齐、MD→Org、空行与列表符号由机器保证，不依赖调用方
+    # 手写规范。这样新卡落地即合规，review 流程无需再跑全库 lint 校验单张卡；
+    # 历史卡片与本轮批量写入仍由 curate 的 lint --fix 兜底。format_org 幂等。
+    text, _ = format_org("\n".join(lines) + "\n", strict=True)
+
     original_index = ctx.index.read_bytes() if ctx.index.exists() else None
     try:
-        atomic_write(filepath, "\n".join(lines) + "\n")
+        atomic_write(filepath, text)
 
         # 增量更新 JSON 索引（index 已在 type 门禁处加载）
         _upsert_card(index, filepath, ctx)

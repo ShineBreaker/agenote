@@ -76,10 +76,10 @@ description: 会话后经验采集与留痕。**触发信号**：agenote-hooks �
 1. `agenote search` 去重 — 已有卡片覆盖时补充修正，不新建重复卡
 2. 矛盾检测 — 新发现是否与已有卡片/pattern 矛盾
 3. `agenote fields` 查看标签，优先复用现有 category/tech，只有全新领域才创建新类别
-4. `agenote add` 写入卡片（CLI 用法见 `agenote-base`）
-5. `agenote lint` 校验格式
-6. 传播联动 — 检查受影响的 pattern/卡片；隐含关联的卡片 `agenote connect` 建立双向链接
-7. 如涉及偏好/项目变化，按记忆信号表写入 `agenote memory`
+4. `agenote add` 写入卡片（CLI 用法见 `agenote-base`）——写入时自动格式化（属性对齐、
+   MD→Org、空行规范），单卡**无需**再跑 `agenote lint`；全库格式债由 `agenote-curator` 策展统一清理
+5. 传播联动 — 检查受影响的 pattern/卡片；隐含关联的卡片 `agenote connect` 建立双向链接
+6. 如涉及偏好/项目变化，按记忆信号表写入 `agenote memory`
 
 ### `mistake` 卡片必须覆盖
 

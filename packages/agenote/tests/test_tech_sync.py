@@ -108,7 +108,7 @@ def test_update_tech_syncs_fingerprint_and_index(kb_root):
     cmd_update(_update_args(str(card), tech="rust"), ctx)
 
     content = _only_card(ctx).read_text(encoding="utf-8")
-    assert ":TECH:     rust" in content
+    assert parse_org_prop(content, "TECH") == "rust"
     assert ":general:debug:ai:rust::" in content
     entry = _index_entry(ctx, card_id)
     assert entry["tech"] == "rust"
@@ -171,7 +171,6 @@ def test_bom_prefixed_card_can_be_updated_and_keeps_bom(kb_root):
 
     after = card.read_bytes()
     assert after.startswith(b"\xef\xbb\xbf")
-    assert b":TECH:     rust" in after
     assert parse_org_prop(card.read_text(encoding="utf-8"), "TECH") == "rust"
 
 
@@ -224,7 +223,7 @@ def test_update_rename_keeps_new_copy_when_card_restore_fails(kb_root, monkeypat
     assert len(survivors) == 1, "至少一个副本必须存活"
     assert not old_card.exists()
     assert survivors[0].read_bytes().startswith("* DONE 原始".encode("utf-8"))
-    assert b":TYPE:     workflow" in survivors[0].read_bytes()
+    assert parse_org_prop(survivors[0].read_text(encoding="utf-8"), "TYPE") == "workflow"
 
 
 def test_rollback_preserves_original_bytes(kb_root, monkeypatch):
@@ -333,7 +332,7 @@ def test_update_tech_equal_category_omits_tag(kb_root):
     cmd_update(_update_args(str(card), tech="general"), ctx)
 
     content = _only_card(ctx).read_text(encoding="utf-8")
-    assert ":TECH:     general" in content
+    assert parse_org_prop(content, "TECH") == "general"
     assert ":general:debug:ai::" in content
 
 
@@ -388,7 +387,7 @@ def test_update_category_syncs_fingerprint(kb_root):
     cmd_update(_update_args(str(card), category="emacs"), ctx)
 
     content = _only_card(ctx).read_text(encoding="utf-8")
-    assert ":CATEGORY: emacs" in content
+    assert parse_org_prop(content, "CATEGORY") == "emacs"
     assert ":emacs:debug:ai:rust::" in content
 
 
@@ -400,7 +399,7 @@ def test_update_owner_syncs_fingerprint(kb_root):
     cmd_update(_update_args(str(card), owner="collab"), ctx)
 
     content = _only_card(ctx).read_text(encoding="utf-8")
-    assert ":OWNER:    collab" in content
+    assert parse_org_prop(content, "OWNER") == "collab"
     assert ":general:debug:collab:rust::" in content
 
 
@@ -413,7 +412,7 @@ def test_update_status_keeps_lightweight(kb_root):
     cmd_update(_update_args(str(card), status="stale"), ctx)
 
     content = _only_card(ctx).read_text(encoding="utf-8")
-    assert ":STATUS:   stale" in content
+    assert parse_org_prop(content, "STATUS") == "stale"
     assert ":general:debug:ai:rust::" in content
 
 
@@ -442,8 +441,8 @@ def test_update_short_id_prefers_exact_org_id(kb_root, monkeypatch):
 
     cmd_update(_update_args(original_id, tech="rust"), ctx)
 
-    assert ":TECH:     rust" in original.read_text(encoding="utf-8")
-    assert ":TECH:     guile" in derived.read_text(encoding="utf-8")
+    assert parse_org_prop(original.read_text(encoding="utf-8"), "TECH") == "rust"
+    assert parse_org_prop(derived.read_text(encoding="utf-8"), "TECH") == "guile"
 
 
 def test_get_rejects_absolute_path_outside_kb(kb_root, tmp_path, capsys):
@@ -471,7 +470,7 @@ def test_get_cli_registers_used_flag(kb_root, monkeypatch, capsys):
     cli.main()
 
     assert "未找到卡片" not in capsys.readouterr().err
-    assert ":USAGE_COUNT: 1" in card.read_text(encoding="utf-8")
+    assert parse_org_prop(card.read_text(encoding="utf-8"), "USAGE_COUNT") == "1"
 
 
 def test_get_used_rejects_corrupt_index_without_touching_card(kb_root, monkeypatch, capsys):
@@ -513,7 +512,7 @@ def test_get_used_does_not_modify_body_properties(kb_root, monkeypatch):
 
     content = card.read_text(encoding="utf-8")
     assert body_line in content
-    assert content.count(":USAGE_COUNT: 1") == 1
+    assert content.count(":USAGE_COUNT: 999") == 1
     assert re.search(r"(?m)^:USAGE_COUNT:\s+1$", content)
 
 

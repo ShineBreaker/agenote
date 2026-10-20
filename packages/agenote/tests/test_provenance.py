@@ -101,7 +101,7 @@ def test_add_default_added_is_today(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     card = _only_card(ctx)
     text = card.read_text(encoding="utf-8")
-    assert f":ADDED: [{today()}]" in text
+    assert parse_org_prop(text, "ADDED") == f"[{today()}]"
     assert ":SOURCE:" not in text
     d = _card_dict(card, ctx)
     assert d["added"] == today()
@@ -115,8 +115,8 @@ def test_add_explicit_source_passthrough(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     card = _only_card(ctx)
     text = card.read_text(encoding="utf-8")
-    assert ":SOURCE: https://example.com/doc" in text
-    assert ":ADDED: [2026-01-02]" in text
+    assert parse_org_prop(text, "SOURCE") == "https://example.com/doc"
+    assert parse_org_prop(text, "ADDED") == "[2026-01-02]"
     d = _card_dict(card, ctx)
     assert d["source"] == "https://example.com/doc"
     assert d["added"] == "2026-01-02"

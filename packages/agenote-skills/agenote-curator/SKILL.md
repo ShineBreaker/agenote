@@ -47,10 +47,18 @@ agenote extract --source all --date $(date -d yesterday +%Y-%m-%d)
 ### Step 1 — 诊断
 
 ```bash
+agenote lint --fix                      # 先清格式债（属性对齐/空行/MD 残留），后续步骤在干净文本上进行
 agenote health --quality --duplicates   # 健康度 + 质量扫描 + 重复检测
 agenote stats                           # 状态分布
 agenote gaps --stale-days 60            # 类别×类型矩阵 + 缺失组合 + 陈旧卡片
 ```
+
+`lint --fix` 只自动修**格式**问题；语义问题（enum_drift / missing_entry_type / fingerprint）
+只报告，需要你判断。`missing_sections` 是信息性提示，**不计入待修问题**——不要为凑章节编号去
+补空标题。全库报告较长时可加 `--json` 按 category 过滤，只读 format / enum_drift / fingerprint。
+
+> 这是格式债的唯一收口处：会话中写卡（`agenote add`）已在写入时自动格式化，单卡无需再校验；
+> 存量债与本轮 merge/update 产生的格式漂移，都在这里和 Step 9 收尾各清一次。
 
 指标含义、阈值与红灯组合的解读见 [references/health-assessment.md](references/health-assessment.md)（含修复动作对照表）。
 
@@ -376,7 +384,7 @@ deprecated: X 条
 
 - [ ] KPI 三条验收：活跃卡净变化 ≤0、零复用率下降、检索抽查不回退（报告含期初/期末对比）
 - [ ] `agenote reindex` 已执行
-- [ ] `agenote lint --fix` 无残留错误
+- [ ] `agenote lint --fix` 后 format / enum_drift / fingerprint 零残留（`missing_sections` 是信息性提示，不计）
 - [ ] `agenote fields --tech` 无格式变体/非技术栈噪音/单例长尾（Step 3.5）
 - [ ] `agenote commit -m "策展: ..."` 已执行（封装 git add+commit，见 Step 9）
 - [ ] 新增卡片元数据完整（category/tech/type/owner）
