@@ -4,18 +4,31 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.2.2] - 2026-10-20
+
+新增 `agenote inject` 子命令：指纹缓存、recall 门槛、单会话累计预算与状态
+文件从 bash / JS / Python 四份副本收成 CLI 单一实现，注入器退化为「传事件
++ 协议封包」的适配层——改注入语义不再需要跨宿主同步同一段逻辑。
+
+---
 
 ### Added
 
-- **`agenote inject` 子命令**：状态化注入决策（`--event session|prompt`），把指纹缓存、recall 门槛、单会话累计预算、状态文件与会话重置收成 CLI 的单一实现。此前这套三件套在 bash / JS / Python 四份副本里各写一遍（ADR 0005 记录的复制债），行为漂移只能靠人工同步。注入器退化为协议适配层，只传事件与预算。
-- **`[injection.hosts].dsh_enabled`**：DSH 宿主的 per-host 语义开关（`AGENOTE_INJECTION_HOSTS_DSH_ENABLED`）。
+- **`agenote inject` 子命令**：状态化注入决策（`--event session|prompt`），把指纹缓存、recall 门槛、单会话累计预算、状态文件与会话重置收成 CLI 的单一实现。此前这套三件套在 bash / JS / Python 四份副本里各写一遍（ADR 0005 记录的复制债），行为漂移只能靠人工同步。注入器退化为协议适配层，只传事件与预算。（c69306f）
+- **`[injection.hosts].dsh_enabled`**：DSH 宿主的 per-host 语义开关（`AGENOTE_INJECTION_HOSTS_DSH_ENABLED`）。（c69306f）
+
+### Changed
+
+- **zcode / claude / codex / hermes 注入器下沉到 `agenote inject`**：四份本地状态机删除，只调 CLI 并做协议封包；`spec/injection.toml` 的 `[append]` 数值段随之退役，门槛与累计预算的真相源回到 CLI SCHEMA。（41a8d02）
 
 ### Fixed
 
-- **`inject` 状态文件脏值导致整轮崩溃**：`cumulative` 被外部改坏（非数字）时按 0 处理，仍可正常注入；简报缓存值非字符串时不再复用。
-- **`inject --event session` 在 KB 不可用时跳过重置**：指纹为空也清零累计与去重键，避免 KB 恢复后把新会话的同 query 误判成 duplicate。
-- **`inject` 状态写入并发丢更新**：临时文件改用 `mkstemp` 唯一名，session / prompt 事件并发写同一会话不再互相截断。
+- **`inject` 状态文件脏值导致整轮崩溃**：`cumulative` 被外部改坏（非数字）时按 0 处理，仍可正常注入；简报缓存值非字符串时不再复用。（ec51b88）
+- **`inject --event session` 在 KB 不可用时跳过重置**：指纹为空也清零累计与去重键，避免 KB 恢复后把新会话的同 query 误判成 duplicate。（ec51b88）
+- **`inject` 状态写入并发丢更新**：临时文件改用 `mkstemp` 唯一名，session / prompt 事件并发写同一会话不再互相截断。（ec51b88）
+- **`injectors/README.md` 幻影 env 名**：文档写的 `AGENOTE_INJECTION_MIN_QUERY` CLI 从不读取，实际旋钮是 `AGENOTE_INJECTION_RECALL_MIN_QUERY`；codex 脚本两个未登记的 GENERATED 死块一并删除。（48b671a）
+- **bash 注入器调用无超时**：`_agenote_inject` 补 `timeout 10`，挂起的 CLI 不再拖住宿主 hook。（48b671a）
+- **`--host` 帮助清单漏 dsh**。（d811afa）
 
 ## [0.2.1] - 2026-10-12
 
