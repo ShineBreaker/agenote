@@ -36,6 +36,8 @@ DeepSeek Harness（DSH）的 [agenote](https://github.com/ShineBreaker/agenote) 
 
 它存在的理由只有一个：DSH 的文件沙箱（`@deepseek-ai/dsh-sandbox`）把可写根写死为「会话 cwd + `/tmp` + `os.tmpdir()`」，而知识库在 `~/Documents/Org/agenote`——`workspace-write` / `read-only` 会话里 agent 用 bash 跑 `agenote add` 会被拒（只读文件系统）。插件在宿主进程里 spawn 的子进程不经过 `ctx.shell` 的文件围栏，因此写入可以落地，`never` 审批策略下也不受影响。单次升权（`sandbox_permissions: danger-full-access`）不是替代品：`ask` 下每条弹审批、`never` 下确定性拒绝。
 
+模型仍可能照 skill 的 CLI 指引先跑 bash。这时插件在 `tools/post-execute` 上兜底：命令行是 agenote 写命令、且结果带沙箱拒绝形态（`只读文件系统` / `[sandbox: file access denied`）时，追加一条 `<injected source="agenote">` 提示，指出改用 `agenote_write`、`args` 怎么填。只读命令与成功的写入都不触发。
+
 ## 安装
 
 ```bash
@@ -93,6 +95,7 @@ profile 为 `patchReload: live` 时（web profile 默认如此），新 bundle �
 - **配置走 Standard Schema，不手写 normalize**。插件导出 `Config`（Standard Schema v1 节点，`lib.js` 里手搓的 schemastery 最小子集，语义逐条对齐上游），Cordis 加载时用它校验 cordis.yml 行下发的 config 并填默认值；非法值（如 `debounceMs: -1`、`signals: []`）在加载期抛 `ValidationError`，而不是被静默回退。字段与默认值的单一真相源在 `hooks.js` / `commands.js` / `tools.js` 的 `Config` 声明里，新增可调项必须加在那里。
 - **空闲兜底以「跑过工具的轮次」为门槛**，不用裸 turn 数。turn 数无法区分「完成了一段工作」与「回答了一个问题」——纯对话轮同样推进 turn，会导致兜底在纯聊天上误报（实测发生过）。判据是 `workedThisTurn`（仅在该轮 `tools/result` 触发过时才成立）。
 - **写入工具在宿主进程执行，是沙箱边界的补丁而不是通用逃逸口**。DSH 文件沙箱的可写根只有「会话 cwd + `/tmp` + `os.tmpdir()`」（`@deepseek-ai/dsh-sandbox` 的 `writableRoots`），而知识库在 `~/Documents/Org/agenote`；`workspace-write` / `read-only` 会话里 bash 跑写命令必被拒。`tools.js` 用 `node:child_process.spawn` 在宿主进程执行 CLI（不经 `ctx.shell`），但把可执行命令钉死在 agenote 写命令白名单上：不接受任意 `argv[0]`、不导入 shell、`viz`（会调 `xdg-open` 弹宿主窗口）与只读命令都不在表内。
+- **写入引导只在 DSH 插件侧做，不改 `agenote-skills`**。skill 是 pi / zcode / hermes / DSH 共用的单一真相源，DSH 的沙箱差异属于宿主适配，塞进 skill 会污染其他宿主。引导因此落在两处：工具描述（事前告诉模型该用什么）与 `tools/post-execute` 纠偏（事后补救）。纠偏只在失败时注入、不改写工具结果，异常一律回落为原结果。
 - **不重复实现行为规范**。信号清单、写入流程、卡片格式全部归 `agenote-skills`；插件只做「事件触发 + 命令快捷入口」。
 - **归因**。所有 CLI 调用都带 `AGENOTE_AGENT=dsh`（`lib.js:runKb` / `runKbAsync`）。该变量只给卡片打归因标签，不做写入隔离，但不带的话归因会错误落到默认 agent（`omp`）。
 

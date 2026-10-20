@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 宿主侧 `agenote_write` 工具（`tools.js`）：白名单透传 agenote 写命令，`stdin` 承载正文，写入不受会话文件沙箱约束。
 - `lib.js` 新增 `runKbAsync`：`spawn` + Promise，工具执行不阻塞宿主事件循环。
+- `tools/post-execute` 纠偏：bash 跑 agenote 写命令被沙箱拒（`只读文件系统` / `[sandbox: file access denied`）时，注入提示指向 `agenote_write`；只读命令与成功写入不触发。skill 是跨宿主共用真相源，引导只落在插件侧。
 
 ### Fixed
 

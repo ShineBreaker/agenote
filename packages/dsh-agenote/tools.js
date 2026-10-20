@@ -13,7 +13,7 @@
 // 边界：只透传白名单内的写命令，argv 数组传参（不经 shell）；卡片格式与写入
 // 规范仍归 agenote-skills 与 agenote CLI，本文件不复制任何知识库逻辑。
 
-import { runKbAsync, schema } from "./lib.js";
+import { createUserMessage, runKbAsync, schema } from "./lib.js";
 
 export const name = "agenote-tools";
 
@@ -61,6 +61,76 @@ const WRITE_COMMANDS = [
 ];
 
 const WRITE_COMMAND_SET = new Set(WRITE_COMMANDS);
+
+// ─── 被拦后的纠正提示 ───────────────────────────────────────────────────────
+//
+// skill 里的写入指引写的是 CLI 命令（`agenote add ...`）。模型照 skill 先跑 bash、
+// 撞上文件围栏是常见路径——工具描述只能影响"要不要用它"，拦不住"先试 CLI"。
+// 这里在 bash 结果带沙箱拒绝形态时补一条提示，把刚才那条写命令指回工具。
+
+/** 知识库默认位置，只用于提示文本（agenote 的 kb_root 可配置，故不据此判定路径）。 */
+const AGENOTE_KB_HINT = "~/Documents/Org/agenote";
+
+/** 命令里是否出现 agenote 写命令；长名优先，避免 inbox 抢走 inbox-archive。 */
+const WRITE_INVOCATION = new RegExp(
+  String.raw`\bagenote\s+(?:--domain\s+\w+\s+)?(${[...WRITE_COMMANDS].sort((a, b) => b.length - a.length).join("|")})\b`,
+);
+
+/** 沙箱拒绝的两种可观察形态：bash 子进程内部 open 失败，或 harness 的显式标记。 */
+const SANDBOX_DENIAL = /只读文件系统|Read-only file system|EROFS|\[sandbox: file access denied/i;
+
+const INJECTION_SOURCE = { kind: "plugin:agenote-tools" };
+
+/** 注入包裹（跨插件约定）：机器注入与用户真实输入靠 source 属性区分。 */
+function wrapInjection(text, source) {
+  // 命令原文由模型生成，闭合标签必须剔除，否则包裹会被截断。
+  return `<injected source="${source}">\n${text.replace(/<\/injected/gi, "")}\n</injected>`;
+}
+
+function denialHintText(command) {
+  return [
+    `[agenote] 这条 \`agenote ${command}\` 被会话文件沙箱拦了：知识库在 ${AGENOTE_KB_HINT}，不在会话工作区内。`,
+    `改用 agenote_write 工具重试——command="${command}"，args 与 CLI 参数相同，正文放进 stdin。`,
+    "只读命令（search/list/get/health/stats）仍可直接用 bash。",
+  ].join("\n");
+}
+
+function contentText(result) {
+  return (result?.content ?? [])
+    .filter((block) => block?.type === "text")
+    .map((block) => String(block.text ?? ""))
+    .join("\n");
+}
+
+/**
+ * 监听 bash 结果：命令行是 agenote 写命令、且结果带沙箱拒绝形态时追加一条纠正
+ * 提示。只在失败时触发，正常执行的 bash 不受影响；任何异常都回落为原结果。
+ */
+function installDenialHint(ctx) {
+  ctx.on("tools/post-execute", async (exec, result, next) => {
+    const downstream = await next();
+    try {
+      if (exec?.name !== "bash") return downstream;
+      if (downstream.kind !== "accept" && downstream.kind !== "block") return downstream;
+      const command = exec.arguments?.command;
+      if (typeof command !== "string" || command.length === 0) return downstream;
+      const hit = WRITE_INVOCATION.exec(command);
+      if (hit === null) return downstream;
+      if (!SANDBOX_DENIAL.test(contentText(result))) return downstream;
+      const context = createUserMessage({
+        content: [{ type: "text", text: wrapInjection(denialHintText(hit[1]), "agenote") }],
+        source: INJECTION_SOURCE,
+      });
+      return {
+        ...downstream,
+        additionalContexts: [...(downstream.additionalContexts ?? []), context],
+      };
+    } catch {
+      // 提示是尽力而为的旁路：任何异常都不能反噬工具结果本身。
+      return downstream;
+    }
+  });
+}
 
 /** 工具结果截断上限：工具输出进上下文，留够诊断用即可。 */
 const OUTPUT_MAX_CHARS = 20_000;
@@ -145,4 +215,5 @@ const definition = {
 export function apply(ctx, cfg) {
   if (!cfg.enabled) return;
   ctx.tools.register(definition);
+  installDenialHint(ctx);
 }

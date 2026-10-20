@@ -8,6 +8,7 @@ DeepSeek Harness（DSH）的 agenote 集成插件：Cordis bundle，纯 ESM、�
 
 - CLI 调用一律收敛在 `lib.js`：只读/毫秒级调用走 `runKb`（`spawnSync`），工具执行走 `runKbAsync`（`spawn` + Promise，不阻塞宿主事件循环）。两者同契约：数组传参（无 shell 注入面）、`AGENOTE_AGENT=dsh` 归因、统一超时与错误降级。
 - **宿主侧工具（`tools.js`）是沙箱边界的补丁，不是通用逃逸口**：DSH 文件沙箱只放行会话 cwd + `/tmp`，知识库在 `~/Documents/Org/agenote`，所以写入必须由宿主进程 spawn。可执行命令钉死在 agenote 写命令白名单上——不接受任意 `argv[0]`、不导入 shell；`viz`（会开宿主窗口）与只读命令不入表。
+- **写入引导只在插件侧做，不改 `agenote-skills`**：skill 是 pi/zcode/hermes/DSH 共用的真相源，DSH 的沙箱差异不进 skill。引导落在两处——工具描述（事前）与 `tools/post-execute` 纠偏（事后：bash 写命令 + 沙箱拒绝形态 → 注入提示指向 `agenote_write`）。纠偏只在失败时触发、不改写结果、异常回落原结果。
 - 投递二分：背景知识（健康度摘要）走 `ctx.systemPrompt.section()`——随请求进 system prompt，不产生 turn；任务提示（review/curate）走 `agent.followup()`——排独立 turn 并唤醒 driver。
 - subagent 一律豁免（判据 `session.header.origin === 'subagent'`），其事件不进信号检测、不武装 idle 计时器。
 - 状态二分：瞬态（timer、最近用户文本）放 per-session `Map`；跨 resume/重启必须存活的（防抖、「已触发」）从 durable log 推导（`deliveredByUs()`）。模块级可变状态两头都不沾——多会话串台、resume 即重置——不许存在。
