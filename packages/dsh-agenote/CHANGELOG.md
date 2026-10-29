@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-10-29
+
+压缩不再让注入判定失效：召回 query 与「已触发过」都改读 durable log，压缩后
+idle 兜底不会二次注入；`agenote_write` 顺带修掉最高频的一类工具失败。
+
+---
+
+### Fixed
+
+- **压缩后注入判定失效**：`lastUserText` 与「已触发过」从 surface 投影改读 durable log（`session.snapshotEvents()`）。compact-checkpoint 会把 surface 上一整段节点 replace 掉，被替换区间里的注入消息与用户消息都不再出现在 `surface.nodes` 上——按 surface 判定会让「已触发过」归零、idle 兜底二次注入，召回 query 也会退回更早的消息。拿不到快照时退化为不注入，不抛错。（f13482a）
+- **`agenote_write` 收到重复命令名**：归一化 args，丢掉与 `command` 重复的首个位置参数。模型常把整条 CLI 命令行照抄进 args，CLI 收到 `agenote connect connect ...` 即报 unrecognized arguments——实测 27 次工具失败里 10 次是这一形态。只丢首个且完全相同的参数，命令名不可能是合法卡片 ID 或标题，无误删风险。（f13482a）
+
 ## [0.1.3] - 2026-10-20
 
 记忆简报与按最近用户消息的每轮召回进入 `systemPrompt.context` 动态上下文
