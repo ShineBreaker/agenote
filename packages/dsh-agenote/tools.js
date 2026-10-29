@@ -63,6 +63,25 @@ const WRITE_COMMANDS = [
 
 const WRITE_COMMAND_SET = new Set(WRITE_COMMANDS);
 
+/**
+ * 归一化 args：丢掉与 command 重复的首个位置参数。
+ *
+ * 模型常把整条 CLI 命令行照抄进 args（`command="connect"` + `args=["connect",
+ * "id_a", "id_b"]`），结果 CLI 收到 `agenote connect connect id_a id_b` ——
+ * 第二个 connect 被当成多余的未知参数，报 "unrecognized arguments"。实测
+ * 27 次工具失败里 10 次是这一形态，是最高频的一类。
+ *
+ * 只丢**首个**且与 command 完全相同的参数：命令名不可能是合法的卡片 ID、
+ * 标题或章节名，不存在误删真实参数的可能。其余参数原样透传。
+ *
+ * 导出供离线断言（selftest.sh 的 dsh 段）——纯函数，无副作用。
+ */
+export function normalizeArgs(command, args) {
+  const list = Array.isArray(args) ? args.map(String) : [];
+  if (list[0] === command) list.shift();
+  return list;
+}
+
 // ─── 被拦后的纠正提示 ───────────────────────────────────────────────────────
 //
 // skill 里的写入指引写的是 CLI 命令（`agenote add ...`）。模型照 skill 先跑 bash、
@@ -150,7 +169,7 @@ const definition = {
     "写入 agenote 知识库（宿主侧执行，不受会话文件沙箱限制）。" +
     "知识库位于 ~/Documents/Org/agenote，不在会话工作区内：workspace-write / read-only 会话里用 bash 跑 `agenote add` 会被文件沙箱拒绝（只读文件系统），写入一律走本工具。" +
     "只读查询（search/list/get/health/stats）仍可直接用 bash。\n" +
-    "参数：command 是白名单内的写命令；args 逐项透传为 `agenote <command> <args...>` 的后续参数；stdin 作为子进程标准输入（`--stdin` 的正文）。\n" +
+    "参数：command 是白名单内的写命令；args 逐项透传为 `agenote <command> <args...>` 的后续参数（**不要在 args 里再写一遍 command**）；stdin 作为子进程标准输入（`--stdin` 的正文）。\n" +
     '示例（写一张经验卡）：command="add"，args=["--title","标题","--category","guix","--tech","guix","--stdin"]，stdin="正文"。',
   parameters: {
     type: "object",
@@ -197,7 +216,7 @@ const definition = {
         `agenote_write: 命令 ${JSON.stringify(command)} 不在写入白名单内（可用：${WRITE_COMMANDS.join(", ")}）`,
       );
     }
-    const extra = Array.isArray(args.args) ? args.args.map(String) : [];
+    const extra = normalizeArgs(command, args.args);
     const stdin = typeof args.stdin === "string" ? args.stdin : undefined;
     const argv = [command, ...extra];
     const res = await runKbAsync(argv, {

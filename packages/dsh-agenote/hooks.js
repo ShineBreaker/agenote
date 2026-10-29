@@ -160,18 +160,40 @@ export function extractText(content) {
  * 从 durable log 取最近一条**真实用户**消息（source.kind === 'user'）。
  * 不用内存里的 lastUserText：那个值会在完成信号触发后被清空，而动态上下文
  * 需要稳定的「本轮用户说了什么」；log 是唯一真相源，resume 后同样可用。
+ *
+ * 读 log 而非 surface：surface 是「模型当前可见」的投影，会被压缩
+ * （compact-checkpoint 的 surface replace）整段替换掉——被替换掉的区间里
+ * 用户消息不再出现在 surface.nodes 上。读 surface 会让召回 query 退回更早
+ * 的消息，压缩一次就丢一段上下文。
  */
 export function lastUserText(session) {
-  const surface = session?.surface?.nodes;
-  if (surface === undefined) return "";
-  const seqs = [...surface];
-  for (let i = seqs.length - 1; i >= 0; i--) {
-    const event = session.eventAt(seqs[i]);
+  const events = logEvents(session);
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
     if (event?.type === "user/message" && event.data?.source?.kind === "user") {
       return extractText(event.data.content);
     }
   }
   return "";
+}
+
+/**
+ * 读会话的 durable log（全部事件，按 seq 升序）。
+ *
+ * `session.snapshotEvents()` 是 DSH 提供的完整日志快照 API：它返回**整个
+ * append-only log**，与 surface 投影无关——压缩只改 surface，不改 log。
+ * 故本模块的「已触发过」判定与「最近用户消息」都从 log 推导。
+ *
+ * 兜底：拿不到快照时返回空数组（调用方据此判定「无历史」，退化为不注入），
+ * 不抛错——注入是纯增益路径。
+ */
+function logEvents(session) {
+  try {
+    const events = session?.snapshotEvents?.();
+    return Array.isArray(events) ? events : [];
+  } catch {
+    return [];
+  }
 }
 
 /** 本插件投递的消息统一带这个 source（durable log 里以此识别自注入）。 */
@@ -219,13 +241,18 @@ const PROMPT_SOURCES = new Set([
  * 重置——web 刷新即 resume，同一会话干完活又触发一次；进程重启同理。而
  * durable log 是会话的单一真相源：扫一遍历史，本插件注入过几条、最后一条
  * 何时落盘，resume/重启后答案不变，防抖天然稳定。
+ *
+ * 判据读 log 而非 surface：压缩（compact-checkpoint）会把 surface 上的一整段
+ * 节点 replace 掉，被替换区间里的注入消息不再出现在 surface.nodes 上——按
+ * surface 判定会让"已触发过"在压缩后归零，idle 兜底随即二次触发（实测同一
+ * 会话间隔数小时重复注入 2~3 次）。log 是 append-only，压缩不改它。
+ *
+ * 返回最后一次注入的事件（无则 undefined）：倒序扫，命中即停。
  */
-function deliveredByUs(session) {
-  const events = [];
-  const surface = session?.surface?.nodes;
-  if (surface === undefined) return events;
-  for (const seq of surface) {
-    const event = session.eventAt(seq);
+function lastDeliveredByUs(session) {
+  const log = logEvents(session);
+  for (let i = log.length - 1; i >= 0; i--) {
+    const event = log[i];
     if (event?.type !== "user/message") continue;
     const source = event.data?.source;
     // source 形态：v3 旧日志 {kind:"plugin", plugin:<名>}；v4 {kind:"plugin:<名>"}
@@ -234,9 +261,9 @@ function deliveredByUs(session) {
       (typeof source?.kind === "string" &&
         source.kind.startsWith("plugin:") &&
         PROMPT_SOURCES.has(source.kind.slice(7)));
-    if (delivered) events.push(event);
+    if (delivered) return event;
   }
-  return events;
+  return undefined;
 }
 
 export function apply(ctx, cfg) {
@@ -400,10 +427,9 @@ export function apply(ctx, cfg) {
     state.toolActivity = false;
 
     // durable log 推导：本插件在本会话的既往注入（防抖依据，跨 resume 稳定）
-    const own = deliveredByUs(agent.session);
-    const lastOwn = own[own.length - 1];
+    const lastOwn = lastDeliveredByUs(agent.session);
     const lastTrigger = lastOwn?.time ?? 0;
-    const everFired = own.length > 0;
+    const everFired = lastOwn !== undefined;
 
     // 显式完成信号
     if (cfg.completionSignals) {
@@ -436,7 +462,7 @@ export function apply(ctx, cfg) {
       state.timer = undefined;
       // timer 到点时日志里可能有新的注入（信号路径在别的轮次触发过），
       // 重新推导，已经触发过就静默退出。
-      if (deliveredByUs(agent.session).length > 0) return;
+      if (lastDeliveredByUs(agent.session) !== undefined) return;
       try {
         deliver(
           agent,
