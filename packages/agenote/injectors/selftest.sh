@@ -343,6 +343,7 @@ const session = {
   header: { origin: "main", cwd: tmp },
   surface: { nodes: [0] },
   eventAt: (seq) => events[seq],
+  snapshotEvents: () => events,
 };
 const followed = [];
 const agent = { id: "a1", session, followup: (m) => followed.push(m) };
@@ -392,6 +393,68 @@ JSEOF
     && ok "subagent 会话不注入 ✓" || bad "subagent 未豁免"
   printf '%s' "$DOUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["review"],d' 2>/dev/null \
     && ok "完成信号触发 review 提示 ✓" || bad "完成信号未触发"
+  DOUT3="$(node --input-type=module - "$DSH_SRC" "$T" <<'JSEOF3'
+const [src, tmp] = process.argv.slice(2);
+const { pathToFileURL } = await import("node:url");
+const hooks = await import(pathToFileURL(`${src}/hooks.js`).href);
+const tools = await import(pathToFileURL(`${src}/tools.js`).href);
+
+const handlers = new Map();
+const ctx = {
+  on: (name, fn) => handlers.set(name, fn),
+  systemPrompt: { section: () => {}, context: () => {} },
+  logger: { warn: () => {} },
+};
+hooks.apply(ctx, {
+  enabled: true, status: false, brief: false, recall: false,
+  completionSignals: true, idleFallback: true,
+  signals: hooks.COMPLETION_SIGNALS, debounceMs: 300000,
+  idleMs: 300000, statusTtlMs: 300000,
+});
+
+// 压缩场景：durable log 里有本插件此前的注入消息，但 surface 已被
+// compact-checkpoint 整段替换掉（注入节点不在 surface 上）。
+// 「已触发过」必须按 log 判定 → 不再二次注入。
+const injected = {
+  type: "user/message",
+  time: Date.now() - 60000,
+  data: {
+    source: { kind: "plugin:agenote-hooks" },
+    content: [{ type: "text", text: "<agenote-hook>此前注入</agenote-hook>" }],
+  },
+};
+const userMsg = {
+  type: "user/message",
+  data: { source: { kind: "user" }, content: [{ type: "text", text: "搞定了" }] },
+};
+const log = [userMsg, injected];
+const session = {
+  header: { origin: "main", cwd: tmp },
+  surface: { nodes: [0] },          // 注入节点已被压缩挤出 surface
+  eventAt: (seq) => log[seq],
+  snapshotEvents: () => log,
+};
+const followed = [];
+const agent = { id: "a3", session, followup: (m) => followed.push(m) };
+
+handlers.get("agent/inbox/inserted")(
+  { agent, message: { source: { kind: "user" }, content: [{ type: "text", text: "搞定了" }] } },
+);
+handlers.get("agent/turn-stopping")({ agent });
+
+console.log(JSON.stringify({
+  noRepeatAfterCompact: followed.length === 0,
+  dedupeCommand: JSON.stringify(tools.normalizeArgs("connect", ["connect", "a", "b"])) === JSON.stringify(["a", "b"]),
+  keepNormalArgs: JSON.stringify(tools.normalizeArgs("connect", ["a", "b"])) === JSON.stringify(["a", "b"]),
+}));
+JSEOF3
+  )" 2>/dev/null
+  printf '%s' "$DOUT3" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["noRepeatAfterCompact"],d' 2>/dev/null \
+    && ok "压缩后按 durable log 判定「已触发」，不二次注入 ✓" \
+    || bad "压缩后重复注入 review 提示（曾按 surface 判定，压缩即归零）"
+  printf '%s' "$DOUT3" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["dedupeCommand"] and d["keepNormalArgs"],d' 2>/dev/null \
+    && ok "agenote_write args 去掉重复的 command 名 ✓" \
+    || bad "agenote_write args 归一化异常"
   DOUT2="$(AGENOTE_INJECTION_ENABLED=false node --input-type=module - "$DSH_SRC" "$T" <<'JSEOF2'
 const [src, tmp] = process.argv.slice(2);
 const { pathToFileURL } = await import("node:url");
@@ -410,7 +473,12 @@ hooks.apply(ctx, {
 const events = [{ type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "BM25 检索参数是什么来着" }] } }];
 const agent = {
   id: "a2",
-  session: { header: { origin: "main", cwd: tmp }, surface: { nodes: [0] }, eventAt: (s) => events[s] },
+  session: {
+    header: { origin: "main", cwd: tmp },
+    surface: { nodes: [0] },
+    eventAt: (s) => events[s],
+    snapshotEvents: () => events,
+  },
 };
 console.log(JSON.stringify({ disabled: contexts[0].text({ agent }) === "" }));
 JSEOF2
