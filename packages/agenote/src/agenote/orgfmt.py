@@ -99,11 +99,36 @@ def format_file(
     return changes
 
 
+def _resolve_format_target(target: str, ctx) -> str:
+    """把 format 的目标参数解析成卡片文件路径。
+
+    顺序：已存在的路径 → KB 根相对路径 → 卡片 ID（精确或文件名片段）。
+    都解析不到时原样返回，让下游报「读取或写入失败（ENOENT）」——错误信息
+    里带原目标，调用方能看出自己传错了什么。
+    """
+    from agenote.core import _resolve_card
+
+    p = Path(target)
+    if p.is_file():
+        return str(p)
+    # KB 根相对路径（experiences/<类>/<卡>.org）：调用方常在 KB 根下工作，
+    # 但 CLI 的 cwd 不一定是 KB 根，纯相对路径会解析到别处。
+    rooted = ctx.root / target
+    if rooted.is_file():
+        return str(rooted)
+    card = _resolve_card(target, ctx)
+    return str(card) if card is not None else str(target)
+
+
 def cmd_format(args, ctx=None) -> None:
     """agenote format 子命令：格式化卡片（默认直接写盘）。
 
     agenote 域默认 strict=True（一次完成全部可自动化的格式化）。
     --check 只检查不写盘；目标文件缺省时扫全部 experiences。
+
+    目标参数与 get/touch/update 一致，接受三种写法：存在的文件路径、卡片 ID
+    （精确或文件名片段）、KB 根相对路径（experiences/<类>/<卡>.org）。
+    agent 常按其它子命令的习惯直接传卡片 ID——只认路径会让它报 ENOENT。
     """
     import argparse  # 局部 import，避免顶层依赖
 
@@ -118,6 +143,8 @@ def cmd_format(args, ctx=None) -> None:
         target_files = sorted(
             str(f) for f in ctx.experiences.rglob("*.org") if not f.is_symlink()
         )
+    else:
+        target_files = [_resolve_format_target(t, ctx) for t in target_files]
     if not target_files:
         print("未找到 .org 文件")
         return
