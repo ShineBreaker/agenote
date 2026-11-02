@@ -138,6 +138,11 @@ def _compute_base_metrics(ctx=None) -> dict:
 
     数据源：_load_index(ctx)（快），孤立率需扫 experiences/ 正文找 [[file: 链接。
     合并自 cards.cmd_health(1141) 与 agenote_mcp.agenote_health(480) 的重复逻辑。
+
+    口径：所有比率的分母是**活跃卡**（status != archived）。归档卡本就无链接、
+    无使用，计入会稀释比率并与 analyze() 的分布口径冲突（同一份报告自相矛盾）。
+    `total` / `status` 仍是全量，供面板展示归档数量；`archive_rate` 单独给出
+    归档率（全库 + 按类型），保留「哪些类型淘汰得最多」这个信号。
     """
     ctx = ctx or default_context()
     ensure_dirs(ctx)
@@ -146,6 +151,9 @@ def _compute_base_metrics(ctx=None) -> dict:
     total = len(cards)
 
     status_counts = Counter(c.get("status", "done") for c in cards)
+    active = [c for c in cards if c.get("status") != "archived"]
+    active_total = len(active)
+    active_ids = {c.get("id") for c in active}
 
     # 孤立率：无 [[file: 或 [[id: 链接的卡片占比
     # 两种链接都算「被引用」：[[file:foo.org]] 是传统的 wikilink，
@@ -158,26 +166,39 @@ def _compute_base_metrics(ctx=None) -> dict:
         content = f.read_text(encoding="utf-8")
         if "[[file:" in content or "[[id:" in content:
             linked_cards.add(parse_org_prop(content, "ID") or f.stem.split("-")[0])
-    isolated = total - len(linked_cards)
-    isolated_pct = round(isolated / total * 100) if total > 0 else 0
+    isolated = active_total - len(linked_cards & active_ids)
+    isolated_pct = round(isolated / active_total * 100) if active_total > 0 else 0
 
     # 过时率（status 维度）
     stale = status_counts.get("stale", 0)
-    stale_pct = round(stale / total * 100) if total > 0 else 0
+    stale_pct = round(stale / active_total * 100) if active_total > 0 else 0
 
     # 类型偏斜
-    type_counts = Counter(c.get("type", "unknown") for c in cards)
+    type_counts = Counter(c.get("type", "unknown") for c in active)
     max_type, max_type_count = (
         type_counts.most_common(1)[0] if type_counts else ("none", 0)
     )
-    max_type_pct = round(max_type_count / total * 100) if total > 0 else 0
+    max_type_pct = round(max_type_count / active_total * 100) if active_total > 0 else 0
 
     # 薄弱类别
-    cat_counts = Counter(c.get("category", "unknown") for c in cards)
+    cat_counts = Counter(c.get("category", "unknown") for c in active)
     weak_cats = {
         cat: cnt
         for cat, cnt in cat_counts.items()
         if cnt < WEAK_CATEGORY_MIN
+    }
+
+    # 归档率：全库 + 按类型（全量口径，不受活跃子集影响）
+    all_type_counts = Counter(c.get("type", "unknown") for c in cards)
+    archived_type_counts = Counter(
+        c.get("type", "unknown") for c in cards if c.get("status") == "archived"
+    )
+    archive_rate = {
+        "pct": round((total - active_total) / total * 100) if total > 0 else 0,
+        "by_type": {
+            typ: round(archived_type_counts.get(typ, 0) / n * 100)
+            for typ, n in all_type_counts.most_common()
+        },
     }
 
     # MEMORY 统计（feedback / project）
@@ -185,6 +206,8 @@ def _compute_base_metrics(ctx=None) -> dict:
 
     return {
         "total": total,
+        "active_total": active_total,
+        "archive_rate": archive_rate,
         "status": dict(status_counts),
         "isolated": {
             "pct": isolated_pct,
@@ -453,7 +476,7 @@ def cmd_health(args: argparse.Namespace, ctx=None) -> None:
     )
     print()
 
-    print("── 健康指标 ──")
+    print("── 健康指标（分母：活跃卡，已排除归档）──")
     iso = base["isolated"]
     print(f"  孤立率:   {iso['pct']}% [阈值 <15%] {_icon(iso['status'])}")
     st = base["stale"]
@@ -467,8 +490,12 @@ def cmd_health(args: argparse.Namespace, ctx=None) -> None:
         print(f"  薄弱类别: 无 [阈值 ≥3] ✅")
 
     print()
-    print(f"── 分布 ──")
+    print(f"── 分布（活跃 {base['active_total']} 张）──")
     print(f"  近7天: {deep['recent_7d']} | 近30天: {deep['recent_30d']}")
+    if base["status"].get("archived", 0):
+        ar = base["archive_rate"]
+        by_type = " / ".join(f"{t} {p}%" for t, p in ar["by_type"].items())
+        print(f"  归档率: {ar['pct']}%" + (f"（{by_type}）" if by_type else ""))
     if "avg_lines" in deep:
         print(
             f"  内容长度: 平均 {deep['avg_lines']} 行 (最短 {deep['min_lines']}, 最长 {deep['max_lines']})"

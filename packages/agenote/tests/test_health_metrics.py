@@ -59,7 +59,42 @@ def test_base_metrics_empty_kb(monkeypatch, tmp_path):
     ctx = _ctx(monkeypatch, [], tmp_path)
     m = health._compute_base_metrics(ctx)
     assert m["total"] == 0
+    assert m["active_total"] == 0
+    assert m["archive_rate"] == {"pct": 0, "by_type": {}}
     assert m["isolated"] == {"pct": 0, "count": 0, "threshold": 15, "status": "ok"}
+
+
+def test_base_metrics_excludes_archived(monkeypatch, tmp_path):
+    """比率分母是活跃卡；归档卡只进 archive_rate，不进偏斜/薄弱/孤立。"""
+    cards = [
+        _card("A1"), _card("A2", status="stable"), _card("A3"),
+        _card("X1", type_="doc", cat="solo", status="archived"),
+        _card("X2", type_="doc", cat="solo", status="archived"),
+    ]
+    linked = "* DONE t\n:PROPERTIES:\n:ID: A1\n:END:\nsee [[file:a2.org]]\n"
+    ctx = _ctx(monkeypatch, cards, tmp_path, [("a1.org", linked)])
+    m = health._compute_base_metrics(ctx)
+
+    assert (m["total"], m["active_total"]) == (5, 3)
+    # 活跃 3 张全是 debug → 100%；若混入归档则是 3/5 = 60%
+    assert (m["type_skew"]["type"], m["type_skew"]["pct"]) == ("debug", 100)
+    # solo 只剩归档卡，不该再算薄弱类别
+    assert m["weak_categories"] == {}
+    # 孤立率只看活跃卡：A1 有出链，A2/A3 没有 → 2/3
+    assert (m["isolated"]["count"], m["isolated"]["pct"]) == (2, 67)
+    # 归档率保留全量信号
+    assert m["archive_rate"] == {"pct": 40, "by_type": {"debug": 0, "doc": 100}}
+
+
+def test_stale_pct_uses_active_denominator(monkeypatch, tmp_path):
+    cards = [
+        _card("S1", status="stale"),
+        _card("D1"),
+        _card("X1", status="archived"),
+    ]
+    ctx = _ctx(monkeypatch, cards, tmp_path)
+    m = health._compute_base_metrics(ctx)
+    assert (m["stale"]["count"], m["stale"]["pct"]) == (1, 50)  # 1/2，不是 1/3
 
 
 def test_detect_duplicates_threshold_boundary():
