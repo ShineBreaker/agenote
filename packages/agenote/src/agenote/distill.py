@@ -92,11 +92,15 @@ def _gather_candidates(cards: list[dict]) -> list[tuple[DistillCandidate, list[d
     - type == ascended（多轮试错验证）
     - usage_count >= MIN_USAGE_FOR_ASCEND（反复使用）
 
+    归档卡一律不入候选：内容已退役（多为已沉淀为 skill 的源卡），
+    否则候选簇会把归档卡算进 card_count/usage，误导晋升判断。
     同 (category, tech) 的入选卡片 ≥ MIN_CLUSTER_SIZE 才成候选。
     """
     # 先筛入选卡片
     eligible: list[dict] = []
     for c in cards:
+        if (c.get("status") or "").strip().lower() == "archived":
+            continue
         if c.get("type") == ASCENDED_TYPE:
             eligible.append(c)
             continue

@@ -14,10 +14,11 @@ import agenote.distill as distill
 import agenote.dream as dream
 
 
-def _card(cid, cat="tooling", tech="pytest", type_="debug", usage=0):
+def _card(cid, cat="tooling", tech="pytest", type_="debug", usage=0, status="done"):
     return {
         "id": cid, "title": f"t-{cid}", "category": cat, "tech": tech,
         "type": type_, "usage_count": usage, "created": "2026-09-01",
+        "status": status,
     }
 
 
@@ -45,6 +46,17 @@ def test_gather_needs_min_cluster_size():
 def test_gather_usage_count_path():
     n = distill.MIN_USAGE_FOR_ASCEND
     cards = [_card("C1", usage=n), _card("C2", usage=n), _card("C3", usage=n - 1)]
+    got = distill._gather_candidates(cards)
+    assert len(got) == 1 and got[0][0].card_ids == ["C1", "C2"]
+
+
+def test_gather_skips_archived():
+    """归档卡不得进入候选簇：否则已沉淀退役的源卡会抬 card_count 误导晋升。"""
+    cards = [
+        _card("C1", type_="ascended"),
+        _card("C2", type_="ascended"),
+        _card("C3", type_="ascended", status="archived"),
+    ]
     got = distill._gather_candidates(cards)
     assert len(got) == 1 and got[0][0].card_ids == ["C1", "C2"]
 
