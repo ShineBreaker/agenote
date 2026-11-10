@@ -48,8 +48,10 @@ HOSTS = ("zcode", "claude", "codex", "pi", "opencode", "hermes", "dsh")
 ENTRY_TYPES = ("U", "F", "P", "E", "R")
 # 预算裁剪的「先裁」顺序（保头降级：U 画像最后裁）
 TRIM_ORDER = ("R", "F", "P", "E", "U")
-# session 单行正文截断（纯展示层截断，刻意不进配置）
-LINE_MAX_CHARS = 160
+# session 短标题卡正文首行保留长度（纯展示层截断，刻意不进配置）
+LINE_MAX_CHARS = 100
+# 标题达到此长度即视为自身已是摘要：目录式只给标题，正文留给 `agenote get`
+TITLE_SELF_SUMMARY_CHARS = 40
 # recall 两行式正文摘要长度（设计 C1 规定值）
 RECALL_SUMMARY_CHARS = 200
 # 简报末尾固定指引（T8 先目录后正文；仅 session 模式附加）
@@ -318,16 +320,33 @@ def _first_line(e: dict) -> str:
 
 
 def _session_line(e: dict) -> tuple[str, bool]:
-    """session 单行渲染。返回 (行文本, 是否因单条目预算被截断)。
+    """session 单行渲染（目录式）。返回 (行文本, 是否因单条目预算被截断)。
+
+    标题达到 TITLE_SELF_SUMMARY_CHARS 即视为自身已是摘要，只给
+    `[类型|scope] 标题`——正文首行通常只是同一句话的复述，重复渲染是
+    session 简报体量的主要来源（实测 21% 字符为标题与正文重复）。短标题
+    （如项目 slug）单独出现没有语义，保留一行正文；正文已以标题开头时
+    不再重复标题。
 
     [context].session_entry_budget_chars 约束单个条目在 session 简报中的
-    行长度（默认 2000；标题无长度上限是唯一的现实超限源，正文首行恒被
-    LINE_MAX_CHARS 封顶）。超限截断行尾并打行内告警标记（U1）。
+    行长度（默认 2000；标题无长度上限是唯一的现实超限源）。超限截断行尾
+    并打行内告警标记（U1）。
     """
-    body = _first_line(e)
-    if len(body) > LINE_MAX_CHARS:
-        body = body[: LINE_MAX_CHARS - 1] + "…"
-    line = f"[{e['type']}|{_entry_scope(e)}] {e['title']} — {body}".rstrip()
+    prefix = f"[{e['type']}|{_entry_scope(e)}] "
+    title = e["title"]
+    if len(title) >= TITLE_SELF_SUMMARY_CHARS:
+        line = prefix + title
+    else:
+        body = _first_line(e)
+        if len(body) > LINE_MAX_CHARS:
+            body = body[: LINE_MAX_CHARS - 1] + "…"
+        if not body:
+            line = prefix + title
+        elif body.startswith(title):
+            line = prefix + body
+        else:
+            line = prefix + f"{title} — {body}"
+    line = line.rstrip()
     budget = _cfg_num("context", "session_entry_budget_chars", int)
     if budget < 1:
         die("[context].session_entry_budget_chars 需为正整数")

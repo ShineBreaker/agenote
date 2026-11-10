@@ -151,6 +151,46 @@ def test_session_ok_text_marker_and_selection(kb):
     assert "[F|user] cat 大文件卡顿" in res["content"]
 
 
+def test_session_line_is_directory_style_and_dedups(tmp_path, monkeypatch):
+    """长标题只给目录（正文留给 `agenote get`）；短标题保留正文且不重复标题。"""
+    import agenote.core as core
+
+    monkeypatch.setattr(core, "KB_ROOT", tmp_path)
+    monkeypatch.setenv("AGENOTE_MACHINE_KEY", "testhost")
+    long_title = "这条标题本身已经是完整摘要所以正文首行只是复述同一句话不该重复渲染"
+    mem = tmp_path / "MEMORY.org"
+    mem.write_text(
+        "#+title: MEMORY-test\n\n"
+        "* user\n"
+        f"** U001 {long_title}\n"
+        "   :PROPERTIES:\n"
+        "   :CREATED:  [2026-09-01]\n"
+        "   :UPDATED:  [2026-09-01]\n"
+        "   :TYPE:     U\n"
+        "   :SCOPE:    user\n"
+        "   :END:\n"
+        f"   # {long_title}\n"
+        "** U002 短卡\n"
+        "   :PROPERTIES:\n"
+        "   :CREATED:  [2026-09-01]\n"
+        "   :UPDATED:  [2026-09-01]\n"
+        "   :TYPE:     U\n"
+        "   :SCOPE:    user\n"
+        "   :END:\n"
+        "   # 短卡：slug 单独出现没有语义，正文补充才可读\n",
+        encoding="utf-8",
+    )
+    content = build_context_result(
+        _args(), types.SimpleNamespace(memory_org=mem, root=tmp_path)
+    )["content"]
+    # 长标题卡：目录式——标题只出现一次，该行不带正文分隔符
+    long_lines = [line for line in content.splitlines() if long_title in line]
+    assert len(long_lines) == 1
+    assert " — " not in long_lines[0]
+    # 短标题卡：正文保留（标题前缀不与正文重复渲染）
+    assert "slug 单独出现没有语义" in content
+
+
 def test_session_json_fields_and_content_equals_text(kb, capsys):
     text_res = build_context_result(_args(), kb)
     from agenote.context import cmd_context
@@ -353,7 +393,7 @@ def test_recall_min_score_default_is_calibrated():
     """SCHEMA 默认值必须是标定值而非占位 1.0（1.0 对真实语料形同虚设）。"""
     from agenote import config
 
-    assert float(config.get("injection", "recall_min_score")) == 8.0
+    assert float(config.get("injection", "recall_min_score")) == 11.0
 
 
 # ── 只读无副作用 ──────────────────────────────────────────────────────────────

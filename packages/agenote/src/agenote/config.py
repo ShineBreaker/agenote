@@ -256,10 +256,11 @@ SCHEMA: dict[str, dict[str, Key]] = {
             comment="recall 模式返回条数上限",
         ),
         "recall_min_score": Key(
-            8.0, env="AGENOTE_INJECTION_RECALL_MIN_SCORE",
-            comment="BM25 分数下限（低于不输出）。标定 2026-09-25：真实 reconcile 事实语料"
-            "（130 条条目）× 10 类 query 全量采样（600 样本），纯噪声上限 6.7、"
-            "人工核对的相关命中下限 9.6，取 8.0 居中分隔；语料长大后建议重标定",
+            11.0, env="AGENOTE_INJECTION_RECALL_MIN_SCORE",
+            comment="BM25 分数下限（低于不输出）。初标 2026-09-25：130 条条目语料"
+            "纯噪声上限 6.7、相关命中下限 9.6，取 8.0。2026-11-10 在 1006 张卡的真实"
+            "语料上重采样 5 类 query：无关词面命中 8.89–10.68、人工核对的相关命中"
+            "16.34–23.16，改取 11.0 分隔；语料继续长大后按同法重标定",
         ),
         "recall_min_query": Key(
             6, env="AGENOTE_INJECTION_RECALL_MIN_QUERY",
