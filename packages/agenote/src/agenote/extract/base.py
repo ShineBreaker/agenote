@@ -139,7 +139,7 @@ def pair_turns(
                 content=f"USER: {current_user.text[:TRUNC_USER]}\n\nASSISTANT: {turn.text[:TRUNC_ASSISTANT]}",
                 trust_score=DEFAULT_TRUST,
                 weight=weight,
-                tags=[directory.split("/")[-1] if directory else "unknown"],
+                tags=[Path(directory).name if directory else "unknown"],
                 timestamp=current_user.timestamp,
             )
             current_user = None

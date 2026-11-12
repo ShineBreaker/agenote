@@ -143,7 +143,9 @@ def extract_crush() -> tuple[list, list[str]]:
             if db_path.resolve() == CRUSH_GLOBAL_DB.resolve():
                 project_dir = "(global)"
             else:
-                project_dir = str(db_path).rsplit("/.crush/", 1)[0]
+                # db_path 恒为 <proj>/.crush/crush.db；用 parent 上溯而非
+                # 字符串切 "/.crush/"，Windows 反斜杠路径同样成立
+                project_dir = str(db_path.parent.parent)
             sessions = conn.execute(
                 "SELECT id, title, created_at, updated_at FROM sessions"
             ).fetchall()

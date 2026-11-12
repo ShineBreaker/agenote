@@ -141,7 +141,9 @@ def _serve(
 
         signal.signal(signal.SIGINT, _stop)
         signal.signal(signal.SIGTERM, _stop)
-        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+        # SIGPIPE 仅 POSIX 存在；Windows 无此信号，无需忽略
+        if hasattr(signal, "SIGPIPE"):
+            signal.signal(signal.SIGPIPE, signal.SIG_IGN)
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
