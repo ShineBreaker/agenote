@@ -10,11 +10,14 @@ EROFS/EACCES 失败，而不是被吞成成功。
 
 from __future__ import annotations
 
+import os
 import sys
 
 import pytest
 
 from agenote import cli
+
+_SKIP_READONLY_KB = sys.platform == "win32" or os.getuid() == 0
 
 _CLEAN_CARD = """* DONE 干净卡片
 :PROPERTIES:
@@ -74,6 +77,7 @@ def test_query_commands_work_on_readonly_kb(readonly_kb, monkeypatch):
     assert _run_cli(monkeypatch, ["stats"]) == 0
 
 
+@pytest.mark.skipif(_SKIP_READONLY_KB, reason="root 无视目录权限 / Windows 无此权限模型，模拟不了只读 KB")
 def test_write_command_fails_with_actionable_error(readonly_kb, monkeypatch, capsys):
     """写命令在只读 KB 上失败，错误带 errno 与路径，且不写 KB。"""
     root, _ = readonly_kb

@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import re
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -63,12 +65,16 @@ def test_unknown_section_and_key_warned(isolated_config, capsys):
 
 
 def test_get_path_expands_user(isolated_config, monkeypatch):
-    monkeypatch.setenv("HOME", "/home/tester")
+    # expanduser 的家目录来源按平台：POSIX 认 HOME，Windows 认 USERPROFILE。
+    if sys.platform == "win32":
+        monkeypatch.setenv("USERPROFILE", r"C:\Users\tester")
+        expected = Path(r"C:\Users\tester\KB")
+    else:
+        monkeypatch.setenv("HOME", "/home/tester")
+        expected = Path("/home/tester/KB")
     monkeypatch.delenv("KB_ROOT", raising=False)
     isolated_config.write_text("[paths]\nkb_root = '~/KB'\n", encoding="utf-8")
-    assert config.get_path("paths", "kb_root") == __import__("pathlib").Path(
-        "/home/tester/KB"
-    )
+    assert config.get_path("paths", "kb_root") == expected
 
 
 def test_curated_paths_follows_agenote_dir(isolated_config):

@@ -170,7 +170,7 @@ def test_index_roundtrip(tmp_path, monkeypatch):
     index_mod._save_index(idx, ctx)
     loaded = index_mod._load_index(ctx)
     assert loaded["cards"][0]["id"] == "20260814-120000"
-    assert json.loads((tmp_path / "index.json").read_text())["total"] == 1
+    assert json.loads((tmp_path / "index.json").read_text(encoding="utf-8"))["total"] == 1
 
     # _upsert：同 id 替换不重复插入
     index_mod._upsert_card(loaded, card, ctx)

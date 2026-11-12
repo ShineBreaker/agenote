@@ -95,11 +95,11 @@ def test_session_resets_cumulative_and_recall_key(kb, capsys):
     assert recall["status"] == "ok" and recall["action"] == "inject"
 
     state_path = _state_path("zcode", "s1")
-    before = json.loads(state_path.read_text())
+    before = json.loads(state_path.read_text(encoding="utf-8"))
     assert before["cumulative"] == len(recall["content"]) and before["recall_key"]
 
     _run(kb, capsys)  # session 事件
-    after = json.loads(state_path.read_text())
+    after = json.loads(state_path.read_text(encoding="utf-8"))
     assert after["cumulative"] == 0 and "recall_key" not in after
 
 
@@ -107,13 +107,13 @@ def test_session_reset_survives_missing_kb(kb, capsys):
     """KB 临时不可用也要重置：否则恢复后会把上一会话的 key 误判成 duplicate。"""
     _run(kb, capsys, event="prompt", prompt="BM25 检索参数是什么来着", budget=4000)
     state_path = _state_path("zcode", "s1")
-    assert json.loads(state_path.read_text())["cumulative"] > 0
+    assert json.loads(state_path.read_text(encoding="utf-8"))["cumulative"] > 0
 
     kb.memory_org.unlink()
     res = _run(kb, capsys)  # session 事件，指纹为空
     assert res["status"] == "empty" and res["action"] == "skip"
 
-    after = json.loads(state_path.read_text())
+    after = json.loads(state_path.read_text(encoding="utf-8"))
     assert after["cumulative"] == 0 and "recall_key" not in after
 
 
@@ -134,7 +134,7 @@ def test_disabled_switch_zero_bytes_and_no_cache(kb, capsys, monkeypatch):
     res = _run(kb, capsys)
     assert res["status"] == "disabled" and res["action"] == "skip"
     assert res["content"] == ""
-    state = json.loads(_state_path("zcode", "s1").read_text())
+    state = json.loads(_state_path("zcode", "s1").read_text(encoding="utf-8"))
     assert "brief_content" not in state  # 空结果不缓存，开关转开立即生效
 
 
