@@ -8,6 +8,24 @@
 （布局与发布约定见仓库根 `docs/adr/0005-monorepo-unify-seven-components.md`），
 由 `<component>-v<version>` 形式的 tag 触发发布。
 
+## [0.1.1] - 2026-11-12
+
+### Fixed
+
+- **`C-c o k` 归档命令从未生效**：`agenote-knowledge-archive-inbox-entry`
+  把 inbox 条目算成 JSON 后没有交给进程（`agenote-call` 不支持 stdin），
+  CLI 的 `inbox-archive --stdin` 永远读到空输入。新增
+  `agenote-call-stdin`（stdin 经临时文件喂给进程）并改用它，归档链路
+  实测贯通（桩程序收到完整 JSON）。
+- **`agenote-call` 文档串**：修正会触发 Emacs 31 文档串检查的引号写法，
+  `Usage` 示例里的 `'symbol` 改为 `\='symbol`。
+- **编译警告清零**：`org-agenda-custom-commands` 补 `defvar` 声明；
+  `agenote-knowledge.el` 未使用的局部变量随 stdin 修复消失；
+  `agenote-pkg.el` 的 `define-package` 按 Emacs 29.1 废弃提示用
+  `with-suppressed-warnings` 包裹。
+- **重复头字段**：删除 `agenote.el` 里重复的 `;; Package-Requires` 正字
+  （第 10 行那份）。
+
 ## [0.1.0] - 2026-10-03
 
 ### Added

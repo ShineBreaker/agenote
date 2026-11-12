@@ -3,8 +3,8 @@
 ;; SPDX-FileCopyrightText: 2026 BrokenShine <xchai404@gmail.com>
 ;; SPDX-License-Identifier: MIT
 
-;; Version: 0.1.0
-;; Package-Version: 0.1.0
+;; Version: 0.1.1
+;; Package-Version: 0.1.1
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: tools, org, productivity
 
@@ -18,11 +18,17 @@
 
 ;;; Code:
 
+(eval-when-compile (require 'package))
+
 ;; 打包入口。ELPA 按本文件声明的 feature 列表决定装载哪些 .el；
 ;; 版本号是包的单一真相源——CI 与 tools/release/build.py 都以它为准。
-(define-package "agenote"
+;; define-package 自 Emacs 29.1 起标记废弃（新包应只写头字段，ELPA 自动
+;; 生成 -pkg.el）。本文件是手写描述符，打包链路与老版本 Emacs 都依赖它，
+;; 故保留调用、只压掉这条编译警告。
+(with-suppressed-warnings ((obsolete define-package))
+  (define-package "agenote"
   "Emacs 前端：知识卡片浏览、搜索与健康度面板（纯 agenote CLI 适配层）"
-  "0.1.0"
+  "0.1.1"
   "BrokenShine"
   '((emacs "29.1"))
   '((:require "agenote")
@@ -32,5 +38,7 @@
     (:require "agenote-dashboard"))
   :url "https://github.com/ShineBreaker/agenote"
   :bug-report-url "https://github.com/ShineBreaker/agenote/issues")
+
+  )  ; with-suppressed-warnings
 
 ;;; agenote-pkg.el ends here

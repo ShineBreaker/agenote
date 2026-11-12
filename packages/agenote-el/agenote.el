@@ -3,12 +3,11 @@
 ;; SPDX-FileCopyrightText: 2026 BrokenShine <xchai404@gmail.com>
 ;; SPDX-License-Identifier: MIT
 
-;; Version: 0.1.0
+;; Version: 0.1.1
 ;; Package-Requires: ((emacs "29.1"))
 
 ;; Author: BrokenShine <xchai404@gmail.com>
 ;; Keywords: tools, knowledge
-;; Package-Requires: ((emacs "29.1"))
 
 ;; This file is part of agenote-el, the Emacs integration for the
 ;; agenote knowledge-base CLI.  It provides the synchronous/async
@@ -107,13 +106,57 @@ locate the agenote of the current generation."
 
 ;;;; Synchronous call
 
+(defun agenote--run-process (dom argv stdin)
+  "Run ARGV collecting stdout/stderr as a result plist.
+When STDIN (a string) is non-nil, feed it to the process standard
+input via a temp file; otherwise stdin is /dev/null.
+Shared tail of `agenote-call' / `agenote-call-stdin'."
+  (let ((stdout-buffer (generate-new-buffer " *agenote-stdout*"))
+        (stderr-file (make-temp-file "agenote-stderr"))
+        (stdin-file (and stdin (make-temp-file "agenote-stdin")))
+        status)
+    (unwind-protect
+        (progn
+          (when stdin
+            (with-temp-file stdin-file (insert stdin)))
+          ;; call-process signature: (PROGRAM INFILE BUFFER DISPLAY &rest ARGS)
+          ;; INFILE 传临时文件即把其内容接到进程 stdin；BUFFER 作为
+          ;; (STDOUT-DEST STDERR-DEST) 时 STDERR-DEST 须是文件名。
+          (setq status
+                (apply #'call-process
+                       (car argv) stdin-file (list stdout-buffer stderr-file)
+                       nil (cdr argv)))
+          (list :status (or status -1)
+                :stdout (string-trim
+                         (with-current-buffer stdout-buffer (buffer-string)))
+                :stderr (string-trim
+                         (with-temp-buffer
+                           (insert-file-contents stderr-file)
+                           (buffer-string)))
+                :command argv
+                :domain dom))
+      (when (buffer-live-p stdout-buffer) (kill-buffer stdout-buffer))
+      (when (file-exists-p stderr-file) (delete-file stderr-file))
+      (when (and stdin-file (file-exists-p stdin-file)) (delete-file stdin-file)))))
+
+(defun agenote--invoke (domain command args stdin)
+  "Resolve the executable and run COMMAND with ARGS (shared entry).
+STDIN is fed to the process when non-nil; see `agenote--run-process'."
+  (let* ((dom (agenote--ensure-domain domain))
+         (exe (agenote-resolve-executable))
+         (argv (delq nil (append (list exe "--domain" (symbol-name dom) command) args))))
+    (if (not exe)
+        (list :status -1 :stdout "" :stderr "agenote executable not found"
+              :command argv :domain dom)
+      (agenote--run-process dom argv stdin))))
+
 ;;;###autoload
 (cl-defun agenote-call (domain command &rest args)
   "Call the agenote CLI synchronously.
 DOMAIN is required (`human' or `agenote'), COMMAND is the subcommand
 string, and ARGS are appended verbatim.
 
-Return a plist `(:status :stdout :stderr :command :domain)':
+Return a plist (:status :stdout :stderr :command :domain):
   :status   process exit code (-1 if it could not be started)
   :stdout   stdout string (trimmed)
   :stderr   stderr string (trimmed)
@@ -121,39 +164,17 @@ Return a plist `(:status :stdout :stderr :command :domain)':
   :domain   the domain symbol actually used
 
 Usage:
-  (agenote-call 'human \"list\" \"--all\")
-  (agenote-call 'agenote \"search\" \"emacs\" \"--limit\" \"10\")
-  (plist-get (agenote-call 'human \"stats\") :stdout)"
-  (let* ((dom (agenote--ensure-domain domain))
-         (exe (agenote-resolve-executable))
-         (argv (delq nil (append (list exe "--domain" (symbol-name dom) command) args))))
-    (if (not exe)
-        (list :status -1 :stdout "" :stderr "agenote executable not found"
-              :command argv :domain dom)
-      (let ((stdout-buffer (generate-new-buffer " *agenote-stdout*"))
-            (stderr-file (make-temp-file "agenote-stderr"))
-            status)
-        (unwind-protect
-            (progn
-              ;; call-process signature: (PROGRAM INFILE BUFFER DISPLAY &rest ARGS)
-              ;; BUFFER as a list (STDOUT-DEST STDERR-DEST): STDERR-DEST must be a
-              ;; file name string, not a buffer object.  Capture stderr via a temp
-              ;; file, read back into a string.
-              (setq status
-                    (apply #'call-process
-                           (car argv) nil (list stdout-buffer stderr-file) nil
-                           (cdr argv)))
-              (list :status (or status -1)
-                    :stdout (string-trim
-                             (with-current-buffer stdout-buffer (buffer-string)))
-                    :stderr (string-trim
-                             (with-temp-buffer
-                               (insert-file-contents stderr-file)
-                               (buffer-string)))
-                    :command argv
-                    :domain dom))
-          (when (buffer-live-p stdout-buffer) (kill-buffer stdout-buffer))
-          (when (file-exists-p stderr-file) (delete-file stderr-file)))))))
+  (agenote-call \='human \"list\" \"--all\")
+  (agenote-call \='agenote \"search\" \"emacs\" \"--limit\" \"10\")
+  (plist-get (agenote-call \='human \"stats\") :stdout)"
+  (agenote--invoke domain command args nil))
+
+;;;###autoload
+(cl-defun agenote-call-stdin (domain command stdin &rest args)
+  "Call the agenote CLI synchronously, feeding STDIN to its standard input.
+Contract is identical to `agenote-call'; use it for subcommands that
+read JSON from stdin (e.g. `inbox-archive --stdin')."
+  (agenote--invoke domain command args stdin))
 
 
 ;;;; Async call

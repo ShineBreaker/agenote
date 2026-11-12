@@ -3,7 +3,7 @@
 ;; SPDX-FileCopyrightText: 2026 BrokenShine <xchai404@gmail.com>
 ;; SPDX-License-Identifier: MIT
 
-;; Version: 0.1.0
+;; Version: 0.1.1
 ;; Package-Requires: ((emacs "29.1"))
 
 ;; This file is part of agenote-el.  It provides the interactive
@@ -127,9 +127,9 @@ and calls the CLI."
                                                 full-text))
                    (substring full-text (match-end 0))
                  (or full-text "")))
-         (stdin (json-encode `[(("heading" . ,heading) ("body" . ,body))]))
-         (result (agenote-call 'human "inbox-archive"
-                               "--category" category "--stdin" "--prune")))
+         (payload (json-encode `[(("heading" . ,heading) ("body" . ,body))]))
+         (result (agenote-call-stdin 'human "inbox-archive" payload
+                                     "--category" category "--stdin" "--prune")))
     (if (eq (plist-get result :status) 0)
         (progn
           (setq kill-ring (cdr kill-ring))
@@ -352,6 +352,9 @@ Prefix ARG non-nil: call `agenote lint --fix' to auto-fix."
         (agenote-call-async 'human "commit" "-m" summary)
         (message "正在提交: %s" summary))
     (message "未找到 agenote 命令")))
+
+;; org-agenda 延迟加载，变量在编译期不可见；就近声明（跨包引用规范）。
+(defvar org-agenda-custom-commands)
 
 (defun agenote-knowledge--setup-agenda ()
   "Add the experience directory to `org-agenda-custom-commands'."
