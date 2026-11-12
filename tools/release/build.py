@@ -71,11 +71,13 @@ def read_version(pkg: str) -> str:
         if f.exists():
             return str(json.loads(f.read_text())[key])
 
-    # Emacs：define-package 表单的第三个字符串是版本
+    # Emacs：define-package 规范顺序 (NAME VERSION DOCSTRING ...)，
+    # 第二个字符串即版本。旧文件曾把 docstring 放第二、版本放第三，
+    # 导致 ELPA 包装不上（Invalid version syntax），一并改正。
     pkg_el = d / "agenote-pkg.el"
     if pkg_el.exists():
         m = re.search(
-            r'\(define-package\s+"[^"]+"\s+"[^"]*"\s+"([^"]+)"', pkg_el.read_text()
+            r'\(define-package\s+"[^"]+"\s+"([^"]+)"', pkg_el.read_text()
         )
         if m:
             return m.group(1)

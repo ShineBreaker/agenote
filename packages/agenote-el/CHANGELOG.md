@@ -20,9 +20,11 @@
 - **`agenote-call` 文档串**：修正会触发 Emacs 31 文档串检查的引号写法，
   `Usage` 示例里的 `'symbol` 改为 `\='symbol`。
 - **编译警告清零**：`org-agenda-custom-commands` 补 `defvar` 声明；
-  `agenote-knowledge.el` 未使用的局部变量随 stdin 修复消失；
-  `agenote-pkg.el` 的 `define-package` 按 Emacs 29.1 废弃提示用
-  `with-suppressed-warnings` 包裹。
+  `agenote-knowledge.el` 未使用的局部变量随 stdin 修复消失。
+- **`agenote-pkg.el` 描述符修正**：`define-package` 参数顺序一直是错的
+  （docstring 占在 VERSION 位），ELPA 包实际装不上（`package-install-file`
+  报 "Invalid version syntax"）；按 `(NAME VERSION DOCSTRING REQUIREMENTS)`
+  规范重写，并标 `no-byte-compile`。产物 tar 现在可正常安装并加载。
 - **重复头字段**：删除 `agenote.el` 里重复的 `;; Package-Requires` 正字
   （第 10 行那份）。
 

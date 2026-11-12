@@ -1,4 +1,5 @@
 ;;; agenote-pkg.el --- package declaration for ELPA -*- lexical-binding: t; -*-
+;;; no-byte-compile: t
 
 ;; SPDX-FileCopyrightText: 2026 BrokenShine <xchai404@gmail.com>
 ;; SPDX-License-Identifier: MIT
@@ -18,27 +19,19 @@
 
 ;;; Code:
 
-(eval-when-compile (require 'package))
-
-;; 打包入口。ELPA 按本文件声明的 feature 列表决定装载哪些 .el；
-;; 版本号是包的单一真相源——CI 与 tools/release/build.py 都以它为准。
-;; define-package 自 Emacs 29.1 起标记废弃（新包应只写头字段，ELPA 自动
-;; 生成 -pkg.el）。本文件是手写描述符，打包链路与老版本 Emacs 都依赖它，
-;; 故保留调用、只压掉这条编译警告。
-(with-suppressed-warnings ((obsolete define-package))
-  (define-package "agenote"
-  "Emacs 前端：知识卡片浏览、搜索与健康度面板（纯 agenote CLI 适配层）"
+;; 打包入口。ELPA 按本文件声明的包信息装载；版本号是包的单一真相源——
+;; CI 与 tools/release/build.py 都以它为准。
+;;
+;; 参数顺序是定义死的：(NAME VERSION &optional DOCSTRING REQUIREMENTS
+;; &rest EXTRA-PROPERTIES)。此前把 docstring 写在 VERSION 位置、
+;; author 与 (:require ...) 列表塞进 REQUIREMENTS 之后，导致
+;; package-install-file 报 "Invalid version syntax"——本包此前实际
+;; 装不上，只有 git 目录手工 load 的路子能跑。
+(define-package "agenote"
   "0.1.1"
-  "BrokenShine"
+  "Emacs 前端：知识卡片浏览、搜索与健康度面板（纯 agenote CLI 适配层）"
   '((emacs "29.1"))
-  '((:require "agenote")
-    (:require "agenote-knowledge")
-    (:require "agenote-health")
-    (:require "agenote-keybinds")
-    (:require "agenote-dashboard"))
   :url "https://github.com/ShineBreaker/agenote"
   :bug-report-url "https://github.com/ShineBreaker/agenote/issues")
-
-  )  ; with-suppressed-warnings
 
 ;;; agenote-pkg.el ends here
