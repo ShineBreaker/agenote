@@ -5,7 +5,8 @@
 
 移植自 claude-obsidian 的「崩溃后可确定性恢复」哲学（裁剪版）：
 - atomic_write：同目录 tmp → fsync → os.replace，写一半崩溃不留半文件
-- kb_lock：fcntl.flock 进程锁（写调用独占 / 只读调用共享）+ 超时退出，多 agent 并发 CLI 调用互斥
+- kb_lock：进程锁（POSIX fcntl.flock / Windows LockFileEx，写调用独占 /
+  只读调用共享）+ 超时退出，多 agent 并发 CLI 调用互斥
 
 锁文件在 KB 内（`<KB 根>/.agenote.lock`）：同一 KB 的所有进程天然落在同一
 inode 上互斥；只读调用不创建锁文件，锁文件不存在时免锁（见 kb_lock）。
@@ -17,15 +18,68 @@ agenote 是单命令即时写入；跨文件读改写由调用方用 restore_tex
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import itertools
 import os
 import stat
+import sys
 import time
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 
+if sys.platform == "win32":
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+else:
+    import fcntl
+
 LOCK_TIMEOUT_SECONDS = 10.0
+
+if sys.platform == "win32":
+    # Windows 没有 fcntl.flock；用 LockFileEx 锁锁文件第 0 字节，
+    # 保留共享/独占两档语义（msvcrt.locking 只有独占，不够）。
+    _LOCKFILE_FAIL_IMMEDIATELY = 0x1
+    _LOCKFILE_EXCLUSIVE_LOCK = 0x2
+    _ERROR_LOCK_VIOLATION = 33
+
+    class _OVERLAPPED(ctypes.Structure):
+        _fields_ = [
+            ("Internal", ctypes.c_size_t),
+            ("InternalHigh", ctypes.c_size_t),
+            ("Offset", wintypes.DWORD),
+            ("OffsetHigh", wintypes.DWORD),
+            ("hEvent", wintypes.HANDLE),
+        ]
+
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _LockFileEx = _kernel32.LockFileEx
+    _LockFileEx.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+        wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(_OVERLAPPED),
+    ]
+    _LockFileEx.restype = wintypes.BOOL
+
+
+def _try_lock_fd(fd: int, *, shared: bool) -> None:
+    """非阻塞取锁；被占用时抛 BlockingIOError（两平台统一约定）。
+
+    锁随 fd 关闭释放：POSIX flock 与 Windows LockFileEx 均在关闭句柄时
+    解锁，kb_lock 的 finally os.close 即释放点，无需显式 unlock。
+    """
+    if sys.platform == "win32":
+        flags = _LOCKFILE_FAIL_IMMEDIATELY
+        if not shared:
+            flags |= _LOCKFILE_EXCLUSIVE_LOCK
+        overlapped = _OVERLAPPED()
+        handle = msvcrt.get_osfhandle(fd)
+        if not _LockFileEx(handle, flags, 0, 1, 0, ctypes.byref(overlapped)):
+            err = ctypes.get_last_error()
+            if err == _ERROR_LOCK_VIOLATION:
+                raise BlockingIOError(err, "锁被其它进程持有")
+            raise OSError(err, f"LockFileEx 失败（Windows 错误 {err}）")
+    else:
+        mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
+        fcntl.flock(fd, mode | fcntl.LOCK_NB)
 
 
 def _lock_timeout_from_config() -> float:
@@ -147,7 +201,8 @@ class KBLockTimeoutError(TimeoutError):
 def kb_lock(
     lock_path: Path, timeout: float | None = None, *, shared: bool = False
 ) -> Iterator[None]:
-    """进程级互斥锁：fcntl.flock，等待超时抛 KBLockTimeoutError 而非死等。
+    """进程级互斥锁（POSIX flock / Windows LockFileEx），等待超时抛
+    KBLockTimeoutError 而非死等。
 
     timeout 未显式传时运行时读配置 [safeio].lock_timeout_seconds——不可用
     默认参数绑定 LOCK_TIMEOUT_SECONDS（定义时求值会把值焊死在函数对象上，
@@ -158,11 +213,11 @@ def kb_lock(
     （曾尝试移出 KB 到运行时目录，但锁目录按环境变量选择会让混合 env 的进程
     静默拿到两把不同的锁，属数据完整性回归，已放弃。）
 
-    shared=True 供只读命令使用：O_RDONLY 打开**已存在**的锁文件取 LOCK_SH，
+    shared=True 供只读命令使用：O_RDONLY 打开**已存在**的锁文件取共享锁，
     不创建锁文件——只读文件系统（沙箱 / 只读挂载）上 O_CREAT 会 EROFS。锁文件
     不存在说明尚无写者建立临界区，直接免锁：单文件由 atomic_write 整文件替换
     保证不读半文件；跨文件视图在首个写者出现前可能有短暂混合窗口（取舍，见
-    CHANGELOG）。写调用仍 O_CREAT + LOCK_EX，在只读 KB 上由 EROFS 直接暴露。
+    CHANGELOG）。写调用仍 O_CREAT + 独占锁，在只读 KB 上由 EROFS 直接暴露。
     """
     if timeout is None:
         timeout = _lock_timeout_from_config()
@@ -178,10 +233,9 @@ def kb_lock(
         fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
     deadline = time.monotonic() + timeout
     try:
-        mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
         while True:
             try:
-                fcntl.flock(fd, mode | fcntl.LOCK_NB)
+                _try_lock_fd(fd, shared=shared)
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:
@@ -203,6 +257,8 @@ def safe_read_text(path: Path | str, *, encoding: str = "utf-8", errors: str = "
     """S8 受控读取：lstat 拒 symlink 与非普通文件，O_NOFOLLOW 打开，读前后 fstat 身份比对。
 
     供 scan-memories / import / export（外部不可信输入）与 KB 内部读取渐进迁移用。
+    Windows 无 O_NOFOLLOW（getattr 落空为 0）：symlink 由前置 lstat 拒绝，
+    替换竞争由身份比对闭合（NTFS 的 st_ino 有效）。
     """
     path = Path(path)
     try:
@@ -213,7 +269,7 @@ def safe_read_text(path: Path | str, *, encoding: str = "utf-8", errors: str = "
         raise SafeReadError(f"拒绝读取 symlink: {path}")
     if not stat.S_ISREG(pre.st_mode):
         raise SafeReadError(f"拒绝读取非普通文件: {path}")
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     try:
         with os.fdopen(fd, "rb") as f:
             opened = os.fstat(f.fileno())

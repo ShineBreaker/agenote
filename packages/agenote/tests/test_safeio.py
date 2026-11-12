@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import threading
 
 import pytest
@@ -14,6 +15,10 @@ import pytest
 from agenote.core import KBContext
 from agenote.cards import cmd_add
 from agenote.safeio import atomic_write, kb_lock
+
+# chmod 的只读目录语义只在 POSIX 成立：Windows 无此权限模型，root 则无视权限。
+# 两类环境都模拟不了「只读 KB」，相关用例跳过（getuid 在 Windows 不存在）。
+_SKIP_READONLY_KB = sys.platform == "win32" or os.getuid() == 0
 
 
 @pytest.fixture
@@ -143,7 +148,7 @@ def test_shared_lock_does_not_create_lock_file(tmp_path):
     assert list(kb.iterdir()) == []
 
 
-@pytest.mark.skipif(os.getuid() == 0, reason="root 无视目录权限，模拟不了只读 KB")
+@pytest.mark.skipif(_SKIP_READONLY_KB, reason="root 无视目录权限 / Windows 无此权限模型，模拟不了只读 KB")
 def test_shared_lock_on_readonly_kb(tmp_path):
     """只读 KB（chmod 555、无锁文件）上共享锁免锁放行，且不写 KB。"""
     kb = tmp_path / "kb"
@@ -191,7 +196,7 @@ def test_writer_blocks_shared_lock(tmp_path):
         t.join(timeout=5)
 
 
-@pytest.mark.skipif(os.getuid() == 0, reason="root 无视目录权限，模拟不了只读 KB")
+@pytest.mark.skipif(_SKIP_READONLY_KB, reason="root 无视目录权限 / Windows 无此权限模型，模拟不了只读 KB")
 def test_write_lock_on_readonly_kb_raises(tmp_path):
     """只读 KB 上写锁无法创建锁文件：写命令本就不能工作，直接暴露 EROFS/EACCES。"""
     import errno

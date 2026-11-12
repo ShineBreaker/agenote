@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import errno
-import fcntl
 import os
 import sys
 import threading
@@ -21,7 +20,7 @@ import pytest
 
 from agenote.cards import cmd_add
 from agenote.core import KBContext, PublicError, ensure_dirs, safe_error_message
-from agenote.safeio import KBLockTimeoutError, kb_lock
+from agenote.safeio import KBLockTimeoutError, _try_lock_fd, kb_lock
 
 
 @pytest.fixture
@@ -145,9 +144,9 @@ def test_lock_timeout_reaches_cli_stderr(kb_root, monkeypatch, capsys):
     # 锁文件在 KB 内，cli 与测试拿到同一 inode
     fd = os.open(ctx.root / ".agenote.lock", os.O_RDWR | os.O_CREAT, 0o644)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)  # 测试进程持锁，模拟并发占用
+        _try_lock_fd(fd, shared=False)  # 测试进程持锁，模拟并发占用
         monkeypatch.setattr(cli, "agenote_context", lambda: ctx)
-        # 真实 kb_lock + 短超时：走真的 flock 竞争路径，而非伪造异常
+        # 真实 kb_lock + 短超时：走真的锁竞争路径，而非伪造异常
         monkeypatch.setattr(
             cli, "kb_lock", lambda path, **kw: real_kb_lock(path, timeout=0.1)
         )
@@ -155,7 +154,7 @@ def test_lock_timeout_reaches_cli_stderr(kb_root, monkeypatch, capsys):
         with pytest.raises(SystemExit) as exc:
             cli.main()
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        # 关闭 fd 即释放锁（POSIX flock / Windows LockFileEx 均如此）
         os.close(fd)
 
     assert exc.value.code == 1
