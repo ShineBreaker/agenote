@@ -19,8 +19,14 @@
  * Node 也没有文件系统），并带 AGENOTE_AGENT=cindy 归因。
  */
 
-const INJECT_START = "<!-- agenote-inject:start -->";
-const INJECT_END = "<!-- agenote-inject:end -->";
+/**
+ * 注入块的起止标记。整块是一段**未闭合换行的 HTML 注释**：桌面端 react-markdown
+ * 跑在 skipHtml 下、手机端对跨块注释有专门压制，两边都不渲染注释内容，所以气泡里
+ * 只剩用户自己写的那句话；而发给模型的消息正文里注释照常存在。
+ * 因此正文里绝不能出现 `-->`，写入前统一替换成 `-- >`。
+ */
+const INJECT_OPEN = "<!-- agenote-inject:start";
+const INJECT_CLOSE = "agenote-inject:end -->";
 
 /** 本插件自注入提示的标识符：带它的消息不参与触发判定，断开反馈环。 */
 const HOOK_MARKER = "<agenote-hook>";
@@ -127,11 +133,11 @@ async function askWorker(method, params, timeoutMs) {
 function stripInjected(text) {
   let out = text;
   for (;;) {
-    const start = out.indexOf(INJECT_START);
-    if (start === -1) return out;
-    const end = out.indexOf(INJECT_END, start);
-    const cutEnd = end === -1 ? out.length : end + INJECT_END.length;
-    out = (out.slice(0, start) + out.slice(cutEnd)).trim();
+    const start = out.indexOf(INJECT_OPEN);
+    if (start === -1) return out.trim();
+    const end = out.indexOf(INJECT_CLOSE, start);
+    const cutEnd = end === -1 ? out.length : end + INJECT_CLOSE.length;
+    out = out.slice(0, start) + out.slice(cutEnd);
   }
 }
 
@@ -174,7 +180,8 @@ async function onUserMessage(msg) {
   if (!sessionId || !text) return verdict(msg, "allow");
 
   const state = stateOf(sessionId);
-  state.lastUserText = text;
+  const original = stripInjected(text);
+  state.lastUserText = original;
 
   // 自己投递的提示再次进来时原样放行（宿主侧也会带 HOOK_MARKER）。
   if (text.indexOf(HOOK_MARKER) !== -1) return verdict(msg, "allow");
@@ -201,8 +208,9 @@ async function onUserMessage(msg) {
   if (!body) return verdict(msg, "allow");
 
   state.briefSent = true;
-  const original = stripInjected(text);
-  const rewritten = INJECT_START + "\n" + body + "\n" + INJECT_END + "\n\n" + original;
+  // 注释里不能出现 `-->`，否则整块提前闭合、后半段会漏到气泡里。
+  const safeBody = body.replace(/-->/g, "-- >");
+  const rewritten = INJECT_OPEN + "\n" + safeBody + "\n" + INJECT_CLOSE + "\n\n" + original;
   return verdict(msg, "rewrite", { text: rewritten });
 }
 

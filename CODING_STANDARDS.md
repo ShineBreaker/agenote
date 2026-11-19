@@ -72,7 +72,8 @@ cd packages/agenote && AGENOTE_CONTRACT_UPDATE=1 uv run pytest tests/test_contra
   `AGENOTE_AGENT=cindy`。宿主用 `--no-extensions` 启动内置 Pi，所以 omp 扩展
   （`agenote-pi`）在这条路上不可用。注入走入口钩子 `will-user-message` 的
   `rewrite`（3 秒裁决窗口，超时 fail-open），因此它是**追加型**：改不到历史、
-  剥不掉旧块，去重必须靠 CLI 的三件套。发布产物由 Cindy 宿主工具
+  剥不掉旧块，去重必须靠 CLI 的三件套。注入块整体是 HTML 注释（桌面 `skipHtml`、
+  手机压制跨块注释），所以气泡里看不到，模型侧照常拿到。发布产物由 Cindy 宿主工具
   `ghost_forge_pack` 打包，版本号在 `ghost.json`。详细接口与实测结论见该包
   `README.md`。
 - **`dsh-agenote`**：本包自带 [`packages/dsh-agenote/AGENTS.md`](packages/dsh-agenote/AGENTS.md)，

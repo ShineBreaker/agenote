@@ -14,7 +14,7 @@ Cindy's own plugin protocol instead of Pi's extension points.
 
 | Hook / event | Behaviour |
 |---|---|
-| `will-user-message` (3 s verdict window) | Prepends a `<!-- agenote-inject:… -->` block by rewriting the incoming message |
+| `will-user-message` (3 s verdict window) | Prepends an HTML comment block by rewriting the incoming message; the renderer drops it, so the bubble shows only your text |
 | `did-turn-end` | Completion signal → posts an agenote-review prompt; long turns arm an idle fallback timer |
 | `did-turn-start` | Cancels the idle timer |
 | Tools `agenote_search` / `agenote_health` | Read-only CLI queries through the bundled Node worker |
@@ -27,10 +27,15 @@ budget) lives only in the CLI — the plugin calls `agenote inject` and keeps no
 
 ## Trade-offs
 
-1. **Injection is append-style and appears in your message bubble.** Cindy's entry hook can
-   only rewrite the current message, not history, so old blocks cannot be stripped. Dedupe
-   and the cumulative budget come from the CLI. If you prefer a clean bubble, switch the
-   manifest hook to `will-compose-context` — at the cost of selecting the plugin per task.
+1. **Injection is append-style, but invisible.** The whole block is one HTML comment
+   (`<!-- agenote-inject:start … agenote-inject:end -->`). The desktop renderer passes
+   `skipHtml`; the mobile renderer suppresses cross-block comments — neither draws it, so
+   the bubble shows only what you typed, while the message the model receives still carries
+   the briefing. Trade-offs: the stored message keeps hidden text that accumulates across
+   turns (dedupe and the cumulative budget are the CLI's job), and copying the message
+   copies the comment too. `-->` inside the briefing is rewritten to `-- >` so the comment
+   cannot close early. The no-rewrite alternative is `will-compose-context` (host-side
+   "reference material"), at the cost of selecting the plugin per task.
 2. **The idle fallback approximates "did real work" by turn duration** (45 s), because
    Cindy's subscription surface exposes no tool-call events.
 3. **Slash commands are not bundled.** `/agenote-review`, `/agenote-curator`, etc. come from

@@ -4,6 +4,23 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.0] - 2026-11-21
+
+注入块不再出现在消息气泡里。宿主用 `skipHtml` 渲染（桌面端 `MarkdownRenderer`
+显式传 `skipHtml`；手机端 `messageMarkdown` 对跨块 HTML 注释单独压制），所以把
+简报整块包成一段 HTML 注释，渲染时被丢弃，发给模型的消息正文里照常存在。
+
+---
+
+### Changed
+
+- **注入块改为 HTML 注释形态**：`<!-- agenote-inject:start … agenote-inject:end -->`
+  一段到底。用户气泡里只剩自己写的那句话，模型侧内容不变。
+- **正文 `-->` 消毒**：简报里出现 `-->` 会把注释提前闭合、后半段漏进气泡，写入前
+  统一替换成 `-- >`。
+- **完成信号判定用剥掉注入块后的原文**：用户把带块的消息编辑重发时，不会把上一次
+  的简报当成「本轮用户说的话」。
+
 ## [0.1.0] - 2026-11-21
 
 首个版本：把 agenote 接进 Cindy。宿主用 `--no-extensions` 启动内置 Pi，omp 扩展

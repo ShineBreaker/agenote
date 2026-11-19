@@ -123,7 +123,12 @@ async function main() {
     });
     const verdict = h.sent.at(-1);
     check("首条消息注入简报", verdict.action === "rewrite");
-    check("块被标记包裹", verdict.text.includes("<!-- agenote-inject:start -->"));
+    check("整块是 HTML 注释", verdict.text.startsWith("<!-- agenote-inject:start"));
+    check(
+      "注释在用户原话之前闭合",
+      verdict.text.indexOf("-->") < verdict.text.indexOf("帮我看下 kiro 的包管理"),
+    );
+    check("只有注释收尾一个 -->", (verdict.text.match(/-->/g) || []).length === 1);
     check("原话保留在块之后", verdict.text.endsWith("帮我看下 kiro 的包管理"));
     check("简报正文进上下文", verdict.text.includes("BRIEF-BODY"));
     const firstContext = h.nodeCalls.find((call) => call.method === "context");
@@ -141,6 +146,19 @@ async function main() {
       "第二条消息 first=false",
       h.nodeCalls.filter((call) => call.method === "context").at(-1)?.params.first === false,
     );
+  }
+
+  {
+    // 简报正文里带 `-->` 时必须被替换，否则注释提前闭合、后半段会漏进气泡
+    const h = boot({ context: { text: "箭头 --\u003e 危险", parts: 1 } });
+    await h.emit({
+      type: "event",
+      name: "will-user-message",
+      hookId: "hook-arrow",
+      data: { sessionId: "s-arrow", text: "看下这个符号" },
+    });
+    const verdict = h.sent.at(-1);
+    check("正文里的 --> 被消毒", (verdict.text.match(/-->/g) || []).length === 1);
   }
 
   {
