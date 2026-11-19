@@ -8,25 +8,21 @@
  * agenote 的状态机在 CLI，卡片的写入流程与格式在 agenote-skills。本插件只做
  * 三件事：读宿主事件 → 调 CLI → 把结果封回宿主协议。
  *
- * - will-user-message：把「会话简报 + 按轮召回」挂到本轮用户消息上。
- *   Cindy 的入口钩子只能改写当前这条消息，改不到历史，所以这是**追加型**：
- *   去重靠 CLI（指纹 + query + 单会话累计预算），不在这里另存一份状态机。
- * - did-turn-end：完成信号命中 → 投递 agenote-review 评估提示；空闲兜底
- *   同理，两者都带 <agenote-hook> 标记以断开自触发反馈环。
+ * - will-compose-context：把「会话简报 + 按轮召回」作为宿主的**资料**挂到本轮
+ *   消息上。宿主明文保证「不改变显示／落库的主人原话」（runtimePlugins.ts 的
+ *   appendRuntimePluginContext 只改 wire 消息），所以气泡里看不到。
+ *   代价：这个节点要求用户在任务的「任务插件」里选中本插件才会被询问。
+ * - did-message-created：记录最后一条用户消息，供完成信号判定（这个 topic 是
+ *   纯旁听，不需要任务选择，所以触发链路全局生效）。
+ * - did-turn-end / did-turn-start：完成信号投递 review 提示、空闲兜底定时器。
  * - tools：agenote_search / agenote_health 两个只读入口。
  *
  * 所有 CLI 调用都在随包 Node worker 里执行（main.js 是浏览器沙箱，没有
  * Node 也没有文件系统），并带 AGENOTE_AGENT=cindy 归因。
+ *
+ * 曾经用过 will-user-message 改写来注入：Cindy 的用户气泡是 whitespace-pre-wrap
+ * 纯文本（UserMessage.tsx），任何注入都会原样显示，所以改走资料通道。
  */
-
-/**
- * 注入块的起止标记。整块是一段**未闭合换行的 HTML 注释**：桌面端 react-markdown
- * 跑在 skipHtml 下、手机端对跨块注释有专门压制，两边都不渲染注释内容，所以气泡里
- * 只剩用户自己写的那句话；而发给模型的消息正文里注释照常存在。
- * 因此正文里绝不能出现 `-->`，写入前统一替换成 `-- >`。
- */
-const INJECT_OPEN = "<!-- agenote-inject:start";
-const INJECT_CLOSE = "agenote-inject:end -->";
 
 /** 本插件自注入提示的标识符：带它的消息不参与触发判定，断开反馈环。 */
 const HOOK_MARKER = "<agenote-hook>";
@@ -40,10 +36,10 @@ const HOOK_MARKER = "<agenote-hook>";
 const IDLE_ARM_MIN_TURN_MS = 45000;
 
 /**
- * 入口钩子的总预算（毫秒）。宿主给 3 秒，留出 IPC 与渲染余量：worker 必须在
- * 2.4 秒内交卷，否则本轮放弃注入，别让裁决踩到超时线。
+ * 资料节点的总预算（毫秒）。宿主给 2 秒，留出 IPC 与结算余量：worker 必须在
+ * 1.6 秒内交卷，否则本轮放弃注入，别让裁决踩到超时线。
  */
-const HOOK_BUDGET_MS = 2200;
+const HOOK_BUDGET_MS = 1600;
 
 // ─── BEGIN GENERATED: signals.completion ───
 // 本块由 tools/codegen 从 spec/injection.toml 生成，请勿手改；改 spec 后重跑 python3 tools/codegen/generate.py
@@ -94,7 +90,7 @@ function stateOf(sessionId) {
   let state = sessions.get(sessionId);
   if (!state) {
     state = {
-      briefSent: false, // 本会话是否已经发过简报（首条消息才发）
+      briefSent: false, // 本会话是否已经发过简报（首轮才发）
       lastUserText: "",
       lastTriggerAt: 0,
       signalTriggered: false, // 显式信号触发过 → 永久关闭空闲兜底
@@ -129,18 +125,6 @@ async function askWorker(method, params, timeoutMs) {
   }
 }
 
-/** 剥掉历史注入块（用户编辑重发带块的消息时，避免块套块）。 */
-function stripInjected(text) {
-  let out = text;
-  for (;;) {
-    const start = out.indexOf(INJECT_OPEN);
-    if (start === -1) return out.trim();
-    const end = out.indexOf(INJECT_CLOSE, start);
-    const cutEnd = end === -1 ? out.length : end + INJECT_CLOSE.length;
-    out = out.slice(0, start) + out.slice(cutEnd);
-  }
-}
-
 function verdict(msg, action, extra) {
   return cindy.send(
     Object.assign({ type: "event-verdict", hookId: msg.hookId, action }, extra || {}),
@@ -154,7 +138,7 @@ function buildReviewPrompt(reason) {
     "1. 是否有可记录的经验信号（bug / 踩坑 / 更优方案 / 用户纠正 / 项目决策）？",
     "2. 如有 → 用 agenote CLI 写入（agenote add / agenote memory --add），调用时带 AGENOTE_AGENT=cindy 前缀",
     "3. 本轮用到的资料留痕：已有卡片 agenote touch；联网新知识 agenote add --type note",
-    "4. 如无 → 明确回复「本次无可记录经验」" + "</agenote-hook>",
+    "4. 如无 → 明确回复「本次无可记录经验」</agenote-hook>",
   ].join("\n");
 }
 
@@ -171,25 +155,20 @@ async function deliverNudge(sessionId, reason) {
   }
 }
 
-// ─── 入口钩子：把简报与召回挂到本轮用户消息上 ───────────────────────────
+// ─── 资料节点：把简报与召回挂到本轮消息上（不改原话）───────────────
 
-async function onUserMessage(msg) {
+async function onComposeContext(msg) {
   const data = msg.data || {};
   const sessionId = data.sessionId;
   const text = typeof data.text === "string" ? data.text : "";
-  if (!sessionId || !text) return verdict(msg, "allow");
+  if (!sessionId) return verdict(msg, "allow");
 
-  const state = stateOf(sessionId);
-  const original = stripInjected(text);
-  state.lastUserText = original;
-
-  // 自己投递的提示再次进来时原样放行（宿主侧也会带 HOOK_MARKER）。
+  // 自己投递的提示（插件消息）不该再带上资料。
   if (text.indexOf(HOOK_MARKER) !== -1) return verdict(msg, "allow");
 
-  // 原生斜杠命令（/compact、/goal 之类）不能被改写：加前缀会改变命令本身。
-  if (text.trimStart().startsWith("/")) return verdict(msg, "allow");
-
+  const state = stateOf(sessionId);
   const first = !state.briefSent;
+
   const context = await askWorker(
     "context",
     {
@@ -208,10 +187,31 @@ async function onUserMessage(msg) {
   if (!body) return verdict(msg, "allow");
 
   state.briefSent = true;
-  // 注释里不能出现 `-->`，否则整块提前闭合、后半段会漏到气泡里。
-  const safeBody = body.replace(/-->/g, "-- >");
-  const rewritten = INJECT_OPEN + "\n" + safeBody + "\n" + INJECT_CLOSE + "\n\n" + original;
-  return verdict(msg, "rewrite", { text: rewritten });
+  return verdict(msg, "context", { blocks: [{ id: "agenote-brief", text: body }] });
+}
+
+// ─── 用户消息旁听：只记最后一条，供完成信号判定 ─────────────────────
+
+function contentText(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((item) => item && item.type === "text" && typeof item.text === "string")
+      .map((item) => item.text)
+      .join("\n");
+  }
+  return "";
+}
+
+function onMessageCreated(msg) {
+  const data = msg.data || {};
+  const sessionId = data.sessionId;
+  if (!sessionId || data.role !== "user") return;
+  const text = contentText(data.content);
+  if (!text) return;
+  // 插件自己投递的 review 提示不算用户发言。
+  if (text.indexOf(HOOK_MARKER) !== -1) return;
+  stateOf(sessionId).lastUserText = text;
 }
 
 // ─── 轮次事件：完成信号 + 空闲兜底 ─────────────────────────────────────
@@ -332,14 +332,15 @@ cindy.onHostMessage(async function (msg) {
     if (msg.type === "tool-call") return await onToolCall(msg);
     if (msg.type !== "event") return;
 
-    if (msg.name === "will-user-message") {
+    if (msg.name === "will-compose-context") {
       try {
-        return await onUserMessage(msg);
+        return await onComposeContext(msg);
       } catch (err) {
-        // 钩子超时会被宿主按 allow 放行；这里显式放行，别让异常拖满 3 秒窗口。
+        // 超时会被宿主按 allow 放行；这里显式放行，别让异常拖满 2 秒窗口。
         return verdict(msg, "allow");
       }
     }
+    if (msg.name === "did-message-created") return onMessageCreated(msg);
     if (msg.name === "did-turn-start") {
       const sessionId = (msg.data && msg.data.sessionId) || "";
       if (sessionId) clearIdle(stateOf(sessionId));
@@ -351,5 +352,5 @@ cindy.onHostMessage(async function (msg) {
   }
 });
 
-// 预热点亮 Node worker：第一条用户消息不该把冷启动算进 3 秒裁决窗口。
+// 预热点亮 Node worker：第一条用户消息不该把冷启动算进 2 秒裁决窗口。
 askWorker("ping", {}, 5000);

@@ -113,24 +113,18 @@ async function main() {
 
   // ── 入口注入 ────────────────────────────────────────────────────────
   {
-    console.log("\nwill-user-message");
+    console.log("\nwill-compose-context");
     const h = boot({ context: { text: "BRIEF-BODY", parts: 1 } });
     await h.emit({
       type: "event",
-      name: "will-user-message",
+      name: "will-compose-context",
       hookId: "hook-1",
       data: { sessionId: "s1", text: "帮我看下 kiro 的包管理" },
     });
     const verdict = h.sent.at(-1);
-    check("首条消息注入简报", verdict.action === "rewrite");
-    check("整块是 HTML 注释", verdict.text.startsWith("<!-- agenote-inject:start"));
-    check(
-      "注释在用户原话之前闭合",
-      verdict.text.indexOf("-->") < verdict.text.indexOf("帮我看下 kiro 的包管理"),
-    );
-    check("只有注释收尾一个 -->", (verdict.text.match(/-->/g) || []).length === 1);
-    check("原话保留在块之后", verdict.text.endsWith("帮我看下 kiro 的包管理"));
-    check("简报正文进上下文", verdict.text.includes("BRIEF-BODY"));
+    check("首轮返回资料裁决", verdict.action === "context");
+    check("资料块带简报正文", verdict.blocks?.[0]?.text === "BRIEF-BODY");
+    check("资料块 id 固定", verdict.blocks?.[0]?.id === "agenote-brief");
     const firstContext = h.nodeCalls.find((call) => call.method === "context");
     check("worker 收到 first=true", firstContext?.params.first === true);
 
@@ -138,7 +132,7 @@ async function main() {
     h.nodeCalls.length = 0;
     await h.emit({
       type: "event",
-      name: "will-user-message",
+      name: "will-compose-context",
       hookId: "hook-2",
       data: { sessionId: "s1", text: "继续" },
     });
@@ -149,23 +143,10 @@ async function main() {
   }
 
   {
-    // 简报正文里带 `-->` 时必须被替换，否则注释提前闭合、后半段会漏进气泡
-    const h = boot({ context: { text: "箭头 --\u003e 危险", parts: 1 } });
-    await h.emit({
-      type: "event",
-      name: "will-user-message",
-      hookId: "hook-arrow",
-      data: { sessionId: "s-arrow", text: "看下这个符号" },
-    });
-    const verdict = h.sent.at(-1);
-    check("正文里的 --> 被消毒", (verdict.text.match(/-->/g) || []).length === 1);
-  }
-
-  {
     const h = boot({ context: { text: "", parts: 0 } });
     await h.emit({
       type: "event",
-      name: "will-user-message",
+      name: "will-compose-context",
       hookId: "hook-3",
       data: { sessionId: "s2", text: "空库时的普通消息" },
     });
@@ -176,7 +157,7 @@ async function main() {
     const h = boot({ context: { text: "SHOULD-NOT-RUN", parts: 1 } });
     await h.emit({
       type: "event",
-      name: "will-user-message",
+      name: "will-compose-context",
       hookId: "hook-4",
       data: { sessionId: "s3", text: "<agenote-hook>自己投递的提示</agenote-hook>" },
     });
@@ -188,25 +169,10 @@ async function main() {
   }
 
   {
-    const h = boot({ context: { text: "SHOULD-NOT-RUN", parts: 1 } });
-    await h.emit({
-      type: "event",
-      name: "will-user-message",
-      hookId: "hook-slash",
-      data: { sessionId: "s3b", text: "/compact 保留最近十轮" },
-    });
-    check("斜杠命令原样放行", h.sent.at(-1).action === "allow");
-    check(
-      "斜杠命令不调 worker",
-      !h.nodeCalls.some((call) => call.method === "context"),
-    );
-  }
-
-  {
     const h = boot({ context: null });
     await h.emit({
       type: "event",
-      name: "will-user-message",
+      name: "will-compose-context",
       hookId: "hook-5",
       data: { sessionId: "s4", text: "worker 挂了的消息" },
     });
@@ -219,9 +185,13 @@ async function main() {
     const h = boot({ context: { text: "", parts: 0 } });
     await h.emit({
       type: "event",
-      name: "will-user-message",
-      hookId: "h",
-      data: { sessionId: "s5", text: "都搞定了，测试通过" },
+      name: "did-message-created",
+      data: {
+        sessionId: "s5",
+        messageId: "m1",
+        role: "user",
+        content: "都搞定了，测试通过",
+      },
     });
     await h.emit({
       type: "event",
@@ -241,9 +211,8 @@ async function main() {
     // 第二轮再说一次「完成」：防抖内不再投递
     await h.emit({
       type: "event",
-      name: "will-user-message",
-      hookId: "h2",
-      data: { sessionId: "s5", text: "完成了" },
+      name: "did-message-created",
+      data: { sessionId: "s5", messageId: "m2", role: "user", content: "完成了" },
     });
     await h.emit({
       type: "event",
@@ -260,9 +229,13 @@ async function main() {
     const h = boot({ context: { text: "", parts: 0 } });
     await h.emit({
       type: "event",
-      name: "will-user-message",
-      hookId: "h",
-      data: { sessionId: "s6", text: "把这个仓库的 CI 修好" },
+      name: "did-message-created",
+      data: {
+        sessionId: "s6",
+        messageId: "m3",
+        role: "user",
+        content: "把这个仓库的 CI 修好",
+      },
     });
     await h.emit({
       type: "event",
@@ -280,9 +253,8 @@ async function main() {
     const h2 = boot({ context: { text: "", parts: 0 } });
     await h2.emit({
       type: "event",
-      name: "will-user-message",
-      hookId: "h",
-      data: { sessionId: "s7", text: "跑一轮长任务" },
+      name: "did-message-created",
+      data: { sessionId: "s7", messageId: "m4", role: "user", content: "跑一轮长任务" },
     });
     await h2.emit({
       type: "event",

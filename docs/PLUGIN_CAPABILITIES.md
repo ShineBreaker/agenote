@@ -75,11 +75,11 @@
 
 cindy 的三条落地差异（不是缺口，是宿主形态不同）：
 
-- **F1/F2 是追加型、且对用户不可见**：Cindy 的入口钩子 `will-user-message` 只能改写
-  本轮这条用户消息，改不到历史，旧注入块剥不掉。所以注入按「追加」计，去重与单会话
-  累计预算必须靠 `agenote inject` 的三件套；插件侧不另存状态机。注入块整体包在一段
-  HTML 注释里——宿主用 `skipHtml` 渲染（桌面 `MarkdownRenderer`，手机
-  `messageMarkdown` 同样压制注释），气泡里看不到，模型侧照常读到。
+- **F1/F2 走资料节点、且要逐任务开启**：Cindy 的用户气泡是 `whitespace-pre-wrap`
+  纯文本（`UserMessage.tsx`），改写消息一定可见，所以注入只能走 `will-compose-context`
+  ——宿主把它作为「资料」前置到 wire 消息上，不动显示与落库的原话。代价是该节点只问
+  选中了本插件的任务，简报/召回因此**不是装了就生效**。F5/F6 反过来靠
+  `message` / `turn` 旁听，不依赖这个选择。
 - **F6 用轮次时长近似「有工作」**：Cindy 的订阅面没有工具调用事件，拿不到「本轮跑过
   工具」的事实，插件只在 `did-turn-end` 的 `durationMs` 超过门槛时才武装定时器。
 - **F7 不打包技能**：斜杠命令即技能名，由 agent 技能目录里的 `agenote-skills` 提供；

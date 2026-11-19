@@ -13,7 +13,8 @@ Cindy 用 `--no-extensions` 启动内置 Pi（实参见进程列表），omp 那
 
 | 钩子 / 事件 | 行为 |
 |---|---|
-| `will-user-message`（入口，3 秒裁决） | 把「会话简报 + 按轮召回」封进一段 HTML 注释，以 `rewrite` 挂到本轮用户消息开头；渲染时整块被丢弃，气泡里看不到 |
+| `will-compose-context`（资料节点，2 秒裁决） | 把「会话简报 + 按轮召回」作为宿主的**资料**附到本轮消息上：只改发给模型的 wire 消息，不动显示与落库的原话 |
+| `did-message-created` | 旁听用户消息，记下最后一条供完成信号判定（纯旁听，全局生效） |
 | `did-turn-end` | 命中完成信号 → 投递 agenote-review 评估提示；长轮次结束后武装空闲兜底定时器 |
 | `did-turn-start` | 取消空闲兜底定时器 |
 | 工具 `agenote_search` / `agenote_health` | 只读查询，走随包 Node worker 调 CLI |
@@ -27,16 +28,15 @@ CLI 调用都在 `node/worker.cjs` 里执行，每次调用都带 `AGENOTE_AGENT
 
 ## 三个要知道的取舍
 
-1. **注入是追加型，但对你不可见。** 整块是 `<!-- agenote-inject:start … 
-   agenote-inject:end -->` 一段 HTML 注释：桌面端 `MarkdownRenderer` 显式传
-   `skipHtml`、手机端 `messageMarkdown` 对跨块注释单独压制，两边都不渲染，所以气泡
-   里只剩你自己写的那句话；模型收到的消息正文里注释照常存在，简报就在里面。
-   代价有两处：一是落库的正文含隐藏块、随轮次累积，去重与累计预算由 CLI 兜底
-   （同 query 同指纹不重注，触顶停召回）；二是**复制这条消息会连注释一起复制**。
-   简报正文里的 `-->` 会被替换成 `-- >`，否则注释提前闭合、后半段会漏到气泡里。
-   完全不改原文的替代通道是 `will-compose-context`（宿主称作「资料」），代价是
-   每个任务都要在「任务插件」里手动勾选本插件——这也是 `will-model-request` 的
-   同一道门槛，所以默认没走这条。
+1. **资料通道要手动开，但保证不碰你的原话。** `will-compose-context` 是宿主里唯一
+   既不显示、也不落库的注入面：它把内容附在 wire 消息上（`appendRuntimePluginContext`
+   的注释写明「不影响落库/显示内容」）。代价是这个节点**只问选中了本插件的任务**，
+   所以要在任务的「任务插件 → 资料提供者」里勾一次。
+   为什么不用入口钩子 `will-user-message`：Cindy 的用户气泡是 `whitespace-pre-wrap`
+   纯文本（`UserMessage.tsx`），不是 Markdown 渲染，任何改写都会原样出现在气泡里；
+   塞进 HTML 注释也一样会被当纯文本显示出来。
+   不勾选时插件仍然工作：完成信号与空闲兜底（`message` / `turn` 旁听）不依赖这个选择，
+   只有简报与召回不注入。
 2. **空闲兜底用轮次时长近似「有工作」。** Cindy 的订阅面没有工具调用事件，
    拿不到「本轮跑过工具」的事实，插件只在 `did-turn-end` 的 `durationMs` 超过
    45 秒时才武装定时器。短问答轮不会误报，但也可能漏掉真正的短任务。
@@ -59,7 +59,8 @@ CLI 调用都在 `node/worker.cjs` 里执行，每次调用都带 `AGENOTE_AGENT
   版本（≥ 0.2.4）才有按轮召回与三件套；旧 CLI 自动降级为「只注会话简报」，
   工具仍可用。
 - **Cindy ≥ 0.1.139**：`ghost.json` 的 `minCindyVersion` 就是按这个版本写的
-  （`will-user-message` + `did-turn-end` + `send_to_session` 都在）。
+  （`will-compose-context` + `did-message-created` / `did-turn-end` +
+  `send_to_session` 都在）。
 
 ## 开关
 
@@ -73,20 +74,23 @@ CLI 调用都在 `node/worker.cjs` 里执行，每次调用都带 `AGENOTE_AGENT
 
 ## 权限与风险
 
-- `subscribe.hooks: will-user-message` 是**最重的一条**权限：插件能读取、拦截或
-  改写你发出的每条消息。本插件只做「只为空/非空」的判定与拼接，不改写你的原话
-  （注入块之后仍是原文）。
+- `subscribe.hooks: will-compose-context`：本插件只往本轮附资料，不读取、不改写你的
+  消息内容。装它不会替你批准任何事，只在任务里选中它时被询问。
+- `subscribe.topics: message`：旁听已落库的消息正文（用来识别完成信号）。这是纯旁听，
+  改不了流程，但确实能看到消息内容。
 - `agent.hostTools: control`：只用于 `send_to_session` 投递收尾提示。
 - `node`：随包 Node 工作进程拥有当前系统账号的本机权限，用它跑 `agenote` CLI。
 
 ## 实测记录（2026-11，Cindy 0.1.139）
 
-- `agenote context` 单次冷启动约 0.22 s，钩子窗口 3 s，单次超时按 1.2 s 配置，
+- `agenote context` 单次冷启动约 0.22 s；资料节点窗口 2 s，单次超时按 1.2 s 配置，
   一轮最多两次调用（简报 + 召回）。
 - `--host cindy` 在 CLI ≥ 0.2.4 生效；旧 CLI（如 0.2.0.4）会以 `invalid choice`
   拒绝，worker 自动退回 `generic` 并记住，不报错。
-- 宿主源码按 tag `v0.1.139`（commit `9ffef649`）核对过：`will-user-message`、
-  `did-turn-end`、`send_to_session`(control)、`launch: "resident"` 都在。
+- 宿主源码按 tag `v0.1.139`（commit `9ffef649`）核对过：`will-compose-context`、
+  `did-message-created`、`did-turn-end`、`send_to_session`(control)、
+  `launch: "resident"` 都在；`appendRuntimePluginContext` 的注释与实现都表明资料
+  只改 wire 消息，不动落库与显示。
 
 ## 自检
 

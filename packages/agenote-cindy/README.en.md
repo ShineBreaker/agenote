@@ -14,7 +14,8 @@ Cindy's own plugin protocol instead of Pi's extension points.
 
 | Hook / event | Behaviour |
 |---|---|
-| `will-user-message` (3 s verdict window) | Prepends an HTML comment block by rewriting the incoming message; the renderer drops it, so the bubble shows only your text |
+| `will-compose-context` (2 s verdict window) | Attaches the briefing as host-side reference material on the wire message; the stored and displayed original is untouched |
+| `did-message-created` | Listens for user messages to remember the last one for completion detection |
 | `did-turn-end` | Completion signal → posts an agenote-review prompt; long turns arm an idle fallback timer |
 | `did-turn-start` | Cancels the idle timer |
 | Tools `agenote_search` / `agenote_health` | Read-only CLI queries through the bundled Node worker |
@@ -27,15 +28,17 @@ budget) lives only in the CLI — the plugin calls `agenote inject` and keeps no
 
 ## Trade-offs
 
-1. **Injection is append-style, but invisible.** The whole block is one HTML comment
-   (`<!-- agenote-inject:start … agenote-inject:end -->`). The desktop renderer passes
-   `skipHtml`; the mobile renderer suppresses cross-block comments — neither draws it, so
-   the bubble shows only what you typed, while the message the model receives still carries
-   the briefing. Trade-offs: the stored message keeps hidden text that accumulates across
-   turns (dedupe and the cumulative budget are the CLI's job), and copying the message
-   copies the comment too. `-->` inside the briefing is rewritten to `-- >` so the comment
-   cannot close early. The no-rewrite alternative is `will-compose-context` (host-side
-   "reference material"), at the cost of selecting the plugin per task.
+1. **The reference channel must be enabled per task, but it never touches your words.**
+   `will-compose-context` is the only injection surface that is neither displayed nor
+   persisted: it prepends a note to the wire message (`appendRuntimePluginContext`), and
+   the stored original stays byte-identical. The cost is that the host only asks plugins
+   selected in the task's "task plugins → context provider" menu. The entry hook
+   `will-user-message` is not an option: Cindy renders user bubbles as plain
+   `whitespace-pre-wrap` text (`UserMessage.tsx`), not Markdown, so any rewrite — including
+   an HTML comment — shows up verbatim in the bubble.
+   Without the opt-in the plugin still works: completion signals and the idle fallback are
+   driven by the `message` / `turn` topics and do not depend on that selection; only the
+   briefing and recall are skipped.
 2. **The idle fallback approximates "did real work" by turn duration** (45 s), because
    Cindy's subscription surface exposes no tool-call events.
 3. **Slash commands are not bundled.** `/agenote-review`, `/agenote-curator`, etc. come from
@@ -61,14 +64,16 @@ tools). Requirements:
 
 ## Permissions
 
-`will-user-message` is the heaviest permission (read/intercept/rewrite everything you
-send). The plugin only decides whether to prepend a block; your original text follows it
-unchanged. `agent.hostTools: control` is used solely for `send_to_session` nudges. The
-bundled Node worker runs with your local account's permissions.
+`will-compose-context` only lets the plugin attach reference material; it does not read or
+rewrite your messages. `subscribe.topics: message` lets it observe stored message bodies
+(for completion detection) — observation only, but it does see content.
+`agent.hostTools: control` is used solely for `send_to_session` nudges. The bundled Node
+worker runs with your local account's permissions.
 
 ## Verified (2026-11, Cindy 0.1.139)
 
-- `agenote context` cold start ≈ 0.22 s; the hook window is 3 s, per-call timeout is 1.2 s.
+- `agenote context` cold start ≈ 0.22 s; the context point window is 2 s, per-call timeout is 1.2 s.
 - `--host cindy` requires CLI ≥ 0.2.4; older CLIs reject it with `invalid choice` and the
   worker falls back to `generic`, remembering the choice.
-- Host APIs checked against tag `v0.1.139` (commit `9ffef649`).
+- Host APIs checked against tag `v0.1.139` (commit `9ffef649`), including
+  `appendRuntimePluginContext`, which only edits the wire message.

@@ -4,6 +4,27 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] - 2026-11-21
+
+注入改走宿主的资料通道。0.2.0 把注入块包成 HTML 注释，前提是气泡按 Markdown 渲染
+（`skipHtml` 丢弃注释）——前提是错的：Cindy 的用户气泡是 `whitespace-pre-wrap`
+纯文本（`UserMessage.tsx`），注释会原样显示。宿主里唯一既不显示、也不落库的注入面
+是 `will-compose-context`：它只往 wire 消息前置材料，`appendRuntimePluginContext`
+的注释与实现都写明「不影响落库/显示内容」。
+
+---
+
+### Changed
+
+- **注入通道换成 `will-compose-context`**：返回 `action: "context"` 与
+  `blocks: [{id: "agenote-brief", text}]`，不再改写用户消息。裁决窗口从 3 秒变成
+  2 秒，总预算压到 1.6 秒。
+- **完成信号改由 `did-message-created` 旁听**：入口钩子不再声明，`message` topic
+  是纯旁听、不依赖任务选择，所以触发链路仍然全局生效；只有简报与召回需要在任务的
+  「任务插件」里选中本插件。
+- **权限面收窄**：不再申请「读取并改写你发出的消息」，改为「往本轮附资料」+ 旁听
+  已落库消息正文。
+
 ## [0.2.0] - 2026-11-21
 
 注入块不再出现在消息气泡里。宿主用 `skipHtml` 渲染（桌面端 `MarkdownRenderer`

@@ -70,10 +70,11 @@ cd packages/agenote && AGENOTE_CONTRACT_UPDATE=1 uv run pytest tests/test_contra
   `main.js` 是**浏览器沙箱电子脑**（无 Node、无文件系统、无网络直连），只做事件
   分发与协议封装；所有 CLI 调用在 `node/worker.cjs` 里执行，并带
   `AGENOTE_AGENT=cindy`。宿主用 `--no-extensions` 启动内置 Pi，所以 omp 扩展
-  （`agenote-pi`）在这条路上不可用。注入走入口钩子 `will-user-message` 的
-  `rewrite`（3 秒裁决窗口，超时 fail-open），因此它是**追加型**：改不到历史、
-  剥不掉旧块，去重必须靠 CLI 的三件套。注入块整体是 HTML 注释（桌面 `skipHtml`、
-  手机压制跨块注释），所以气泡里看不到，模型侧照常拿到。发布产物由 Cindy 宿主工具
+  （`agenote-pi`）在这条路上不可用。注入走资料节点 `will-compose-context`
+  （2 秒裁决窗口，超时 fail-open）：只往 wire 消息附材料，不动显示与落库的原话。
+  **不要用 `will-user-message` 改写**——用户气泡是纯文本 `whitespace-pre-wrap`，
+  任何注入都会原样显示（0.1.0/0.2.0 两版都在这上面栽过）。资料节点只问选中了本插件的
+  任务，所以简报/召回要逐任务勾选；完成信号走 `message` / `turn` 旁听，全局生效。发布产物由 Cindy 宿主工具
   `ghost_forge_pack` 打包，版本号在 `ghost.json`。详细接口与实测结论见该包
   `README.md`。
 - **`dsh-agenote`**：本包自带 [`packages/dsh-agenote/AGENTS.md`](packages/dsh-agenote/AGENTS.md)，
