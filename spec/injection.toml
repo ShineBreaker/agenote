@@ -104,3 +104,14 @@ brief = 8000
 recall = 4000
 cli_timeout_ms = 6000
 
+
+# cindy（ghost 插件）：追加型——入口钩子 will-user-message 只能改写本轮这条
+# 用户消息，改不到历史，所以剥不掉旧块，等价于追加注入。去重与单会话累计
+# 预算全部落在 CLI（`agenote inject`），插件只搬运。
+# 钩子裁决窗口 3 秒（超时 fail-open），而一轮最多两次 CLI 调用（简报 + 召回），
+# 因此单次超时压到 1200ms：本机实测单次 context 约 0.22s，留 5 倍余量。
+[hosts.cindy]
+mode = "append"
+brief = 8000
+recall = 4000
+cli_timeout_ms = 1200

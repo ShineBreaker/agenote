@@ -29,7 +29,7 @@ import types
 
 import pytest
 
-from agenote.context import MORE_GUIDE, build_context_result
+from agenote.context import HOSTS, MORE_GUIDE, build_context_result
 
 TEXT = """#+title: MEMORY-test
 
@@ -245,6 +245,12 @@ def test_host_switch_chain(kb, monkeypatch):
     monkeypatch.setenv("AGENOTE_INJECTION_HOSTS_DSH_ENABLED", "false")
     assert build_context_result(_args(host="dsh"), kb)["status"] == "disabled"
     monkeypatch.delenv("AGENOTE_INJECTION_HOSTS_DSH_ENABLED")
+    # cindy 是独立宿主：有自己的配置键，也要出现在 CLI 的 --host 可选值里
+    monkeypatch.setenv("AGENOTE_INJECTION_HOSTS_CINDY_ENABLED", "false")
+    assert build_context_result(_args(host="cindy"), kb)["status"] == "disabled"
+    monkeypatch.delenv("AGENOTE_INJECTION_HOSTS_CINDY_ENABLED")
+    assert build_context_result(_args(host="cindy"), kb)["status"] == "ok"
+    assert "cindy" in HOSTS
     # 总开关优先于 host 开关
     monkeypatch.setenv("AGENOTE_INJECTION_ENABLED", "false")
     monkeypatch.setenv("AGENOTE_INJECTION_HOSTS_HERMES_ENABLED", "true")

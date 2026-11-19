@@ -1,6 +1,6 @@
 # AGENTS.md — agenote monorepo
 
-跨 Agent 经验平台。**单仓 7 个组件**：CLI 是唯一实现层，其余是宿主适配层与行为规范
+跨 Agent 经验平台。**单仓 8 个组件**：CLI 是唯一实现层，其余是宿主适配层与行为规范
 载体。布局与发布决策见
 [`docs/adr/0005`](docs/adr/0005-monorepo-unify-seven-components.md)，领域术语见
 [`CONTEXT.md`](CONTEXT.md)。
@@ -15,6 +15,7 @@
 | `packages/agenote` | Python CLI（PyPI: `agenote`），**唯一实现层** | [§agenote](CODING_STANDARDS.md#agenote) |
 | `packages/agenote-el` | Emacs 插件（ELPA），纯 CLI 适配层 | [§agenote-el](CODING_STANDARDS.md#agenote-el) |
 | `packages/agenote-zcode` / `agenote-hermes` / `agenote-pi` | 宿主注入插件：zcode hooks、hermes Python 插件、omp 单文件 TS | [§宿主适配](CODING_STANDARDS.md#宿主适配) |
+| `packages/agenote-cindy` | Cindy ghost 插件（`.cindy`）：`ghost.json` + 沙箱 `main.js` + 随包 Node worker | [§宿主适配](CODING_STANDARDS.md#宿主适配) |
 | `packages/dsh-agenote` | DSH cordis bundle（npm），本包另有自带 `AGENTS.md`，冲突时以它为准 | [§宿主适配](CODING_STANDARDS.md#宿主适配) |
 | `packages/agenote-skills` | 3 个 agent skill（base / curator / review），**行为规范的载体** | [§agenote-skills](CODING_STANDARDS.md#agenote-skills) |
 | `spec/injection.toml` | 跨组件语义源（信号 / 预算 / 时序），被 `tools/codegen` 消费 | [§spec](CODING_STANDARDS.md#spec) |
@@ -75,7 +76,7 @@ dotfiles 仓 `Guix-configs` 通过钉版本锁文件消费本仓的发布产物�
 
 - **改 CLI**（子命令、配置键、卡片、检索、`extract/`）→ [§agenote](CODING_STANDARDS.md#agenote)
 - **改 Emacs 端**，或改 CLI 的自由文本 / `--json` 输出 → [§agenote-el](CODING_STANDARDS.md#agenote-el)（**脆弱耦合**，附 golden 快照重生命令）
-- **改注入器**（zcode / hermes / pi / dsh / claude / codex / opencode）→ [§宿主适配](CODING_STANDARDS.md#宿主适配)
+- **改注入器**（zcode / hermes / pi / dsh / cindy / claude / codex / opencode）→ [§宿主适配](CODING_STANDARDS.md#宿主适配)
 - **改跨组件语义**（完成信号、注入预算、时序阈值）→ [§spec](CODING_STANDARDS.md#spec)
 - **改行为规范**（写入流程 / 卡片格式 / 策展策略）→ [§agenote-skills](CODING_STANDARDS.md#agenote-skills)
 - **发版**（改版本、写 CHANGELOG、打 tag）→ [§发版](CODING_STANDARDS.md#发版)

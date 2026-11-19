@@ -1,0 +1,3 @@
+*.cindy
+dist/
+.DS_Store

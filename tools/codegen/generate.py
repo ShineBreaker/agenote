@@ -195,6 +195,23 @@ def render_dsh_budgets(spec: Spec) -> str:
     )
 
 
+def render_cindy_budgets(spec: Spec) -> str:
+    """cindy 的简报/召回预算与单次 CLI 超时。
+
+    main.js 是浏览器沙箱，没有 process.env，所以只能渲染字面量：环境覆盖统一
+    走 agenote 自己的配置（[injection] 节 + AGENOTE_INJECTION_* 环境变量），
+    不再在插件里另开一层。
+    """
+    h = spec.host("cindy")
+    return "\n".join(
+        [
+            f"const BRIEF_BUDGET = {h['brief']};",
+            f"const RECALL_BUDGET = {h['recall']};",
+            f"const CLI_TIMEOUT_MS = {spec.timeout('cindy')};",
+        ]
+    )
+
+
 # ══════════════════════════════════════════════════════════════
 # 目标表
 # ══════════════════════════════════════════════════════════════
@@ -229,6 +246,17 @@ TARGETS: list[tuple[str, str, list[Block]]] = [
         "packages/dsh-agenote/lib.js",
         "//",
         [("hosts.dsh.budgets", render_dsh_budgets)],
+    ),
+    # —— cindy（ghost 插件，追加型）——
+    (
+        "packages/agenote-cindy/main.js",
+        "//",
+        [
+            ("signals.completion", lambda s: render_signals_js(s)),
+            ("timing.debounce", render_debounce_js),
+            ("timing.idle", render_idle_js),
+            ("hosts.cindy.budgets", render_cindy_budgets),
+        ],
     ),
     # —— zcode（ZCode 插件）——
     (

@@ -59,19 +59,30 @@
 `✅` 已实现；`—` 未实现（缺口）；`N/A` 宿主能力不支持或组件类型不适用（理由见
 [豁免记录](#豁免记录)）。
 
-| 功能 | zcode | hermes | pi | dsh | claude | codex | opencode |
-|---|---|---|---|---|---|---|---|
-| F1 记忆简报 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| F2 每轮召回 | ✅ | ✅ | N/A | ✅ | ✅ | ✅ | N/A |
-| F3 状态与缓存 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| F4 语义开关 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| F5 完成信号 | ✅ | ✅ | ✅ | ✅ | N/A | N/A | N/A |
-| F6 空闲兜底 | N/A | N/A | ✅ | ✅ | N/A | N/A | N/A |
-| F7 命令三件套 | ✅ | ✅ | ✅ | ✅ | N/A | N/A | N/A |
-| F8 归因 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| F9 子代理豁免 | N/A | ✅ | ✅ | ✅ | N/A | N/A | N/A |
-| F10 故障静默 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| F11 写侧适配 | N/A | N/A | N/A | ✅ | N/A | N/A | N/A |
+| 功能 | zcode | hermes | pi | dsh | cindy | claude | codex | opencode |
+|---|---|---|---|---|---|---|---|---|
+| F1 记忆简报 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| F2 每轮召回 | ✅ | ✅ | N/A | ✅ | ✅ | ✅ | ✅ | N/A |
+| F3 状态与缓存 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| F4 语义开关 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| F5 完成信号 | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | N/A | N/A |
+| F6 空闲兜底 | N/A | N/A | ✅ | ✅ | ✅ | N/A | N/A | N/A |
+| F7 命令三件套 | ✅ | ✅ | ✅ | ✅ | ✅ | N/A | N/A | N/A |
+| F8 归因 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| F9 子代理豁免 | N/A | ✅ | ✅ | ✅ | N/A | N/A | N/A | N/A |
+| F10 故障静默 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| F11 写侧适配 | N/A | N/A | N/A | ✅ | N/A | N/A | N/A | N/A |
+
+cindy 的三条落地差异（不是缺口，是宿主形态不同）：
+
+- **F1/F2 是追加型**：Cindy 的入口钩子 `will-user-message` 只能改写本轮这条用户消息，
+  改不到历史，旧注入块剥不掉。所以注入按「追加」计，去重与单会话累计预算必须靠
+  `agenote inject` 的三件套；插件侧不另存状态机。
+- **F6 用轮次时长近似「有工作」**：Cindy 的订阅面没有工具调用事件，拿不到「本轮跑过
+  工具」的事实，插件只在 `did-turn-end` 的 `durationMs` 超过门槛时才武装定时器。
+- **F7 不打包技能**：斜杠命令即技能名，由 agent 技能目录里的 `agenote-skills` 提供；
+  插件随包复制一份会让行为规范出现第二处真相源。插件改提供 `agenote_search` /
+  `agenote_health` 两个只读工具作为替代入口。
 
 注入器（claude / codex / opencode）的 `N/A` 是组件类型边界：它们不是插件，没有命令
 注册与 turn 生命周期挂点。完整插件的 `N/A` 是宿主能力边界，逐条记在下面。
@@ -94,7 +105,9 @@
 
 1. 在 `spec/injection.toml` 增加 `[hosts.<name>]`：`mode`（append / rewrite）、
    `brief` / `recall` 预算、`cli_timeout_ms`；改 `tools/codegen/generate.py` 的
-   `TARGETS` 登记预算生成块，跑一次生成。
+   `TARGETS` 登记预算生成块，跑一次生成。`--host` 的可选值是
+   `context.py` 的 `HOSTS` 常量，只改一处就会同步到 `agenote` 与 `agenote-cli`；
+   新增宿主还要在 `config.py` 的 `injection.hosts` 补 `<name>_enabled`。
 2. 实现 F1–F10 中适用于该宿主形态的项；**注入状态机不要自己写**——追加型调
    `agenote inject --host <name> --event session|prompt`，重写型调
    `agenote context` 并可在宿主侧加指纹缓存省 spawn。不适用项先写进本文件的
@@ -110,6 +123,9 @@ bash packages/agenote/injectors/selftest.sh
 cd packages/agenote && .venv/bin/python -m pytest -q
 for f in packages/dsh-agenote/*.js; do cp "$f" "/tmp/dsh-$(basename "${f%.js}").mjs"; node --check "/tmp/dsh-$(basename "${f%.js}").mjs"; done
 python3 -m py_compile packages/agenote-hermes/__init__.py
+node --check packages/agenote-cindy/main.js
+node --check packages/agenote-cindy/node/worker.cjs
+node packages/agenote-cindy/selftest.mjs
 ```
 
 ## 相关内容

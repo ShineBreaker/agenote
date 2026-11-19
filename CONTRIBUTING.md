@@ -77,6 +77,7 @@ LLM 参与的提交按**实际宿主与模型**附加 `Assisted-by`，多个作�
 | ZCode | `ZCode (GLM-5.3) <noreply@z.ai>` |
 | DSH | `DeepSeek (step-5-preview) <noreply@deepseek.com>` |
 | Hermes | `Hermes (<model>) <noreply@nousresearch.com>` |
+| Cindy | `Cindy (<model>) <feedback@cindy.app>` |
 
 模型名照实际运行的那个填，不要照抄本表。
 

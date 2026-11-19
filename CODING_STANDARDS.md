@@ -57,7 +57,7 @@ cd packages/agenote && AGENOTE_CONTRACT_UPDATE=1 uv run pytest tests/test_contra
 
 ## 宿主适配
 
-四个插件（zcode / hermes / pi / dsh）职责**仅限**「事件触发 + 注入通道 + 命令快捷
+五个插件（zcode / hermes / pi / dsh / cindy）职责**仅限**「事件触发 + 注入通道 + 命令快捷
 入口」。行为规范由 `agenote-skills` 定义，知识库逻辑由 CLI 实现——两者都不在插件里重复。
 **每个宿主应实现哪些功能、哪些项豁免、验证入口在哪，以
 [`docs/PLUGIN_CAPABILITIES.md`](docs/PLUGIN_CAPABILITIES.md) 为准**：改插件前先对照
@@ -66,6 +66,15 @@ cd packages/agenote && AGENOTE_CONTRACT_UPDATE=1 uv run pytest tests/test_contra
 - **`agenote-pi`**：单文件 TypeScript。omp 运行时自动扫描加载，无需构建、无需在
   `config.yml` 注册；`ExtensionAPI` 是全局类型无需 import。只读 CLI 查询走
   `agenote-cli` shim。
+- **`agenote-cindy`**：Cindy ghost 插件（`.cindy` = zip）。两层代码分工固定：
+  `main.js` 是**浏览器沙箱电子脑**（无 Node、无文件系统、无网络直连），只做事件
+  分发与协议封装；所有 CLI 调用在 `node/worker.cjs` 里执行，并带
+  `AGENOTE_AGENT=cindy`。宿主用 `--no-extensions` 启动内置 Pi，所以 omp 扩展
+  （`agenote-pi`）在这条路上不可用。注入走入口钩子 `will-user-message` 的
+  `rewrite`（3 秒裁决窗口，超时 fail-open），因此它是**追加型**：改不到历史、
+  剥不掉旧块，去重必须靠 CLI 的三件套。发布产物由 Cindy 宿主工具
+  `ghost_forge_pack` 打包，版本号在 `ghost.json`。详细接口与实测结论见该包
+  `README.md`。
 - **`dsh-agenote`**：本包自带 [`packages/dsh-agenote/AGENTS.md`](packages/dsh-agenote/AGENTS.md)，
   **以那份为准**——它写了 `runKb` 收敛、投递二分、状态二分等更细的规则，以及本包
   独有的冷启动验证与 peer cohort 约束。本节只留一条跨包禁令：**不 import
@@ -237,6 +246,10 @@ python3 tools/codegen/generate.py --check && python3 tools/codegen/check.py
 # 各宿主适配器语法
 node --check packages/agenote-zcode/hooks/*.mjs
 for f in packages/dsh-agenote/*.js; do cp "$f" "/tmp/dsh-$(basename "${f%.js}").mjs"; node --check "/tmp/dsh-$(basename "${f%.js}").mjs"; done
+# Cindy 插件：main.js 是沙箱脚本，worker 是 CJS；selftest 用桩替身跑分支
+node --check packages/agenote-cindy/main.js
+node --check packages/agenote-cindy/node/worker.cjs
+node packages/agenote-cindy/selftest.mjs
 python3 -m py_compile packages/agenote-hermes/__init__.py
 cd packages/agenote-el && emacs -Q --batch -L . -l package -f batch-byte-compile *.el
 

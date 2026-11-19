@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 3,
+  "minCindyVersion": "0.1.139",
+  "id": "agenote",
+  "name": "agenote 经验库",
+  "description": "把 agenote 跨 agent 经验库接进 Cindy：每轮把记忆简报与按需召回挂到你的消息上，任务收尾时提醒 agent 做经验留痕。",
+  "whenToUse": "要查历史上踩过的坑、复用旧方案、跨 agent 共享技术决策；任务收尾要总结经验、给卡片留痕；提到 agenote、经验库、踩坑记录、知识库健康度时",
+  "version": "0.1.0",
+  "entry": "main.js",
+  "readme": {
+    "en": "README.en.md",
+    "zh-CN": "README.md"
+  },
+  "launch": "resident",
+  "command": "agenote",
+  "agent": {
+    "hostTools": [
+      "control"
+    ]
+  },
+  "subscribe": {
+    "topics": [
+      "turn"
+    ],
+    "hooks": [
+      "will-user-message"
+    ]
+  },
+  "tools": [
+    {
+      "name": "agenote_search",
+      "description": "在 agenote 跨 agent 知识库里做全文检索，返回命中的经验卡片（标题、类型、摘要、文件名）。用户问「以前有没有踩过这个坑」「这个方案上次怎么做的」时用它；只读。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "检索关键词，按空格分隔多个词。用用户原话里的技术名、报错、组件名，不要扩写成句子。"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "最多返回几条，默认 5，范围 1–20。",
+            "minimum": 1,
+            "maximum": 20
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "agenote_health",
+      "description": "读取 agenote 知识库健康度报告：条目规模、重复与低质候选、陈旧记忆。用户问知识库状态、或策展前想先看诊断时用它；只读。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "duplicates": {
+            "type": "boolean",
+            "description": "是否附带重复候选检测（较慢，默认 false）。"
+          }
+        }
+      }
+    }
+  ],
+  "node": {
+    "entry": "node/worker.cjs",
+    "protocol": "json-rpc-stdio",
+    "lifecycle": "resident"
+  }
+}
