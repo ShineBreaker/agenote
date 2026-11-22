@@ -225,7 +225,44 @@ async function main() {
 
   // ── 空闲兜底 ────────────────────────────────────────────────────────
   {
-    console.log("\n空闲兜底");
+      {
+    // 短问答但本轮真的跑过工具：工具调用条数是比时长更硬的「有工作」证据
+    const h = boot({ context: { text: "", parts: 0 } });
+    await h.emit({
+      type: "event",
+      name: "did-message-created",
+      data: { sessionId: "s8", messageId: "t1", role: "tool_use", content: "{}" },
+    });
+    await h.emit({
+      type: "event",
+      name: "did-message-created",
+      data: { sessionId: "s8", messageId: "m5", role: "user", content: "再跑一次测试" },
+    });
+    await h.emit({
+      type: "event",
+      name: "did-turn-end",
+      data: { sessionId: "s8", durationMs: 8000, endReason: "completed" },
+    });
+    check("有工具调用的短轮次也武装定时器", h.timers.length === 1);
+  }
+
+  {
+    // 纯对话短轮次：不该被提醒去复盘
+    const h = boot({ context: { text: "", parts: 0 } });
+    await h.emit({
+      type: "event",
+      name: "did-message-created",
+      data: { sessionId: "s9", messageId: "m6", role: "user", content: "谢谢，聊聊天" },
+    });
+    await h.emit({
+      type: "event",
+      name: "did-turn-end",
+      data: { sessionId: "s9", durationMs: 5000, endReason: "completed" },
+    });
+    check("纯对话短轮次不武装定时器", h.timers.length === 0);
+  }
+
+console.log("\n空闲兜底");
     const h = boot({ context: { text: "", parts: 0 } });
     await h.emit({
       type: "event",

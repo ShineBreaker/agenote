@@ -78,7 +78,9 @@ CLI 调用都在 `node/worker.cjs` 里执行，每次调用都带 `AGENOTE_AGENT
   消息内容。装它不会替你批准任何事，只在任务里选中它时被询问。
 - `subscribe.topics: message`：旁听已落库的消息正文（用来识别完成信号）。这是纯旁听，
   改不了流程，但确实能看到消息内容。
-- `agent.hostTools: control`：只用于 `send_to_session` 投递收尾提示。
+- `agent.hostTools: handoff`：只用于 `send_to_session` 投递收尾提示。注意它属
+  **`handoff` 组**而不是 `control`——申报错组时宿主只回一个 `PERMISSION_DENIED`，
+  没有别的提示（0.3.1 及以前就是这样哑掉的）。
 - `node`：随包 Node 工作进程拥有当前系统账号的本机权限，用它跑 `agenote` CLI。
 
 ## 实测记录（2026-11，Cindy 0.1.139）

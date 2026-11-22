@@ -5,7 +5,7 @@
   "name": "agenote 经验库",
   "description": "把 agenote 跨 agent 经验库接进 Cindy：每轮把记忆简报与按需召回挂到你的消息上，任务收尾时提醒 agent 做经验留痕。",
   "whenToUse": "要查历史上踩过的坑、复用旧方案、跨 agent 共享技术决策；任务收尾要总结经验、给卡片留痕；提到 agenote、经验库、踩坑记录、知识库健康度时",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "entry": "main.js",
   "readme": {
     "en": "README.en.md",
@@ -15,7 +15,7 @@
   "command": "agenote",
   "agent": {
     "hostTools": [
-      "control"
+      "handoff"
     ]
   },
   "subscribe": {
@@ -61,6 +61,24 @@
             "description": "是否附带重复候选检测（较慢，默认 false）。"
           }
         }
+      }
+    },
+    {
+      "name": "agenote_diag",
+      "description": "诊断 agenote 插件本身：宿主投递过哪些事件、最近一轮收尾的原因与时长、上一次收尾提示是否投递成功（失败带原始错误码）、随包 CLI 通道是否通。排查「为什么没收到复盘提示」时先跑它。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "send_test": {
+            "type": "boolean",
+            "description": "true 时当场试投一条收尾提示，返回宿主原始回执或抛出的错误"
+          },
+          "target_session_id": {
+            "type": "string",
+            "description": "试投目标会话 id，缺省则用收到的最近一次事件的会话"
+          }
+        },
+        "additionalProperties": false
       }
     }
   ],

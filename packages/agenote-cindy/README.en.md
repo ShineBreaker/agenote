@@ -67,7 +67,9 @@ tools). Requirements:
 `will-compose-context` only lets the plugin attach reference material; it does not read or
 rewrite your messages. `subscribe.topics: message` lets it observe stored message bodies
 (for completion detection) — observation only, but it does see content.
-`agent.hostTools: control` is used solely for `send_to_session` nudges. The bundled Node
+`agent.hostTools: handoff` is used solely for `send_to_session` nudges — it belongs to the
+**`handoff`** group, not `control`; a wrong group only yields a bare `PERMISSION_DENIED`
+(which is why every nudge before 0.3.2 died silently). The bundled Node
 worker runs with your local account's permissions.
 
 ## Verified (2026-11, Cindy 0.1.139)

@@ -4,6 +4,23 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.2] - 2026-11-21
+
+修掉「完成信号与空闲兜底从来没生效过」：`send_to_session` 属于宿主工具目录的
+**`handoff`** 组，插件却申报了 `control`。宿主对未申报组的调用只回
+`{"ok":false,"errorCode":"PERMISSION_DENIED"}`，本插件又把投递失败吞在 `catch`
+里，于是「静默失败」贯穿了 0.1.0 到 0.3.1 —— 投递次数 0，卡片库里一条提示都没有。
+
+---
+
+### Fixed
+
+- **`agent.hostTools` 改为 `["handoff"]`**：收尾提示终于能真正投递。
+- **新增 `agenote_diag` 工具**：吐事件计数、最近一轮 `durationMs`/`endReason`、
+  上一次投递的原始回执或错误、随包 CLI 是否通，并可 `send_test` 当场试投一条。
+  排查「为什么没收到复盘提示」不必再靠猜。
+- **投递失败不再无声**：错误码写进 `diag.lastNudge`，可用 `agenote_diag` 查。
+
 ## [0.3.0] - 2026-11-21
 
 注入改走宿主的资料通道。0.2.0 把注入块包成 HTML 注释，前提是气泡按 Markdown 渲染
