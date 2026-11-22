@@ -5,7 +5,7 @@
   "name": "agenote 经验库",
   "description": "把 agenote 跨 agent 经验库接进 Cindy：每轮把记忆简报与按需召回挂到你的消息上，任务收尾时提醒 agent 做经验留痕。",
   "whenToUse": "要查历史上踩过的坑、复用旧方案、跨 agent 共享技术决策；任务收尾要总结经验、给卡片留痕；提到 agenote、经验库、踩坑记录、知识库健康度时",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "entry": "main.js",
   "readme": {
     "en": "README.en.md",

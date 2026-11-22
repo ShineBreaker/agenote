@@ -326,7 +326,7 @@ async function onDiagTool(msg) {
     try {
       const raw = await cindy.host.call("cindy_helper", "send_to_session", {
         target_session_id: target,
-        message: HOOK_MARKER + "这是 agenote 插件的投递自检，收到即说明 control 通道可用。</agenote-hook>",
+        message: HOOK_MARKER + "这是 agenote 插件的投递自检，收到即说明 handoff 通道可用。</agenote-hook>",
       });
       sendTest.elapsedMs = Date.now() - startedAt;
       sendTest.raw = JSON.stringify(raw).slice(0, 1200);
