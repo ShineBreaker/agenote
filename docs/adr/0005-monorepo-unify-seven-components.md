@@ -100,12 +100,12 @@ ShineBreaker/agenote/            ← monorepo 根（沿用原 CLI 仓）
 tag 格式 `<component>-v<version>`（`agenote-v0.3.0`、`dsh-agenote-v0.2.0`），
 一个提交可携带多个 tag，每个 tag 只触发自己的流水线，组件版本互不牵制。渠道：
 
-| 组件 | 渠道 | 前置补齐 |
-|---|---|---|
-| `agenote` | PyPI + GitHub Release | `pyproject.toml` 迁到 `packages/agenote/` |
-| `agenote-el` | GNU ELPA / elpa.gnu.org | 补 `Package-Version` / `Package-Archive` 等头 |
-| `dsh-agenote` | npm + GitHub Release | 去 `private: true` |
-| `agenote-pi` / `agenote-zcode` / `agenote-hermes` / `agenote-skills` | GitHub Release tarball + 拉取脚本 | 各补 CHANGELOG 与 LICENSE 位置声明 |
+| 组件                                                                 | 渠道                              | 前置补齐                                      |
+| -------------------------------------------------------------------- | --------------------------------- | --------------------------------------------- |
+| `agenote`                                                            | PyPI + GitHub Release             | `pyproject.toml` 迁到 `packages/agenote/`     |
+| `agenote-el`                                                         | GNU ELPA / elpa.gnu.org           | 补 `Package-Version` / `Package-Archive` 等头 |
+| `dsh-agenote`                                                        | npm + GitHub Release              | 去 `private: true`                            |
+| `agenote-pi` / `agenote-zcode` / `agenote-hermes` / `agenote-skills` | GitHub Release tarball + 拉取脚本 | 各补 CHANGELOG 与 LICENSE 位置声明            |
 
 **发布流程的 tag 漏推陷阱原样继承**：`release.yml` 认 `on: push: tags`，漏推 tag 时
 远端无 tag 事件、workflow 不跑，而本地一切正常。每次发版仍须
