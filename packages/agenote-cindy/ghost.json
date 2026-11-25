@@ -1,11 +1,11 @@
 {
   "schemaVersion": 3,
-  "minCindyVersion": "0.1.139",
+  "minCindyVersion": "0.1.143",
   "id": "agenote",
   "name": "agenote 经验库",
   "description": "把 agenote 跨 agent 经验库接进 Cindy：每轮把记忆简报与按需召回挂到你的消息上，任务收尾时提醒 agent 做经验留痕。",
   "whenToUse": "要查历史上踩过的坑、复用旧方案、跨 agent 共享技术决策；任务收尾要总结经验、给卡片留痕；提到 agenote、经验库、踩坑记录、知识库健康度时",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "entry": "main.js",
   "readme": {
     "en": "README.en.md",
@@ -21,7 +21,8 @@
   "subscribe": {
     "topics": [
       "turn",
-      "message"
+      "message",
+      "tool-execution"
     ],
     "hooks": [
       "will-compose-context"
@@ -75,7 +76,7 @@
           },
           "target_session_id": {
             "type": "string",
-            "description": "试投目标会话 id，缺省则用收到的最近一次事件的会话"
+            "description": "试投目标会话 id，send_test 必须显式提供，避免误投到其它会话"
           }
         },
         "additionalProperties": false

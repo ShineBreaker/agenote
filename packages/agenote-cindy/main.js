@@ -15,7 +15,7 @@
  * - did-message-created：记录最后一条用户消息，供完成信号判定（这个 topic 是
  *   纯旁听，不需要任务选择，所以触发链路全局生效）。
  * - did-turn-end / did-turn-start：完成信号投递 review 提示、空闲兜底定时器。
- * - tools：agenote_search / agenote_health 两个只读入口。
+ * - tools：agenote_search / agenote_health 两个只读入口，以及带可选试投的 agenote_diag。
  *
  * 所有 CLI 调用都在随包 Node worker 里执行（main.js 是浏览器沙箱，没有
  * Node 也没有文件系统），并带 AGENOTE_AGENT=cindy 归因。
@@ -29,8 +29,8 @@ const HOOK_MARKER = "<agenote-hook>";
 
 /**
  * 空闲兜底「有工作」门槛（毫秒）。
- * Cindy 的订阅面不提供工具调用事件，拿不到「本轮跑过工具」的事实，只能用
- * 轮次时长近似：短问答轮不会武装定时器，长轮次才可能是真在干活。
+ * Cindy 的 tool-execution topic 在可用时会提供工具调用/结果事件；拿不到这些事件时，才用
+ * 轮次时长近似「有工作」。因此短工具轮也能武装定时器，纯短问答轮不会武装。
  * 这是对 F6「不得在纯对话轮误报」的近似，不是精确判定。
  */
 const IDLE_ARM_MIN_TURN_MS = 45000;
@@ -107,17 +107,25 @@ function stateOf(sessionId) {
       lastUserText: "",
       toolUses: 0, // 本轮保存下来的工具调用条数：比轮次时长更准的「有工作」证据
       lastTriggerAt: 0,
-      signalTriggered: false, // 显式信号触发过 → 永久关闭空闲兜底
+      signalTriggered: false, // 成功投递过显式信号 → 永久关闭空闲兜底
+      nudgeInFlight: false,
+      nudgePromise: null,
+      nudgeGeneration: null, // 当前投递属于哪一轮，供并发请求共享回执
+      turnGeneration: 0, // 使跨轮次的异步定时器失效
+      turnActive: false,
       idleTimer: null,
     };
     sessions.set(sessionId, state);
-    // 会话表只用于进程内簿记，长跑时按插入序丢弃最旧的一半，避免无界增长。
+    // 会话表只用于进程内簿记，长跑时优先丢弃没有活动轮次、投递或定时器的旧状态。
+    // 不能按插入序硬删：旧状态可能仍有异步回执，删掉后同一 session 的新事件会
+    // 创建第二份簿记，造成重复投递或漏掉定时器。
     if (sessions.size > 200) {
-      const stale = [...sessions.keys()].slice(0, 100);
-      for (const key of stale) {
-        const old = sessions.get(key);
-        if (old && old.idleTimer) clearTimeout(old.idleTimer);
+      let removed = 0;
+      for (const [key, old] of sessions) {
+        if (removed >= 100) break;
+        if (old.turnActive || old.nudgeInFlight || old.idleTimer) continue;
         sessions.delete(key);
+        removed += 1;
       }
     }
   }
@@ -125,13 +133,20 @@ function stateOf(sessionId) {
 }
 
 /** 调随包 Node worker。失败一律返回 null，调用方按「本轮不注入」降级。 */
-async function askWorker(method, params, timeoutMs) {
+async function askWorker(method, params, timeoutMs, options) {
   try {
-    const response = await cindy.node.request({
+    const request = {
       method,
       params,
       timeoutMs: timeoutMs || CLI_TIMEOUT_MS + 500,
-    });
+    };
+    // 工具调用中的 Node 请求绑定当前 call，取消/交卷后由 Host 回收子进程；
+    // 旁听钩子没有 callId，保持独立的短请求生命周期。
+    if (options && options.callId) {
+      request.callId = options.callId;
+      request.cancelWithCall = true;
+    }
+    const response = await cindy.node.request(request);
     if (!response || !response.ok) return null;
     return response.result || null;
   } catch (err) {
@@ -143,6 +158,42 @@ function verdict(msg, action, extra) {
   return cindy.send(
     Object.assign({ type: "event-verdict", hookId: msg.hookId, action }, extra || {}),
   );
+}
+
+function safeJson(value, maxLength) {
+  try {
+    const text = JSON.stringify(value);
+    return String(text === undefined ? value : text).slice(0, maxLength);
+  } catch (err) {
+    return String((err && err.message) || err).slice(0, maxLength);
+  }
+}
+
+function hostResultError(result) {
+  if (!result) return "宿主没有返回成功回执";
+  if (result.errorCode || result.error) return result.errorCode || result.error;
+  const text =
+    result.content && Array.isArray(result.content)
+      ? result.content.find((item) => item && item.type === "text" && typeof item.text === "string")
+      : null;
+  if (text) {
+    try {
+      const payload = JSON.parse(text.text);
+      if (payload && (payload.errorCode || payload.error)) {
+        return payload.errorCode || payload.error;
+      }
+      if (payload && payload.ok === false) return "宿主返回 ok=false";
+      if (payload && payload.isError === true) return "宿主返回 isError=true";
+    } catch (err) {
+      // 普通文本回执也是合法成功回执；结构化错误才需要拒绝。
+    }
+  }
+  if (result.isError === true || result.ok === false) return "宿主返回失败回执";
+  return null;
+}
+
+function hostResultOk(result) {
+  return hostResultError(result) === null;
 }
 
 function buildReviewPrompt(reason) {
@@ -165,17 +216,56 @@ async function deliverNudge(sessionId, reason) {
       target_session_id: sessionId,
       message: buildReviewPrompt(reason),
     });
-    record.ok = !(result && result.isError);
+    record.receipt = safeJson(result, 1200);
+    record.ok = hostResultOk(result);
     if (!record.ok) {
-      record.error =
-        (result && (result.errorCode || result.error)) ||
-        (result && result.content && JSON.stringify(result.content).slice(0, 400)) ||
-        "未知错误";
+      record.error = hostResultError(result) || safeJson(result && result.content, 400);
     }
     return record.ok;
   } catch (err) {
     record.error = String((err && err.message) || err);
     return false;
+  }
+}
+
+/** 防止同一事件并发投递；跨轮次时等待旧回执后再投递，不丢新的完成信号。 */
+async function requestNudge(state, sessionId, reason, generation) {
+  if (state.nudgeInFlight && state.nudgePromise) {
+    const inFlightPromise = state.nudgePromise;
+    const inFlightGeneration = state.nudgeGeneration;
+    const ok = await inFlightPromise;
+    // 同一轮的并发请求共享旧回执，包括失败回执；否则两个同时到达的收尾事件
+    // 会在第一次失败后立即重复投递。旧轮次的成功不能封存新轮次状态。
+    if (
+      generation === undefined ||
+      inFlightGeneration === null ||
+      inFlightGeneration === generation
+    ) {
+      return ok;
+    }
+    // generation 变了：这是新轮次的独立请求，旧回执结束后继续向下投递。
+  }
+  if (state.nudgeInFlight) return false;
+
+  state.nudgeInFlight = true;
+  state.nudgeGeneration = generation === undefined ? null : generation;
+  const promise = deliverNudge(sessionId, reason);
+  state.nudgePromise = promise;
+  try {
+    const ok = await promise;
+    // 旧轮次的异步回执不能封存新轮次的状态或清掉它的定时器。
+    if (ok && (generation === undefined || state.turnGeneration === generation)) {
+      state.lastTriggerAt = Date.now();
+      state.signalTriggered = true;
+      clearIdle(state);
+    }
+    return ok;
+  } finally {
+    if (state.nudgePromise === promise) {
+      state.nudgePromise = null;
+      state.nudgeGeneration = null;
+      state.nudgeInFlight = false;
+    }
   }
 }
 
@@ -228,23 +318,97 @@ function contentText(content) {
   return "";
 }
 
+function hasCompletionSignal(text) {
+  const lower = String(text || "").toLowerCase();
+  for (const rawSignal of COMPLETION_SIGNALS) {
+    const signal = rawSignal.toLowerCase();
+    const englishSignal = /^[a-z]/.test(signal);
+    let from = 0;
+    while (from < lower.length) {
+      const start = lower.indexOf(signal, from);
+      if (start < 0) break;
+      const end = start + signal.length;
+      if (
+        englishSignal &&
+        ((start > 0 && /[a-z0-9_]/.test(lower[start - 1])) ||
+          (end < lower.length && /[a-z0-9_]/.test(lower[end])))
+      ) {
+        from = end;
+        continue;
+      }
+      const before = lower.slice(Math.max(0, start - 32), start);
+      const after = lower.slice(end, end + 32);
+
+      // 完成词出现在否定、条件或不确定问句里时，不算用户确认完成。
+      const negated =
+        /(?:不算|不一定|未必|并未|不曾|不再|不|没|未|无|尚未|还没|没有|不要)\s*$/.test(before) ||
+        /(?:不了|不成|不行)\s*$/.test(after);
+      const conditional = /(?:如果|若|假如|要是|等到|直到|当|一旦)[^。！？!?]{0,24}$/.test(before);
+      const question = /^[^\n。！？!?]{0,20}(?:[?？]|(?:吧|呢|吗|么|没有|没)(?:[?？]|\s*$))/.test(after);
+      const conditionalAfter = /^(?:了)?\s*(?:后|之后|以后|再|才)/.test(after);
+      const contradictionAfter = /^(?:了)?\s*[,，;；:：]\s*(?:但|但是|不过|仍|还有|还没|未)/.test(after);
+      const englishNegated =
+        /\b(?:not|never|no|isn't|isnt|wasn't|wasnt|don't|dont|didn't|didnt|without)\s+(?:\w+\s+){0,3}$/.test(
+          before,
+        );
+      const englishConditional =
+        /\b(?:if|when|unless|once|until|should)\s+(?:\w+\s+){0,5}$/.test(before);
+      const englishConditionalAfter = /^(?:\s|,|:)*(?:if|when|unless|once|until|should)\b/.test(after);
+      const englishQuestion = /^(?:\s|,|:)*(?:[?？]|or not\b|(?:right|correct|okay|ok)\b[?？]?)/.test(after);
+      const englishPraise = /\bwell\s+$/.test(before);
+      const englishContradiction =
+        /^(?:\s|,|;|:)*(?:but|still|yet)\s+(?:not|unfinished|incomplete)\b/.test(after);
+
+      if (
+        !negated &&
+        !conditional &&
+        !conditionalAfter &&
+        !contradictionAfter &&
+        !question &&
+        !englishNegated &&
+        !englishConditional &&
+        !englishConditionalAfter &&
+        !englishQuestion &&
+        !englishPraise &&
+        !englishContradiction
+      ) {
+        return true;
+      }
+      from = end;
+    }
+  }
+  return false;
+}
+
 function onMessageCreated(msg) {
   const data = msg.data || {};
   const sessionId = data.sessionId;
-  if (!sessionId) return;
+  if (!sessionId || data.role !== "user") return;
+  const text = contentText(data.content);
+  // 插件自己投递的 review 提示既不算用户发言，也不应凭空开启一轮本地簿记。
+  if (!text || text.indexOf(HOOK_MARKER) !== -1) return;
   const state = stateOf(sessionId);
 
-  // 工具调用/结果也以消息行落库，它们出现即说明这一轮真的在干活。
-  if (data.role === "tool_use" || data.role === "tool_result") {
-    state.toolUses += 1;
-    return;
+  // 用户消息本身也能标记新轮次；即使宿主漏发 did-turn-start，旧定时器也会失效。
+  if (!state.turnActive) {
+    state.turnGeneration += 1;
+    clearIdle(state);
+    state.toolUses = 0;
+    state.turnActive = true;
   }
-  if (data.role !== "user") return;
-  const text = contentText(data.content);
-  if (!text) return;
-  // 插件自己投递的 review 提示不算用户发言。
-  if (text.indexOf(HOOK_MARKER) !== -1) return;
   state.lastUserText = text;
+}
+
+function onToolExecution(msg) {
+  const data = msg.data || {};
+  if (!data.sessionId) return;
+  const state = sessions.get(data.sessionId);
+  // tool-execution 是全局主题；只有已经进入本地记录的主会话轮次才计入，避免把
+  // subagent/cron 工具调用误当成当前会话的工作，也不为陌生会话创建簿记。
+  if (!state || !state.turnActive) return;
+  if (data.eventType === "tool_use" || data.eventType === "tool_result") {
+    state.toolUses += 1;
+  }
 }
 
 // ─── 轮次事件：完成信号 + 空闲兜底 ─────────────────────────────────────
@@ -261,8 +425,15 @@ async function onTurnEnd(msg) {
   const sessionId = data.sessionId;
   if (!sessionId) return;
 
-  const state = stateOf(sessionId);
+  const state = sessions.get(sessionId);
+  // 不为没有任何本地轮次证据的孤立收尾创建簿记；这类事件不能安全触发兜底。
+  if (!state) return;
+  const hadTurnEvidence = state.turnActive || Boolean(state.lastUserText) || state.toolUses > 0;
   clearIdle(state);
+  state.turnActive = false;
+  // 只收到孤立的 turn-end（例如插件刚启动或事件丢失）时没有本地轮次证据，
+  // 不能仅凭 durationMs 给陌生会话武装空闲提醒。
+  if (!hadTurnEvidence) return;
   diag.lastTurnEnd = {
     at: new Date().toISOString(),
     sessionId,
@@ -274,39 +445,62 @@ async function onTurnEnd(msg) {
   const lastText = state.lastUserText || "";
   const lower = lastText.toLowerCase();
   const isSelfInjection = lastText.indexOf(HOOK_MARKER) !== -1;
-  const hasSignal =
-    !isSelfInjection &&
-    lower.length > 0 &&
-    COMPLETION_SIGNALS.some((signal) => lower.indexOf(signal.toLowerCase()) !== -1);
+  const hasSignal = !isSelfInjection && lower.length > 0 && hasCompletionSignal(lastText);
+  const turnGeneration = state.turnGeneration;
 
   const now = Date.now();
-  if (hasSignal && now - state.lastTriggerAt >= DEBOUNCE_MS) {
-    state.lastTriggerAt = now;
-    state.signalTriggered = true;
-    await deliverNudge(sessionId, "检测到任务完成信号");
-    return;
+  const mayTrigger = hasSignal && now - state.lastTriggerAt >= DEBOUNCE_MS;
+  // 先保存本轮证据，再清掉快照，避免异步投递期间下一轮消息被旧快照覆盖。
+  const workedThisTurn = state.toolUses > 0 || (data.durationMs || 0) >= IDLE_ARM_MIN_TURN_MS;
+  state.lastUserText = "";
+  state.toolUses = 0;
+  if (mayTrigger) {
+    const delivered = await requestNudge(
+      state,
+      sessionId,
+      "检测到任务完成信号",
+      turnGeneration,
+    );
+    if (delivered) return;
   }
+
+  // 投递等待期间可能已经开始了新轮次；不要让旧轮次在 await 后重新武装定时器。
+  if (state.turnGeneration !== turnGeneration) return;
 
   // 空闲兜底：本会话从未被显式信号触发过，且这一轮确实在干活。
   // 优先用本轮保存下来的工具调用条数；拿不到时退回轮次时长近似。
   if (state.signalTriggered) return;
-  const workedThisTurn = state.toolUses > 0 || (data.durationMs || 0) >= IDLE_ARM_MIN_TURN_MS;
-  diag.lastTurnEnd = Object.assign(diag.lastTurnEnd || {}, { armed: workedThisTurn });
-  if (!workedThisTurn) return;
+  const shouldArmIdle = workedThisTurn || mayTrigger;
+  diag.lastTurnEnd = Object.assign(diag.lastTurnEnd || {}, { armed: shouldArmIdle });
+  if (!shouldArmIdle) return;
 
-  state.idleTimer = setTimeout(() => {
-    state.idleTimer = null;
-    if (state.signalTriggered) return;
-    state.lastTriggerAt = Date.now();
-    state.signalTriggered = true;
-    deliverNudge(
-      sessionId,
-      "会话已空闲且未检测到显式完成信号——可能是一段工作（含夜间自动任务）已结束",
-    );
-  }, IDLE_FALLBACK_MS);
+  function armIdleNudge(reason, generation) {
+    if (state.idleTimer || state.signalTriggered || state.turnGeneration !== generation) return;
+    state.idleTimer = setTimeout(async () => {
+      state.idleTimer = null;
+      if (state.signalTriggered || state.turnGeneration !== generation) return;
+      const delivered = await requestNudge(state, sessionId, reason, generation);
+      if (
+        !delivered &&
+        !state.signalTriggered &&
+        state.turnGeneration === generation &&
+        !state.idleTimer
+      ) {
+        // 多个异常触发同一个定时器时，只保留一条失败重试链。
+        armIdleNudge(reason, generation);
+      }
+    }, IDLE_FALLBACK_MS);
+  }
+
+  armIdleNudge(
+    mayTrigger
+      ? "检测到完成信号但上次投递未确认——请按 agenote-review skill 流程评估本次对话"
+      : "会话已空闲且未检测到显式完成信号——可能是一段工作（含夜间自动任务）已结束",
+    turnGeneration,
+  );
 }
 
-// ─── 工具：只读入口 ────────────────────────────────────────────────────
+// ─── 工具：只读入口与诊断入口 ─────────────────────────────────────────
 
 const TOOL_SUBCOMMANDS = {
   agenote_search: "search",
@@ -317,23 +511,39 @@ const TOOL_SUBCOMMANDS = {
 async function onDiagTool(msg) {
   const args = msg.args || {};
   // 顺手试一次只读 CLI，确认 worker 通道本身是通的。
-  const cli = await askWorker("run", { argv: ["health"], timeoutMs: 8000 }, 12000);
+  const cli = await askWorker(
+    "run",
+    { argv: ["health"], timeoutMs: 8000 },
+    12000,
+    { callId: msg.callId },
+  );
   let sendTest = null;
   if (args.send_test === true) {
-    const target = String(args.target_session_id || diag.lastSessionId || "").trim();
-    const startedAt = Date.now();
+    const rawTarget = args.target_session_id;
+    const target = typeof rawTarget === "string" ? rawTarget.trim() : "";
     sendTest = { target, at: new Date().toISOString() };
-    try {
-      const raw = await cindy.host.call("cindy_helper", "send_to_session", {
-        target_session_id: target,
-        message: HOOK_MARKER + "这是 agenote 插件的投递自检，收到即说明 handoff 通道可用。</agenote-hook>",
-      });
-      sendTest.elapsedMs = Date.now() - startedAt;
-      sendTest.raw = JSON.stringify(raw).slice(0, 1200);
-      sendTest.isError = Boolean(raw && raw.isError);
-    } catch (err) {
-      sendTest.elapsedMs = Date.now() - startedAt;
-      sendTest.thrown = String((err && err.stack) || err).slice(0, 1200);
+    if (!target) {
+      sendTest.ok = false;
+      sendTest.error = "send_test 必须显式传 target_session_id，避免误投到另一个会话。";
+    } else if (target.length > 256 || /[\u0000-\u001f\u007f]/.test(target)) {
+      sendTest.ok = false;
+      sendTest.error = "target_session_id 过长或含控制字符。";
+    } else {
+      const startedAt = Date.now();
+      try {
+        const raw = await cindy.host.call("cindy_helper", "send_to_session", {
+          target_session_id: target,
+          message: HOOK_MARKER + "这是 agenote 插件的投递自检，收到即说明 handoff 通道可用。</agenote-hook>",
+        });
+        sendTest.elapsedMs = Date.now() - startedAt;
+        sendTest.raw = safeJson(raw, 1200);
+        sendTest.ok = hostResultOk(raw);
+        if (!sendTest.ok) sendTest.error = hostResultError(raw);
+      } catch (err) {
+        sendTest.elapsedMs = Date.now() - startedAt;
+        sendTest.ok = false;
+        sendTest.thrown = String((err && err.stack) || err).slice(0, 1200);
+      }
     }
   }
   const payload = {
@@ -349,6 +559,7 @@ async function onDiagTool(msg) {
     events: diag.events,
     dropped: diag.dropped || 0,
     lastCompose: diag.lastCompose,
+    lastSessionId: diag.lastSessionId || null,
     lastTurnEnd: diag.lastTurnEnd,
     lastNudge: diag.lastNudge,
     sessions: sessions.size,
@@ -389,7 +600,10 @@ async function onToolCall(msg) {
         message: "query 不能为空：传入要检索的关键词。",
       });
     }
-    const limit = Math.min(Math.max(Number(msg.args.limit) || 5, 1), 20);
+    const requestedLimit = Number(msg.args.limit);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 20)
+      : 5;
     argv = ["search", query, "--limit", String(limit)];
   } else {
     argv = ["health"];
@@ -400,6 +614,7 @@ async function onToolCall(msg) {
     "run",
     { argv, timeoutMs: subcommand === "health" ? 30000 : 15000 },
     35000,
+    { callId: msg.callId },
   );
   if (!result || result.ok !== true) {
     return cindy.send({
@@ -428,7 +643,17 @@ cindy.onHostMessage(async function (msg) {
     if (msg.type !== "event") return;
     diag.events[msg.name] = (diag.events[msg.name] || 0) + 1;
     if (msg.data && msg.data.sessionId) diag.lastSessionId = msg.data.sessionId;
-    if (msg.dropped) diag.dropped = (diag.dropped || 0) + msg.dropped;
+    if (msg.dropped) {
+      diag.dropped = (diag.dropped || 0) + msg.dropped;
+      // 丢事件后本轮边界与工具证据不可恢复；保留 signalTriggered，避免因丢包重复提醒。
+      for (const state of sessions.values()) {
+        clearIdle(state);
+        state.turnGeneration += 1;
+        state.turnActive = false;
+        state.lastUserText = "";
+        state.toolUses = 0;
+      }
+    }
 
     if (msg.name === "will-compose-context") {
       try {
@@ -439,12 +664,17 @@ cindy.onHostMessage(async function (msg) {
       }
     }
     if (msg.name === "did-message-created") return onMessageCreated(msg);
+    if (msg.name === "did-tool-execution") return onToolExecution(msg);
     if (msg.name === "did-turn-start") {
       const sessionId = (msg.data && msg.data.sessionId) || "";
       if (sessionId) {
         const state = stateOf(sessionId);
+        // did-turn-start 是新的轮次边界；即使上一轮的 end 丢了，也不能沿用旧证据。
         clearIdle(state);
+        state.turnGeneration += 1;
+        state.lastUserText = "";
         state.toolUses = 0;
+        state.turnActive = true;
       }
       return;
     }

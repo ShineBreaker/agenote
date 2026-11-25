@@ -19,25 +19,17 @@ const AGENT_NAME = "cindy";
 const BIN_CANDIDATES = [process.env.AGENOTE_BIN, "agenote", "agenote-cli"].filter(Boolean);
 
 /** 插件工具允许透传的子命令白名单（只读入口，不是通用 shell）。 */
-const ALLOWED_SUBCOMMANDS = new Set([
-  "search",
-  "health",
-  "list",
-  "get",
-  "memory",
-  "stats",
-  "fields",
-  "tags",
-  "gaps",
-  "review",
-]);
+const ALLOWED_SUBCOMMANDS = new Set(["search", "health"]);
 
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+// Cindy 的 Node 桥对完整 JSON-RPC 单行有 1 MiB 上限；JSON 字符串中的控制
+// 字符最多会膨胀为六字节转义，所以原始 stdout 只放到 128 KiB，给包络留余量。
+const MAX_RPC_OUTPUT_BYTES = 128 * 1024;
+const OUTPUT_TRUNCATION_MARKER = "\n...[output truncated]";
 
 let resolvedBin = null;
 let hostSupport = null; // 'cindy' | 'generic'
 let injectSupported = null; // boolean
-const injected = new Map(); // sessionId -> Set(contentHash)
 
 function reply(message) {
   process.stdout.write(JSON.stringify(message) + "\n");
@@ -47,25 +39,6 @@ function intOr(value, fallback, min, max) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(Math.max(Math.trunc(parsed), min), max);
-}
-
-/** djb2：只用于会话内去重，不需要抗碰撞。 */
-function hash(text) {
-  let h = 5381;
-  for (let i = 0; i < text.length; i += 1) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
-  return String(h >>> 0) + ":" + text.length;
-}
-
-function seenSet(sessionId) {
-  let set = injected.get(sessionId);
-  if (!set) {
-    set = new Set();
-    injected.set(sessionId, set);
-    if (injected.size > 200) {
-      for (const key of [...injected.keys()].slice(0, 100)) injected.delete(key);
-    }
-  }
-  return set;
 }
 
 /** 定位 CLI：缓存首个能跑起来的候选。 */
@@ -89,6 +62,23 @@ function findBin() {
 
 function hostName() {
   return hostSupport || "cindy";
+}
+
+function truncateOutput(value) {
+  const text = String(value || "");
+  const bytes = Buffer.from(text, "utf8");
+  if (bytes.length <= MAX_RPC_OUTPUT_BYTES) return text;
+  const limit = MAX_RPC_OUTPUT_BYTES - Buffer.byteLength(OUTPUT_TRUNCATION_MARKER, "utf8");
+  let end = Math.max(0, Math.min(limit, bytes.length));
+  // 不把 UTF-8 多字节字符截成 U+FFFD；边界最多回退 3 字节。
+  while (end > 0 && (bytes[end - 1] & 0xc0) === 0x80) end -= 1;
+  if (end > 0) {
+    const lead = bytes[end - 1];
+    const width = lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc0 ? 2 : 1;
+    const charEnd = end - 1 + width;
+    end = charEnd <= limit ? charEnd : end - 1;
+  }
+  return `${bytes.subarray(0, end).toString("utf8")}${OUTPUT_TRUNCATION_MARKER}`;
 }
 
 /**
@@ -121,15 +111,24 @@ function runCli(args, timeoutMs) {
   let result = attempt(args);
   if (result.ok) return result;
 
+  const hostIndex = args.indexOf("--host");
+  const inlineHostIndex = args.findIndex((arg) => arg === "--host=cindy");
+  const usesCindyHost =
+    (hostIndex >= 0 && args[hostIndex + 1] === "cindy") || inlineHostIndex >= 0;
   const rejectedHost =
-    args.includes("--host") &&
     hostSupport !== "generic" &&
     result.code === 2 &&
-    /invalid choice/.test(result.stderr) &&
-    result.stderr.includes("'cindy'");
+    /invalid choice/i.test(result.stderr) &&
+    /["']cindy["']/.test(result.stderr) &&
+    usesCindyHost;
   if (rejectedHost) {
     hostSupport = "generic";
-    const retry = args.map((arg) => (arg === "cindy" ? "generic" : arg));
+    const retry = args.slice();
+    if (hostIndex >= 0 && retry[hostIndex + 1] === "cindy") {
+      retry[hostIndex + 1] = "generic";
+    } else if (inlineHostIndex >= 0) {
+      retry[inlineHostIndex] = "--host=generic";
+    }
     result = attempt(retry);
   }
   return result;
@@ -137,11 +136,13 @@ function runCli(args, timeoutMs) {
 
 function injectAvailable(timeoutMs) {
   if (injectSupported !== null) return injectSupported;
-  const probe = runCli(
-    ["inject", "--host", hostName(), "--event", "prompt", "--prompt", "", "--format", "json"],
-    timeoutMs,
-  );
-  injectSupported = probe.ok || probe.code !== 2 || !/invalid choice/.test(probe.stderr);
+  if (!findBin()) {
+    injectSupported = false;
+    return injectSupported;
+  }
+  // 只探测帮助，不执行空 prompt，避免探针在 KB 缓存目录留下无会话状态文件。
+  const probe = runCli(["inject", "--help"], timeoutMs);
+  injectSupported = probe.ok;
   return injectSupported;
 }
 
@@ -201,16 +202,6 @@ function promptRecall(sessionId, prompt, budget, timeoutMs) {
   return result.ok ? result.stdout : "";
 }
 
-function collect(sessionId, text) {
-  const body = String(text || "").trim();
-  if (!body) return "";
-  const set = seenSet(sessionId);
-  const key = hash(body);
-  if (set.has(key)) return "";
-  set.add(key);
-  return body;
-}
-
 function handleContext(params) {
   const sessionId = String(params.sessionId || "");
   const prompt = String(params.prompt || "");
@@ -233,18 +224,19 @@ function handleContext(params) {
   if (params.first) {
     const timeout = timeoutFor(0);
     if (timeout > 0) {
-      const brief = collect(sessionId, sessionBrief(sessionId, briefBudget, timeout));
+      const brief = String(sessionBrief(sessionId, briefBudget, timeout) || "").trim();
       if (brief) parts.push(brief);
     }
   }
   if (prompt) {
     const timeout = timeoutFor(1200);
     if (timeout > 0) {
-      const recall = collect(sessionId, promptRecall(sessionId, prompt, recallBudget, timeout));
+      const recall = String(promptRecall(sessionId, prompt, recallBudget, timeout) || "").trim();
       if (recall) parts.push(recall);
     }
   }
-  return { text: parts.join("\n\n"), parts: parts.length };
+  // context 也走同一条 JSON-RPC 单行，不能只限制 run 工具的输出。
+  return { text: truncateOutput(parts.join("\n\n")), parts: parts.length };
 }
 
 function handleRun(params) {
@@ -258,10 +250,10 @@ function handleRun(params) {
   const timeoutMs = intOr(params.timeoutMs, 15000, 1000, 60000);
   const result = runCli(argv, timeoutMs);
   if (!result.ok) {
-    const detail = (result.stderr || "").trim().split("\n").slice(-3).join(" ");
+    const detail = truncateOutput((result.stderr || "").trim().split("\n").slice(-3).join(" "));
     return { ok: false, message: `agenote ${argv[0]} 失败（rc=${result.code}）：${detail || "无输出"}` };
   }
-  return { ok: true, output: result.stdout.trim() };
+  return { ok: true, output: truncateOutput(result.stdout.trim()) };
 }
 
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
