@@ -12,7 +12,7 @@
 | 各插件的 Config schema 默认值 | 各包 `Config` 声明 | 宿主加载期校验用，形状随宿主而异 |
 | 卡片格式 / 写入流程 / 策展策略 | `packages/agenote-skills/*/SKILL.md` | 文档即载体，改策略不该发版 |
 
-注入器的三件套（指纹去重 / 短 prompt 门槛 / 单会话累计）曾是 bash、JS、Python 各写一份的复制债（ADR 0005）。2026-10 起**只有 `agenote inject` 一份实现**： `spec` 里不再有 `[append]` 数值，修改语义改 CLI SCHEMA 或 `inject.py`，插件侧无需同步。
+注入器的三件套（指纹去重 / 短 prompt 门槛 / 单会话累计）曾是 bash、JS、Python 各写一份的复制债（ADR 0005）。2026-10 起**只有 `agenote inject` 一份实现**：`spec` 里不再有 `[append]` 数值，修改语义改 CLI SCHEMA 或 `inject.py`，插件侧无需同步。
 
 ## 工作流
 

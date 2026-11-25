@@ -2,7 +2,7 @@
 
 **Status**: accepted
 
-`core.py` 混装四类职责：常量与 KBContext、JSON 索引管理（`_load/_save/_rebuild/_upsert/ _card_dict`）、Org 属性解析（`parse_org_prop/read_org_title/_parse_*_prop`）、卡片操作。 Org 解析逻辑此前散落三处（core 的属性读取、extract/base.py `run_extract` 的内联 Org 渲染、orgfmt 的格式美化）。决定拆为：`core`（常量 + KBContext + 工具 + ensure_dirs + touch_card/_resolve_card/is_noise_fact）、`index`（JSON 索引读写）、`orgserde`（Org 序列化/反序列化：属性解析 + facts→Org 渲染，吸收 `run_extract` 的内联渲染）。
+`core.py` 混装四类职责：常量与 KBContext、JSON 索引管理（`_load/_save/_rebuild/_upsert/ _card_dict`）、Org 属性解析（`parse_org_prop/read_org_title/_parse_*_prop`）、卡片操作。Org 解析逻辑此前散落三处（core 的属性读取、extract/base.py `run_extract` 的内联 Org 渲染、orgfmt 的格式美化）。决定拆为：`core`（常量 + KBContext + 工具 + ensure_dirs + touch_card/_resolve_card/is_noise_fact）、`index`（JSON 索引读写）、`orgserde`（Org 序列化/反序列化：属性解析 + facts→Org 渲染，吸收 `run_extract` 的内联渲染）。
 
 ## Why
 

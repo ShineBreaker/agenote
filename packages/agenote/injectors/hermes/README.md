@@ -1,9 +1,9 @@
 # agenote → hermes 注入（实装在 agenote 插件内，本目录无模板代码）
 
-hermes 的注入直接实装在生态既有的 hermes 插件 `agenote` 里（不做独立 `agenote-inject` 模板——原插件已是生态唯一 hermes 接入点，注入能力原地合入， `register` 时同时注册注入挂点与既有命令入口，无命名冲突问题）：
+hermes 的注入直接实装在生态既有的 hermes 插件 `agenote` 里（不做独立 `agenote-inject` 模板——原插件已是生态唯一 hermes 接入点，注入能力原地合入，`register` 时同时注册注入挂点与既有命令入口，无命名冲突问题）：
 
 - **单一真相源**：`packages/agenote-hermes/`（agenote monorepo，见 docs/adr/0005）（`__init__.py` + `plugin.yaml` + `.gitignore`）
-- **装载点**：`~/.local/share/hermes/plugins/agenote/`（`__init__.py`、 `plugin.yaml` 为指向源的单文件相对 symlink，pi/omp 插件同类模式； `__pycache__` 留装载点本地不迁移）
+- **装载点**：`~/.local/share/hermes/plugins/agenote/`（`__init__.py`、`plugin.yaml` 为指向源的单文件相对 symlink，pi/omp 插件同类模式；`__pycache__` 留装载点本地不迁移）
 - 改造前旧版备份：`/tmp/hermes-agenote-backup/`（一次性，勿长期依赖）
 
 宿主版本（验证时）：hermes v0.21.3（2026-09，`$HERMES_HOME` 实装 `hermes --version`；register_system_prompt_section / pre_llm_call / register_command 三挂点 API 形态以该版本为准，升级后需复测）。

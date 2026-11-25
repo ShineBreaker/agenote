@@ -69,7 +69,7 @@ agenote-cli context --mode session --host pi --budget 8000
 - 指纹来源是 `MEMORY.org` 的 mtime 与 size，加上 `memories/` 目录树下所有文件的 mtime 与 size（`KB_ROOT` 未设时回落到 `~/Documents/Org/agenote`）。
 - 指纹未变就重放缓存，不 spawn CLI。KB 变了才真跑一次。
 - 文件列表超过 256 个时截断，尾部变更不触发刷新。
-- CLI 失败按空正文处理并一并进缓存，避免每轮重试打出一串 spawn。 KB 变更后指纹失效，自然会重试。
+- CLI 失败按空正文处理并一并进缓存，避免每轮重试打出一串 spawn。KB 变更后指纹失效，自然会重试。
 
 标签常量在代码里是 `INJECT_START` / `INJECT_END`，改动会让历史块无法剥离。
 
@@ -117,7 +117,7 @@ omp 的确切 spawn 标志没有定论，所以首次 `session_start` 会把 arg
 | `agenote-pi.json` 解析失败    | 回退默认配置并记加载日志                 |
 | `agenote-cli health` 失败     | 打印一行失败提示，退出码 0               |
 
-加载日志路径是 `<omp 配置根>/agent/extensions/.load-errors.log`。 omp 会静默吞掉扩展抛出的错误，这个文件是唯一的排查入口。简报查询的超时是 5 秒（`BRIEFING_TIMEOUT_MS`），`/agenote-health` 走的 `runKb` 超时是 30 秒。
+加载日志路径是 `<omp 配置根>/agent/extensions/.load-errors.log`。omp 会静默吞掉扩展抛出的错误，这个文件是唯一的排查入口。简报查询的超时是 5 秒（`BRIEFING_TIMEOUT_MS`），`/agenote-health` 走的 `runKb` 超时是 30 秒。
 
 ## 依赖版本
 

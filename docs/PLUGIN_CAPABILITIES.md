@@ -84,7 +84,7 @@ cindy 的落地差异与限制：
 
 ## 新增一个宿主插件时
 
-1. 在 `spec/injection.toml` 增加 `[hosts.<name>]`：`mode`（append / rewrite）、 `brief` / `recall` 预算、`cli_timeout_ms`；改 `tools/codegen/generate.py` 的 `TARGETS` 登记预算生成块，跑一次生成。`--host` 的可选值是 `context.py` 的 `HOSTS` 常量，只改一处就会同步到 `agenote` 与 `agenote-cli`；新增宿主还要在 `config.py` 的 `injection.hosts` 补 `<name>_enabled`。
+1. 在 `spec/injection.toml` 增加 `[hosts.<name>]`：`mode`（append / rewrite）、`brief` / `recall` 预算、`cli_timeout_ms`；改 `tools/codegen/generate.py` 的 `TARGETS` 登记预算生成块，跑一次生成。`--host` 的可选值是 `context.py` 的 `HOSTS` 常量，只改一处就会同步到 `agenote` 与 `agenote-cli`；新增宿主还要在 `config.py` 的 `injection.hosts` 补 `<name>_enabled`。
 2. 实现 F1–F10 中适用于该宿主形态的项；**注入状态机不要自己写**——追加型调 `agenote inject --host <name> --event session|prompt`，重写型调 `agenote context` 并可在宿主侧加指纹缓存省 spawn。不适用项先写进本文件的豁免记录，再标 `N/A`。
 3. 在 `packages/agenote/injectors/selftest.sh` 增加离线断言：正常注入、缓存重放、门槛/预算生效、CLI 缺失静默、语义开关零字节。
 4. 更新本文件的对照矩阵与各插件 README / AGENTS.md 的功能表。

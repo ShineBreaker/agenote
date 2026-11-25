@@ -34,7 +34,7 @@ UserPromptSubmit = [
 
 ## 安装前置
 
-codex 自带记忆**默认已关**（`[features] memories` 默认 false）——保持关闭即可；若曾手动开启需关回（`codex features disable memories`），防双真相源。 `agenote doctor` 可检测。
+codex 自带记忆**默认已关**（`[features] memories` 默认 false）——保持关闭即可；若曾手动开启需关回（`codex features disable memories`），防双真相源。`agenote doctor` 可检测。
 
 ## 验收
 

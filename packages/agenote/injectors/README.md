@@ -24,7 +24,7 @@ agenote context --mode session|recall --query Q --budget N --host H [--format js
          （整目录可清理，无副作用；重写型宿主另有进程内指纹缓存，只省 spawn）
 ```
 
-**追加型三件套**（zcode/claude/codex/hermes 的每轮通道，防上下文累积膨胀）： ①指纹+query 未变不重注（含被 `recall_min_score` 滤空的情况，记键零重跑）； ②recall 门槛（prompt 有效长度 < `recall_min_query` 跳过，「继续/ok」类不注）； ③单会话累计 ≤ 24000 字符触顶停 recall（SessionStart/compact 重置）。 **这三项只有 `agenote inject` 一份实现**（`injectors/*` 只传事件与预算）。 **重写型**（opencode / pi / dsh）：每请求幂等重写，只需指纹缓存。dsh 在同一份动态上下文快照里并置简报与召回，按「指纹 + 最近用户消息」缓存，无需累计预算。
+**追加型三件套**（zcode/claude/codex/hermes 的每轮通道，防上下文累积膨胀）：①指纹+query 未变不重注（含被 `recall_min_score` 滤空的情况，记键零重跑）；②recall 门槛（prompt 有效长度 < `recall_min_query` 跳过，「继续/ok」类不注）；③单会话累计 ≤ 24000 字符触顶停 recall（SessionStart/compact 重置）。**这三项只有 `agenote inject` 一份实现**（`injectors/*` 只传事件与预算）。**重写型**（opencode / pi / dsh）：每请求幂等重写，只需指纹缓存。dsh 在同一份动态上下文快照里并置简报与召回，按「指纹 + 最近用户消息」缓存，无需累计预算。
 
 功能基线（每个宿主应实现哪些项、哪些豁免）见 [`docs/PLUGIN_CAPABILITIES.md`](../../../docs/PLUGIN_CAPABILITIES.md)。
 
@@ -45,7 +45,7 @@ agenote context --mode session|recall --query Q --budget N --host H [--format js
 
 1. **前置**：agenote CLI 含 `inject` 子命令（旧版 CLI 静默空串 = 不注入，会话永不受影响）。每次注入都带 `AGENOTE_AGENT=<host>` 归因前缀；状态机与状态文件都在 CLI 内，注入器不保存任何跨轮状态（pi/opencode/dsh 的进程内指纹缓存只是省 spawn 的镜像）。
 2. **挂接**：按各宿主子目录 README 操作；注入器绝不代改宿主配置。
-3. **写侧禁用**（防双真相源，接管硬前提）：claude 关 `autoMemoryEnabled`+`autoDreamEnabled`；codex 保持 `[features] memories` 默认关；hermes 关 `memory.memory_enabled`+`user_profile_enabled`； zcode 关 `features.memory`/`memory.use`。状态用 `agenote doctor` 例行检测。
+3. **写侧禁用**（防双真相源，接管硬前提）：claude 关 `autoMemoryEnabled`+`autoDreamEnabled`；codex 保持 `[features] memories` 默认关；hermes 关 `memory.memory_enabled`+`user_profile_enabled`；zcode 关 `features.memory`/`memory.use`。状态用 `agenote doctor` 例行检测。
 4. **验收**：先 `bash injectors/selftest.sh`（离线全量；zcode/hermes 实装在本仓 packages/agenote-zcode、packages/agenote-hermes，selftest 默认验证仓内源码），再按各 README 的宿主内观测面复核；每个 README 标注协议来源版本（R2 漂移应对）。
 
 ## 开关（一键全关）

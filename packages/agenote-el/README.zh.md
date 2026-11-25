@@ -4,7 +4,7 @@ agenote-el 把 [agenote](https://github.com/ShineBreaker/agenote) CLI 的知识�
 
 ## 它解决什么问题
 
-agenote 把经验沉淀成知识库：每张卡片是一个 org 文件，人手写或用 org-capture 录入， AI 也可以往同一棵目录里写。麻烦在于这些操作原本只在终端里发生，用 Emacs 的人得来回切窗口。
+agenote 把经验沉淀成知识库：每张卡片是一个 org 文件，人手写或用 org-capture 录入，AI 也可以往同一棵目录里写。麻烦在于这些操作原本只在终端里发生，用 Emacs 的人得来回切窗口。
 
 agenote-el 把终端命令变成 Emacs 交互命令。卡片就是普通的 org 文件，捕获走 org-capture，搜索走 consult-ripgrep 或 rgrep，打开卡片就是 `find-file`。没有第二套数据格式需要同步。
 
@@ -15,7 +15,7 @@ agenote-el 把终端命令变成 Emacs 交互命令。卡片就是普通的 org 
 - **卡片生命周期**：捕获、归档、提交、合并、查重、连接两张卡片、更新时间戳，各有对应的交互命令。耗时的操作走异步进程，结果落在独立 buffer 里，不卡住编辑。
 - **网页可视化**：把某个域的卡片关系图交给浏览器打开。
 
-实现上有一条硬规矩：所有 CLI 调用都经过 `agenote-call` 和 `agenote-call-async`， Emacs 侧不复制索引或扫描逻辑，排序和过滤都交给 CLI 决定。每次调用都重新解析 `executable-find "agenote"`，不缓存绝对路径，所以长驻 daemon 在切换 Guix profile 后能直接用上新版 CLI。
+实现上有一条硬规矩：所有 CLI 调用都经过 `agenote-call` 和 `agenote-call-async`，Emacs 侧不复制索引或扫描逻辑，排序和过滤都交给 CLI 决定。每次调用都重新解析 `executable-find "agenote"`，不缓存绝对路径，所以长驻 daemon 在切换 Guix profile 后能直接用上新版 CLI。
 
 `agenote-dashboard.el` 另有一组纯函数，宿主 dashboard 调用它们取最近条目，自行管理缓存和刷新。
 

@@ -2,7 +2,7 @@
 
 感谢关注 agenote！本文说明开发环境搭建、commit 规范与提交流程。
 
-本仓库是 monorepo（见 [docs/adr/0005](docs/adr/0005-monorepo-unify-seven-components.md)）： CLI 唯一实现层在 `packages/agenote`，其余 6 个包是宿主插件/skill 适配层，改动前先读[根 AGENTS.md](AGENTS.md)对应小节。
+本仓库是 monorepo（见 [docs/adr/0005](docs/adr/0005-monorepo-unify-seven-components.md)）：CLI 唯一实现层在 `packages/agenote`，其余 6 个包是宿主插件/skill 适配层，改动前先读[根 AGENTS.md](AGENTS.md)对应小节。
 
 ## 开发环境
 

@@ -6,12 +6,12 @@ AGENTS.md 是入口，本文件是它每条指针的目标。**按分支分节�
 
 Python CLI，唯一实现层。一切落盘的逻辑只在这里，宿主插件不重复实现。
 
-- **新增写命令**必须同时登记到 `cli.py` 的 `commands` dict **和** `MUTATING_COMMANDS` set；漏掉后者则该命令不持锁。只读命令（如 `context`）不进 `MUTATING_COMMANDS`。 `MUTATING_COMMANDS` 当前成员见 `cli.py:1409`。**这条没有测试守护**——`packages/agenote/tests/` 里没有用例断言成员完整（`test_cli_readonly.py` 只覆盖只读判定），漏登记不会红。
-- **只读调用的锁与骨架自愈**：纯只读命令（`list/search/stats/health/...`，见 `cli.py` 的 `_PURE_READ_COMMANDS`）不进 `MUTATING_COMMANDS`、不持 KB 锁，也跳过 `ensure_dirs`；`MUTATING_COMMANDS` 里的检查形态（`lint` 无 `--fix`、`format --check`、 `commit --dry-run`）取共享锁（`_read_only_kb_invocation` 判定）。锁文件固定在 `<KB>/.agenote.lock`——只读调用以 `O_RDONLY` 打开已存在的锁文件、不创建（不存在即免锁），否则只读 KB / 沙箱上 `O_CREAT` 会 EROFS。**不要按环境变量派生锁路径**：混合 env 的进程会各拿一把锁而静默失去互斥。
+- **新增写命令**必须同时登记到 `cli.py` 的 `commands` dict **和** `MUTATING_COMMANDS` set；漏掉后者则该命令不持锁。只读命令（如 `context`）不进 `MUTATING_COMMANDS`。`MUTATING_COMMANDS` 当前成员见 `cli.py:1409`。**这条没有测试守护**——`packages/agenote/tests/` 里没有用例断言成员完整（`test_cli_readonly.py` 只覆盖只读判定），漏登记不会红。
+- **只读调用的锁与骨架自愈**：纯只读命令（`list/search/stats/health/...`，见 `cli.py` 的 `_PURE_READ_COMMANDS`）不进 `MUTATING_COMMANDS`、不持 KB 锁，也跳过 `ensure_dirs`；`MUTATING_COMMANDS` 里的检查形态（`lint` 无 `--fix`、`format --check`、`commit --dry-run`）取共享锁（`_read_only_kb_invocation` 判定）。锁文件固定在 `<KB>/.agenote.lock`——只读调用以 `O_RDONLY` 打开已存在的锁文件、不创建（不存在即免锁），否则只读 KB / 沙箱上 `O_CREAT` 会 EROFS。**不要按环境变量派生锁路径**：混合 env 的进程会各拿一把锁而静默失去互斥。
 - **`ensure_dirs` 尽力而为**：只吞 EROFS/EACCES/EPERM（只读挂载 / 沙箱），其余文件系统故障照抛；写命令在真正的写点报带 errno 与目标路径的错误（`_os_error_message`）。
 - **卡片状态机**共 4 态：`done / stable / stale / archived`。Org 标题 keyword 恒为 `* DONE`，真实状态存于 `:STATUS:` 属性——标题与属性不是一回事。
 - **双域模型**：`--domain human|agenote`；搜索默认跨域。agent 域卡片权重更低，见 `CONTEXT.md` 的 KBContext。
-- **`extract/` 只读**：适配器直接读其他 agent 的 SQLite/JSONL，不产生写入。 `reconcile` 写的是只读索引 `.reconcile/index.json`，不进权威 `experiences/`。
+- **`extract/` 只读**：适配器直接读其他 agent 的 SQLite/JSONL，不产生写入。`reconcile` 写的是只读索引 `.reconcile/index.json`，不进权威 `experiences/`。
 - **测试按主题分文件**：`test_dream_reconcile.py` / `test_distill_curator.py` / `test_health_*.py` / `test_viz_serve.py` / `test_memory_*.py` 等，新增命令先把测试放到对应主题文件。主门禁是 `uv run pytest -q`。
 
 ## agenote-el
@@ -38,11 +38,11 @@ cd packages/agenote && AGENOTE_CONTRACT_UPDATE=1 uv run pytest tests/test_contra
 
 ## 宿主适配
 
-五个插件（zcode / hermes / pi / dsh / cindy）职责**仅限**「事件触发 + 注入通道 + 命令快捷入口」。行为规范由 `agenote-skills` 定义，知识库逻辑由 CLI 实现——两者都不在插件里重复。 **每个宿主应实现哪些功能、哪些项豁免、验证入口在哪，以 [`docs/PLUGIN_CAPABILITIES.md`](docs/PLUGIN_CAPABILITIES.md) 为准**：改插件前先对照该表，改完同步矩阵。两处需联动修改时放进同一次 monorepo 提交，这是合仓的主要收益。
+五个插件（zcode / hermes / pi / dsh / cindy）职责**仅限**「事件触发 + 注入通道 + 命令快捷入口」。行为规范由 `agenote-skills` 定义，知识库逻辑由 CLI 实现——两者都不在插件里重复。**每个宿主应实现哪些功能、哪些项豁免、验证入口在哪，以 [`docs/PLUGIN_CAPABILITIES.md`](docs/PLUGIN_CAPABILITIES.md) 为准**：改插件前先对照该表，改完同步矩阵。两处需联动修改时放进同一次 monorepo 提交，这是合仓的主要收益。
 
 - **`agenote-pi`**：单文件 TypeScript。omp 运行时自动扫描加载，无需构建、无需在 `config.yml` 注册；`ExtensionAPI` 是全局类型无需 import。只读 CLI 查询走 `agenote-cli` shim。
-- **`agenote-cindy`**：Cindy ghost 插件（`.cindy` = zip）。两层代码分工固定： `main.js` 是**浏览器沙箱电子脑**（无 Node、无文件系统、无网络直连），只做事件分发与协议封装；所有 CLI 调用在 `node/worker.cjs` 里执行，并带 `AGENOTE_AGENT=cindy`。宿主用 `--no-extensions` 启动内置 Pi，所以 omp 扩展（`agenote-pi`）在这条路上不可用。注入走资料节点 `will-compose-context` （2 秒裁决窗口，超时 fail-open）：只往 wire 消息附材料，不动显示与落库的原话。 **不要用 `will-user-message` 改写**——用户气泡是纯文本 `whitespace-pre-wrap`，任何注入都会原样显示（0.1.0/0.2.0 两版都在这上面栽过）。资料节点只问选中了本插件的任务，所以简报/召回要逐任务勾选；完成信号走 `message` / `turn` 旁听，全局生效。发布产物由 Cindy 宿主工具 `ghost_forge_pack` 打包，版本号在 `ghost.json`。详细接口与实测结论见该包 `README.md`。
-- **`dsh-agenote`**：本包自带 [`packages/dsh-agenote/AGENTS.md`](packages/dsh-agenote/AGENTS.md)， **以那份为准**——它写了 `runKb` 收敛、投递二分、状态二分等更细的规则，以及本包独有的冷启动验证与 peer cohort 约束。本节只留一条跨包禁令：**不 import `@deepseek-ai/*`**（`link:` 部署下解析不到 `$DSH_HOME/profiles/node_modules`）；需要上游纯函数就在 `lib.js` 复刻并注明出处。配置默认值单一真相源是导出的 `Config` schema，`apply()` 不做二次默认值或静默降级。
+- **`agenote-cindy`**：Cindy ghost 插件（`.cindy` = zip）。两层代码分工固定：`main.js` 是**浏览器沙箱电子脑**（无 Node、无文件系统、无网络直连），只做事件分发与协议封装；所有 CLI 调用在 `node/worker.cjs` 里执行，并带 `AGENOTE_AGENT=cindy`。宿主用 `--no-extensions` 启动内置 Pi，所以 omp 扩展（`agenote-pi`）在这条路上不可用。注入走资料节点 `will-compose-context` （2 秒裁决窗口，超时 fail-open）：只往 wire 消息附材料，不动显示与落库的原话。**不要用 `will-user-message` 改写**——用户气泡是纯文本 `whitespace-pre-wrap`，任何注入都会原样显示（0.1.0/0.2.0 两版都在这上面栽过）。资料节点只问选中了本插件的任务，所以简报/召回要逐任务勾选；完成信号走 `message` / `turn` 旁听，全局生效。发布产物由 Cindy 宿主工具 `ghost_forge_pack` 打包，版本号在 `ghost.json`。详细接口与实测结论见该包 `README.md`。
+- **`dsh-agenote`**：本包自带 [`packages/dsh-agenote/AGENTS.md`](packages/dsh-agenote/AGENTS.md)，**以那份为准**——它写了 `runKb` 收敛、投递二分、状态二分等更细的规则，以及本包独有的冷启动验证与 peer cohort 约束。本节只留一条跨包禁令：**不 import `@deepseek-ai/*`**（`link:` 部署下解析不到 `$DSH_HOME/profiles/node_modules`）；需要上游纯函数就在 `lib.js` 复刻并注明出处。配置默认值单一真相源是导出的 `Config` schema，`apply()` 不做二次默认值或静默降级。
 - **追加型注入器**（zcode / claude / codex / hermes）只做协议适配；三件套（指纹去重、recall 门槛、单会话累计预算）与状态文件由 `agenote inject` 单一实现——改行为改 CLI，不要在插件里补一份。
 - **重写型**（opencode / pi / dsh）每请求幂等重写，只要简报预算；宿主侧的指纹缓存只为省一次 spawn，内容与最终裁剪仍由 CLI 决定。
 - 预算与阈值都在 `spec/injection.toml`，见 [§spec](#spec)。
@@ -53,11 +53,11 @@ cd packages/agenote && AGENOTE_CONTRACT_UPDATE=1 uv run pytest tests/test_contra
 
 三条硬约束：
 
-1. **生成物提交进仓。** 宿主插件是独立安装的（`~/.zcode/plugins/`、omp 扩展目录、 hermes 插件目录），运行时不能依赖 monorepo 存在。漂移由 CI 拦截，不靠开发纪律。
+1. **生成物提交进仓。** 宿主插件是独立安装的（`~/.zcode/plugins/`、omp 扩展目录、hermes 插件目录），运行时不能依赖 monorepo 存在。漂移由 CI 拦截，不靠开发纪律。
 2. **生成块必须带 BEGIN/END 标记**，工具只改写两标记之间的内容。所以生成块可以嵌在文件中间，不要求整文件模板化。
 3. **不允许未登记的副本。** `check.py` 扫出任何自行定义 `COMPLETION_SIGNALS` 却没有生成块标记的文件并报错。
 
-第 3 条是纪律失效过的实证：信号清单曾逐字复制在 4 处，靠人工同步已经漏过一次—— `agenote-zcode/hooks/hooks.json` 的预筛正则漏了 `完成`，该信号在 zcode 侧从未生效。 `check.py` 现在按覆盖度校验，但**为什么 spec 存在**没有任何机器会自述。**新开一份副本前先想清楚它为什么不该进 spec。**
+第 3 条是纪律失效过的实证：信号清单曾逐字复制在 4 处，靠人工同步已经漏过一次—— `agenote-zcode/hooks/hooks.json` 的预筛正则漏了 `完成`，该信号在 zcode 侧从未生效。`check.py` 现在按覆盖度校验，但**为什么 spec 存在**没有任何机器会自述。**新开一份副本前先想清楚它为什么不该进 spec。**
 
 ```bash
 python3 tools/codegen/generate.py           # 把常量块写进各包（幂等）
@@ -128,8 +128,8 @@ GitHub Release 的正文就是该版本 CHANGELOG 段落——`build.py` 的 `re
 两个 tag 陷阱的**症状**写在 [AGENTS.md §4 静默失败](AGENTS.md#4-静默失败)（它们必须在动手发版前就看见）。这里是处置细节：
 
 - **tag 漏推**：`release.yml` 认 `on: push: tags`，漏推时远端无 tag 事件、workflow 根本不跑，而本地 tag / commit / CHANGELOG 一切正常。该坑已连续复发多次。
-- **一次 push 超过 3 个 tag**：GitHub 官方限制，超过时不产生任何 push 事件、workflow 全部不触发（tag 本身推成功了）。多组件发版分批推（每批 ≤3），或逐个推。已中招时 **无需动 tag**，用 workflow_dispatch 回填： `gh workflow run release.yml -f tag=<pkg>-v<ver>`。
-- **悬空 tag**：本地 tag 可能因 amend/rebase 残留指向悬空提交， `git branch -a --contains <tag>` 无输出即为悬空，删了重打。远端 tag 以 `git ls-remote --tags origin` 为准，不要只看本地 `git tag -l`。
+- **一次 push 超过 3 个 tag**：GitHub 官方限制，超过时不产生任何 push 事件、workflow 全部不触发（tag 本身推成功了）。多组件发版分批推（每批 ≤3），或逐个推。已中招时 **无需动 tag**，用 workflow_dispatch 回填：`gh workflow run release.yml -f tag=<pkg>-v<ver>`。
+- **悬空 tag**：本地 tag 可能因 amend/rebase 残留指向悬空提交，`git branch -a --contains <tag>` 无输出即为悬空，删了重打。远端 tag 以 `git ls-remote --tags origin` 为准，不要只看本地 `git tag -l`。
 
 预构建校验（不推 tag）：
 
@@ -143,7 +143,7 @@ python3 tools/release/build.py --component agenote --tag agenote-v0.3.0
 `Guix-configs` **不用 submodule 消费本仓**，改用钉版本的拉取脚本（`dotfiles/mutable/agenote/{sync-agenote.sh,agenote.lock}`）：
 
 - `agenote.lock` 每行 `包:版本:sha256`。**版本变更就是改这一行**——纯文本 diff 友好、天然原子、不可能漏推。
-- `sync-agenote.sh` 拉取钉版本 tag 的产物、逐个校验 sha256、解包到内容寻址缓存（`~/.cache/agenote/packages/<包>/<版本>/`，多版本共存），再逐文件铺相对 symlink 到四个宿主目录：`~/.config/agents/skills`、 `~/.config/omp/extensions/agenote-hooks`、`~/.zcode/plugins/agenote-zcode`、 `~/.local/share/hermes/plugins/agenote`。
+- `sync-agenote.sh` 拉取钉版本 tag 的产物、逐个校验 sha256、解包到内容寻址缓存（`~/.cache/agenote/packages/<包>/<版本>/`，多版本共存），再逐文件铺相对 symlink 到四个宿主目录：`~/.config/agents/skills`、`~/.config/omp/extensions/agenote-hooks`、`~/.zcode/plugins/agenote-zcode`、`~/.local/share/hermes/plugins/agenote`。
 - CLI / elisp / dsh 不由该脚本部署，分别走 `uv tool install` / `package.el` / `npm install`。
 
 **改了本仓的插件代码 ≠ dotfiles 侧生效。** 生效路径：合仓提交 → 打 `<pkg>-v*` tag → 推上去（tag 一并）→ 拿 `dist/<pkg>/SHA256SUMS` 里的值 → 改 `agenote.lock` 对应行 → 跑 `sync-agenote.sh --dry-run` 确认 → 实跑。

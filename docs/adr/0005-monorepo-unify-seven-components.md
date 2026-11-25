@@ -10,7 +10,7 @@ agenote 生态此前是 7 个彼此独立的交付单元，散在 5 个 GitHub �
 
 现状的代价不是「仓库多」，而是**一个逻辑变更要跨 4–5 次不可原子回滚的操作**。三个硬证据：
 
-- **注入器核心被强制复制成 4 份语言**。追加型三件套（指纹缓存 + recall 门槛 + 单会话累计预算）在 `injectors/lib.sh`（bash，给 claude/codex）、 `agenote-zcode/hooks/lib.mjs`（JS）、`agenote-pi/index.ts`（TS）、 hermes 插件 `__init__.py`（Python）各实现一遍。`lib.mjs:12` 自己写着「与 agenote 仓库 injectors/lib.sh 及 hermes 插件同构，**改语义需跨文件同步**」。完成信号清单同理存 4 份（`dsh-agenote/hooks.js` 数组、`agenote-zcode/hooks/hooks.json` 正则、 skills 的 SKILL.md 散文、pi 的 TS）。这是 bash 库无法被 Python 插件 import 的结构性后果，靠纪律无法长期守住。
+- **注入器核心被强制复制成 4 份语言**。追加型三件套（指纹缓存 + recall 门槛 + 单会话累计预算）在 `injectors/lib.sh`（bash，给 claude/codex）、`agenote-zcode/hooks/lib.mjs`（JS）、`agenote-pi/index.ts`（TS）、hermes 插件 `__init__.py`（Python）各实现一遍。`lib.mjs:12` 自己写着「与 agenote 仓库 injectors/lib.sh 及 hermes 插件同构，**改语义需跨文件同步**」。完成信号清单同理存 4 份（`dsh-agenote/hooks.js` 数组、`agenote-zcode/hooks/hooks.json` 正则、skills 的 SKILL.md 散文、pi 的 TS）。这是 bash 库无法被 Python 插件 import 的结构性后果，靠纪律无法长期守住。
 - **版本列车的耦合已经漂移**。CLI 在 `0.2.0.3`，`dsh-agenote` 的 `peerDependencies` / `engines` 仍钉 `0.2.0-rc.2`。手工维护的跨仓版本约束不会自我维持——这正是需要机器保障的信号。
 - **submodule 闭环本身是缺陷源**。`pi` 与 `skills` 是 Guix-configs 的 submodule，推进要三步：子模块 `push HEAD:main` → 父仓库 bump 两个指针 → push 父仓库。漏第三步时本地一切正常、远端指针仍是旧值，症状极隐蔽（`AGENTS.md` 专门记录了两次同类事故：v0.1.6 的悬空 tag、v0.2.0.2 的漏推 tag）。
 
@@ -52,7 +52,7 @@ ShineBreaker/agenote/            ← monorepo 根（沿用原 CLI 仓）
 
 ### 单一真相源与代码生成
 
-`spec/injection.toml` 持有信号清单、每宿主预算表、状态目录约定、CLI 调用契约。 `tools/codegen` 生成各语言的常量块到各包内**并提交进仓**：
+`spec/injection.toml` 持有信号清单、每宿主预算表、状态目录约定、CLI 调用契约。`tools/codegen` 生成各语言的常量块到各包内**并提交进仓**：
 
 - 关键点：宿主插件是**独立安装**的（`~/.zcode/plugins/`、omp 扩展目录），运行时不能依赖 monorepo 存在。所以生成物**提交进仓**，插件零运行时依赖。
 - CI 跑漂移检查：重新生成后 `git diff --exit-code`，不一致即红。这把「改语义需跨文件同步」的手工纪律换成机器保障。

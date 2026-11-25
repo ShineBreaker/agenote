@@ -37,7 +37,7 @@
 }
 ```
 
-- SessionStart matcher 不填 = 覆盖 `startup/resume/clear/compact` 四源； compact 自动重跑即免费获得重注入（CLI 侧简报缓存命中）。
+- SessionStart matcher 不填 = 覆盖 `startup/resume/clear/compact` 四源；compact 自动重跑即免费获得重注入（CLI 侧简报缓存命中）。
 - 两个脚本共享状态文件 `~/.cache/agenote/injectors/claude-<session_id>.json` （由 `agenote inject` 读写；session_id 缺失退化为 `claude.json`；整目录可清理无副作用）。
 
 ## 预算与三件套

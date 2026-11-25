@@ -15,11 +15,11 @@ agent 之间不共享记忆。你在 Claude Code 里踩过的坑，换到 Codex 
 
 - **属性抽屉** 存结构化元数据。`CATEGORY`、`TECH`、`STATUS`、`WEIGHT`、`USAGE_COUNT` 都是 drawer 里的键值，不是正文里的行。
 - **TODO 关键字** 承担状态机。标题恒为 `* DONE`，真实状态在 `:STATUS:` 属性，四态流转（done / stable / stale / archived）由 CLI 读写。
-- **章节与行内标记** 保留 org 写法。`** 场景`、`** 关键发现` 是 org 小标题， `~orgfmt --check~` 是 org 的行内代码标记，不是反引号。
+- **章节与行内标记** 保留 org 写法。`** 场景`、`** 关键发现` 是 org 小标题，`~orgfmt --check~` 是 org 的行内代码标记，不是反引号。
 
 换来三件 Markdown 方案给不了的东西：
 
-**人可以直接编辑。** 打开 Emacs，`M-x org agenda` 就能把待办卡片排出来， `org-refile` 挪卡片，双链 `[[卡片][描述]]` 在 org 里可点可跳。维护知识库不需要 agent 参与，也不需要另学一套界面。
+**人可以直接编辑。** 打开 Emacs，`M-x org agenda` 就能把待办卡片排出来，`org-refile` 挪卡片，双链 `[[卡片][描述]]` 在 org 里可点可跳。维护知识库不需要 agent 参与，也不需要另学一套界面。
 
 **Emacs 用户零学习成本。** 用 org mode 记笔记的人本来就在用这套语法，记 agent 的经验只是往同一个抽屉里放东西。
 
@@ -54,7 +54,7 @@ agent 之间不共享记忆。你在 Claude Code 里踩过的坑，换到 Codex 
 
 zcode、Claude Code、Codex、oh-my-pi、opencode、Hermes 各有一个插件或注入器，接到 `agenote context` 上。会话启动注入简报，任务结束触发经验采集，具体行为由共享 skill 定义。宿主自带的记忆写侧要手动关掉，`agenote doctor` 会逐个检查。
 
-知识库本体是一组 org 文件，Python CLI 管卡片、检索、策展和健康度。37 个子命令， 460 个测试，Python ≥ 3.10，不需要数据库。
+知识库本体是一组 org 文件，Python CLI 管卡片、检索、策展和健康度。37 个子命令，460 个测试，Python ≥ 3.10，不需要数据库。
 
 ## 对比宿主自带记忆
 

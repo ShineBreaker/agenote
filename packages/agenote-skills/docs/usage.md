@@ -50,7 +50,7 @@ skills 随 agenote monorepo 以 `agenote-skills-v<版本>` tag 发布 GitHub Rel
 
 ### 手动安装
 
-没有 dotfiles 时，从对应 tag 的 GitHub Release 下载 `agenote-skills-<版本>.tar.gz`，把 `agenote-base`、`agenote-curator`、 `agenote-review` 三个目录放进 agent 框架扫描的 skills 目录（如 `~/.config/agents/skills/`）。
+没有 dotfiles 时，从对应 tag 的 GitHub Release 下载 `agenote-skills-<版本>.tar.gz`，把 `agenote-base`、`agenote-curator`、`agenote-review` 三个目录放进 agent 框架扫描的 skills 目录（如 `~/.config/agents/skills/`）。
 
 ## 依赖
 
