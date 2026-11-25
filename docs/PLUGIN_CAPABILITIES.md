@@ -1,28 +1,21 @@
 # Agent 插件功能基线
 
-本文定义「agenote 接进一个 agent 宿主」时，插件层**应当实现哪些功能**，以及每个宿主
-当前的实现状态。新增或修改宿主插件前先对照本表；改完把矩阵一起更新，别让文档成为
-第二处过期真相源。
+本文定义「agenote 接进一个 agent 宿主」时，插件层**应当实现哪些功能**，以及每个宿主当前的实现状态。新增或修改宿主插件前先对照本表；改完把矩阵一起更新，别让文档成为第二处过期真相源。
 
-分层依据见 [ADR 0005](adr/0005-monorepo-unify-seven-components.md)：行为规范归
-`agenote-skills`，知识库逻辑归 `agenote` CLI，插件只做**事件触发 + 注入通道 + 命令
-快捷入口**。本文列的每一项都必须落在这条边界内——插件不复制卡片格式、写入流程或
-检索算法。
+分层依据见 [ADR 0005](adr/0005-monorepo-unify-seven-components.md)：行为规范归 `agenote-skills`，知识库逻辑归 `agenote` CLI，插件只做**事件触发 + 注入通道 + 命令快捷入口**。本文列的每一项都必须落在这条边界内——插件不复制卡片格式、写入流程或检索算法。
 
 ## 两类组件，两把尺子
 
 | 类型         | 成员                                                              | 职责                                 |
 | ------------ | ----------------------------------------------------------------- | ------------------------------------ |
-| **完整插件** | `agenote-zcode` / `agenote-hermes` / `agenote-pi` / `dsh-agenote` | 注入 + 触发 + 命令入口               |
+| **完整插件** | `agenote-zcode` / `agenote-hermes` / `agenote-pi` / `dsh-agenote` / `agenote-cindy` | 注入 + 触发 + 命令入口 |
 | **注入器**   | `injectors/claude` / `injectors/codex` / `injectors/opencode`     | 只承担记忆注入，不承担完成信号与命令 |
 
-拿完整插件的基线去要求注入器，会逼着注入器复制行为规范；反过来拿注入器的基线去
-要求完整插件，则会漏掉触发与命令。**先按类型选尺子，再看缺口。**
+拿完整插件的基线去要求注入器，会逼着注入器复制行为规范；反过来拿注入器的基线去要求完整插件，则会漏掉触发与命令。**先按类型选尺子，再看缺口。**
 
 ## 功能基线（11 项）
 
-「必选」指该类型组件在宿主能力允许时必须实现。宿主能力确实缺失的，记入
-[豁免记录](#豁免记录)，并在矩阵里标 `N/A`；不能默默不写。
+「必选」指该类型组件在宿主能力允许时必须实现。宿主能力确实缺失的，记入 [豁免记录](#豁免记录)，并在矩阵里标 `N/A`；不能默默不写。
 
 | #   | 功能                       | 完整插件                         | 注入器                 | 判定依据                                                                                                                      |
 | --- | -------------------------- | -------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -40,24 +33,16 @@
 
 ### 判据补充
 
-- **F2 的两种注入模式**：追加型每轮追加正文，靠 CLI 的三件套防膨胀；重写型每请求
-  幂等重写，只需简报 + query 缓存。重写型宿主做召回不是错，但不做也不算缺口——见
-  豁免记录。
-- **F3 的单一实现**：三件套与状态文件只在 `agenote inject` 里实现，注入器不得
-  复制。插件侧出现指纹/累计/状态文件逻辑即为架构回退——那正是 ADR 0005 记录的
-  四份语言副本。
-- **F5 的防抖**：显式信号触发后 `timing.debounce_ms` 内不再触发；自注入提示必须能被
-  识别（`<agenote-hook>` 标记或消息 source），否则会形成反馈环。
-- **F6 的「有工作」门槛**：不能拿裸 turn 数判定；只有跑过工具的轮次才算完成了一段
-  工作，否则纯问答轮会在 5 分钟后误报。
-- **F8 是静默失败的重灾区**：`AGENOTE_AGENT` 只打归因标签、不做写入隔离。漏了不会
-  报错，只会让卡片都记到默认 agent 名下。
+- **F2 的两种注入模式**：追加型每轮追加正文，靠 CLI 的三件套防膨胀；重写型每请求幂等重写，只需简报 + query 缓存。重写型宿主做召回不是错，但不做也不算缺口——见豁免记录。
+- **F3 的单一实现**：三件套与状态文件只在 `agenote inject` 里实现，注入器不得复制。插件侧出现指纹/累计/状态文件逻辑即为架构回退——那正是 ADR 0005 记录的四份语言副本。
+- **F5 的防抖**：显式信号触发后 `timing.debounce_ms` 内不再触发；自注入提示必须能被识别（`<agenote-hook>` 标记或消息 source），否则会形成反馈环。
+- **F6 的「有工作」门槛**：不能拿裸 turn 数判定；优先使用宿主提供的工具消息，拿不到时才用轮次时长近似，否则纯问答轮会在 5 分钟后误报。
+- **F8 是静默失败的重灾区**：`AGENOTE_AGENT` 只打归因标签、不做写入隔离。漏了不会报错，只会让卡片都记到默认 agent 名下。
 - **F10 的底线**：注入是纯增益路径，任何异常都只能让本轮少注入，不能让宿主会话失败。
 
 ## 当前对照
 
-`✅` 已实现；`—` 未实现（缺口）；`N/A` 宿主能力不支持或组件类型不适用（理由见
-[豁免记录](#豁免记录)）。
+`✅` 已实现；`—` 未实现（缺口）；`N/A` 宿主能力不支持或组件类型不适用（理由见 [豁免记录](#豁免记录)）。
 
 | 功能          | zcode | hermes | pi  | dsh | cindy | claude | codex | opencode |
 | ------------- | ----- | ------ | --- | --- | ----- | ------ | ----- | -------- |
@@ -67,27 +52,19 @@
 | F4 语义开关   | ✅    | ✅     | ✅  | ✅  | ✅    | ✅     | ✅    | ✅       |
 | F5 完成信号   | ✅    | ✅     | ✅  | ✅  | ✅    | N/A    | N/A   | N/A      |
 | F6 空闲兜底   | N/A   | N/A    | ✅  | ✅  | ✅    | N/A    | N/A   | N/A      |
-| F7 命令三件套 | ✅    | ✅     | ✅  | ✅  | ✅    | N/A    | N/A   | N/A      |
+| F7 命令三件套 | ✅    | ✅     | ✅  | ✅  | N/A   | N/A    | N/A   | N/A      |
 | F8 归因       | ✅    | ✅     | ✅  | ✅  | ✅    | ✅     | ✅    | ✅       |
 | F9 子代理豁免 | N/A   | ✅     | ✅  | ✅  | N/A   | N/A    | N/A   | N/A      |
 | F10 故障静默  | ✅    | ✅     | ✅  | ✅  | ✅    | ✅     | ✅    | ✅       |
 | F11 写侧适配  | N/A   | N/A    | N/A | ✅  | N/A   | N/A    | N/A   | N/A      |
 
-cindy 的三条落地差异（不是缺口，是宿主形态不同）：
+cindy 的落地差异与限制：
 
-- **F1/F2 走资料节点、且要逐任务开启**：Cindy 的用户气泡是 `whitespace-pre-wrap`
-  纯文本（`UserMessage.tsx`），改写消息一定可见，所以注入只能走 `will-compose-context`
-  ——宿主把它作为「资料」前置到 wire 消息上，不动显示与落库的原话。代价是该节点只问
-  选中了本插件的任务，简报/召回因此**不是装了就生效**。F5/F6 反过来靠
-  `message` / `turn` 旁听，不依赖这个选择。
-- **F6 用轮次时长近似「有工作」**：Cindy 的订阅面没有工具调用事件，拿不到「本轮跑过
-  工具」的事实，插件只在 `did-turn-end` 的 `durationMs` 超过门槛时才武装定时器。
-- **F7 不打包技能**：斜杠命令即技能名，由 agent 技能目录里的 `agenote-skills` 提供；
-  插件随包复制一份会让行为规范出现第二处真相源。插件改提供 `agenote_search` /
-  `agenote_health` 两个只读工具作为替代入口。
+- **F1/F2 走资料节点、且要逐任务开启**：Cindy 的用户气泡是 `whitespace-pre-wrap` 纯文本（`UserMessage.tsx`），改写消息一定可见，所以注入只能走 `will-compose-context` ——宿主把它作为「资料」前置到 wire 消息上，不动显示与落库的原话。代价是该节点只问选中了本插件的任务，简报/召回因此**不是装了就生效**。F5/F6 反过来靠 `message` / `turn` 旁听，不依赖这个选择。
+- **F6 优先看工具事件，缺失时再用轮次时长近似「有工作」**：`tool-execution` topic 若收到 `tool_use` / `tool_result`，短轮次也能武装定时器；否则才使用 `did-turn-end.durationMs` 门槛。当前包把最低 Cindy 版本锁到已验证支持该 topic 的 `0.1.143`；事件丢失时会放弃当前轮次证据而不猜测。
+- **F7 不由 ghost 包注册**：Cindy 的 manifest 没有 slash-command 注册能力，`agenote-skills` 需另行安装才能提供 `/agenote-summarize`、`/agenote-curate` 等入口；本包的 `agenote_search` / `agenote_health` / `agenote_diag` 是工具入口，不等同于命令三件套。
 
-注入器（claude / codex / opencode）的 `N/A` 是组件类型边界：它们不是插件，没有命令
-注册与 turn 生命周期挂点。完整插件的 `N/A` 是宿主能力边界，逐条记在下面。
+注入器（claude / codex / opencode）的 `N/A` 是组件类型边界：它们不是插件，没有命令注册与 turn 生命周期挂点。完整插件的 `N/A` 是宿主能力边界，逐条记在下面。
 
 ## 豁免记录
 
@@ -101,21 +78,15 @@ cindy 的三条落地差异（不是缺口，是宿主形态不同）：
 | pi                                              | F2 每轮召回       | 重写型注入：每 LLM 调用重写简报块，已覆盖长期记忆；召回由 agent 按需 `agenote search` 补足 | 需要按用户消息做逐轮检索时                      |
 | opencode                                        | F2 每轮召回       | 同上（`experimental.chat.messages.transform` 重写型）                                      | 同上                                            |
 | claude / codex / opencode                       | F5 / F6 / F7 / F9 | 注入器边界：只做记忆注入，不承担完成信号、命令入口与 turn 生命周期                         | 升级为完整插件（新增触发与命令实现）            |
+| cindy                                           | F7 命令三件套    | ghost manifest 不注册 slash command；命令由外部 `agenote-skills` 提供，本包不验证其安装状态       | Cindy 提供命令桥接，或安装流程能验证 skill 可达性 |
+| cindy                                           | F9 子代理豁免    | `message` / `turn` 仍只提供会话与轮次元数据；`tool-execution` 是全局工具旁听且仅按已观察到的活动会话计数，代码未读取可靠的 subagent / cron 来源标识，无法安全区分非交互会话 | 宿主事件提供稳定的 origin / session-kind 字段 |
 | zcode / hermes / pi / claude / codex / opencode | F11 写侧适配      | 宿主无文件沙箱或沙箱不拦 KB 路径，`agenote` CLI 经 bash 直接可写；条件不成立，功能不适用   | 宿主引入文件围栏挡住 KB_ROOT 时（dsh 即此形态） |
 
 ## 新增一个宿主插件时
 
-1. 在 `spec/injection.toml` 增加 `[hosts.<name>]`：`mode`（append / rewrite）、
-   `brief` / `recall` 预算、`cli_timeout_ms`；改 `tools/codegen/generate.py` 的
-   `TARGETS` 登记预算生成块，跑一次生成。`--host` 的可选值是
-   `context.py` 的 `HOSTS` 常量，只改一处就会同步到 `agenote` 与 `agenote-cli`；
-   新增宿主还要在 `config.py` 的 `injection.hosts` 补 `<name>_enabled`。
-2. 实现 F1–F10 中适用于该宿主形态的项；**注入状态机不要自己写**——追加型调
-   `agenote inject --host <name> --event session|prompt`，重写型调
-   `agenote context` 并可在宿主侧加指纹缓存省 spawn。不适用项先写进本文件的
-   豁免记录，再标 `N/A`。
-3. 在 `packages/agenote/injectors/selftest.sh` 增加离线断言：正常注入、缓存重放、
-   门槛/预算生效、CLI 缺失静默、语义开关零字节。
+1. 在 `spec/injection.toml` 增加 `[hosts.<name>]`：`mode`（append / rewrite）、 `brief` / `recall` 预算、`cli_timeout_ms`；改 `tools/codegen/generate.py` 的 `TARGETS` 登记预算生成块，跑一次生成。`--host` 的可选值是 `context.py` 的 `HOSTS` 常量，只改一处就会同步到 `agenote` 与 `agenote-cli`；新增宿主还要在 `config.py` 的 `injection.hosts` 补 `<name>_enabled`。
+2. 实现 F1–F10 中适用于该宿主形态的项；**注入状态机不要自己写**——追加型调 `agenote inject --host <name> --event session|prompt`，重写型调 `agenote context` 并可在宿主侧加指纹缓存省 spawn。不适用项先写进本文件的豁免记录，再标 `N/A`。
+3. 在 `packages/agenote/injectors/selftest.sh` 增加离线断言：正常注入、缓存重放、门槛/预算生效、CLI 缺失静默、语义开关零字节。
 4. 更新本文件的对照矩阵与各插件 README / AGENTS.md 的功能表。
 5. 跑校验：
 
