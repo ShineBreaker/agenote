@@ -4,6 +4,38 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本管理遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.5] - 2026-11-25
+
+只读命令不再是隐藏的写者：全量 lint 审查暴露出一组只读命令在只读挂载/沙箱下创建骨架、共享锁语义缺失、以及 orgfmt 两条格式规则互相打架永不收敛的根因，本轮一次性根治。在本机真实语料（1,149 张卡）上实测：`lint` 可修复项 495 → 0，剩余 583 条均为规则文档明示「信息性、非必须」的骨架缺失提示。
+
+---
+
+### Fixed
+
+- **只读命令的隐藏副作用**（`cards.py`/`health.py`/`shim.py`/`cli.py`）：`stats`/`health`/`gaps`/`doctor`/`shim health` 不再调用 `ensure_dirs` 创建 KB 骨架，只读挂载与沙箱下可正常查询；写路径的骨架自愈移入写锁临界区内，消除两个首次并发写者在拿锁前互相覆盖骨架的竞态。
+- **共享锁语义**（`cli.py`/`safeio.py`）：只读命令对已有锁文件取 flock 共享锁，保护跨文件一致视图；锁文件缺失时不创建，保持空 KB 与只读挂载可用。已有锁文件不可读时 fail-closed（不再静默绕过），`O_NOFOLLOW`+`lstat`+`fstat` 拒绝 symlink 与非普通文件锁路径。
+- **多域锁路径**（`cli.py`）：`--domain human` 写操作锁定实际目标根的 `.agenote.lock`；`reconcile`/`trace`/`distill` 用 agent 域锁；`extract` 锁住 human/agent 两个域；跨域 `search`、全域 `viz`、`doctor` 按稳定路径顺序取多共享锁，避免死锁。
+- **`viz --domain` 覆盖全局 `--domain`**（`viz/cli.py`）：子解析器 dest 改为 `viz_domain`，锁域与实际数据域一致；`viz` 的 `--output` 落在 KB 内时其所在根也纳入锁集合。
+- **`memory` 查询路径**（`memory.py`/`projector.py`）：`--list`/`--conflicts`/`--get`/`--import --dry-run` 按实际分支正确判定只读；`--export` 由 projector 自持锁，不再外层重复加锁形成自互锁，且不再对轻量 context 假设完整 `KBContext`。
+- **健康度统计**（`health.py`）：`stale_feedback` 只统计 `F` 类型条目，过期 project/reference 不再错误计入。
+- **orgfmt 振荡不收敛**（`orgfmt.py`）：`_fix_dash_spacing` 无条件剥掉破折号两侧空格，与行内标记 pass 互删互插，导致 `lint --fix` 后 format 问题反复重报。现按「空格邻接标记字符时豁免」对齐全角标点规则的既有豁免；marker pass 在 `—` 邻接处豁免插空格（贴连本就不可渲染，机器插空格只会振荡）。占位续写错配行（`=A=……B=……node x=`）不再被误修复破坏字面。
+- **`lint --check` 退出码**：二值化为 0/1（旧版退问题数，127 与 shell command-not-found 撞码，工具侧误判）。
+
+### 实测前后对比
+
+| 指标 | 0.2.4 | 0.2.5 |
+|---|---:|---:|
+| lint 可修复项（1,149 卡真实语料） | 495 | 0 |
+| orgfmt 振荡重报行 | 每轮重报 | 两轮收敛零变更 |
+| 只读命令在只读挂载 | EROFS/骨架写入 | 正常查询 |
+| `pytest` | 572 passed | 580 passed |
+
+### 受影响的行为变化
+
+- 只读命令在**存在锁文件**的 KB 上会短暂持共享锁：与写者并发时查询会等待写锁释放，而不是读到撕裂视图。锁文件不存在时行为不变（不创建）。
+- `lint --check` 退出码语义变化：CI 脚本若依赖「退出码=问题数」需改读 stdout。
+- orgfmt 对「标记贴全角标点/破折号」不再插空格：此类行在 org 渲染层本就无解，lint 报告后需人工改写句子。
+
 ## [0.2.4] - 2026-11-10
 
 `session` 简报从「标题 + 正文首行」改为目录式：同一句话不再渲染两遍，长标题卡只给标题、正文留给 `agenote get`。在本机真实语料（1,006 张卡）上实测 5,298 → 3,130 字符（−41%），行内重复占行字符 21.2% → 0.5%。recall 分数门槛按语料规模重标定。
