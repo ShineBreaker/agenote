@@ -1,7 +1,6 @@
 # agenote 使用文档
 
-本文档覆盖 agenote CLI 的安装、命令参考、配置与开发。产品定位与功能概览见
-[README](README.zh.md)。
+本文档覆盖 agenote CLI 的安装、命令参考、配置与开发。产品定位与功能概览见 [README](README.zh.md)。
 
 ## 目录
 

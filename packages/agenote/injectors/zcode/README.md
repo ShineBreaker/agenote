@@ -1,12 +1,9 @@
 # agenote → zcode 注入（实装在 agenote-zcode 插件内，本目录无脚本）
 
-zcode 的注入**不在本仓库交付脚本**，而是直接实装在生态既有的 zcode 插件
-`agenote-zcode` 里（与 claude/codex 的独立脚本不同——zcode 侧挂点在插件
-hooks.json 内统一管理，避免双挂接入口）：
+zcode 的注入**不在本仓库交付脚本**，而是直接实装在生态既有的 zcode 插件 `agenote-zcode` 里（与 claude/codex 的独立脚本不同——zcode 侧挂点在插件 hooks.json 内统一管理，避免双挂接入口）：
 
 - **单一真相源**：`packages/agenote-zcode/`（agenote monorepo，见 docs/adr/0005）
-- **装载点**：`~/.zcode/plugins/agenote-zcode/`（hooks 文件为指向源的单文件
-  symlink，源改动即生效）
+- **装载点**：`~/.zcode/plugins/agenote-zcode/`（hooks 文件为指向源的单文件 symlink，源改动即生效）
 
 ## 挂点（由插件 hooks.json 自带，无需用户另配）
 
@@ -16,13 +13,11 @@ hooks.json 内统一管理，避免双挂接入口）：
 | UserPromptSubmit（无 matcher = 每轮） | `hooks/prompt-inject.mjs`（新增条目，与既有完成信号条目并存） | recall 注入：调 `agenote inject --event prompt`，预算 4000，三件套由 CLI 判定 |
 | UserPromptSubmit（完成信号 matcher） | `hooks/prompt-submit.mjs`（既有，未改动） | 任务完成信号 → review 提示 |
 
-三件套/状态文件的唯一实现在 `agenote inject`（`inject.py`）；`hooks/lib.mjs`
-只做协议适配。状态文件 `~/.cache/agenote/injectors/zcode-<session_id>.json`。
+三件套/状态文件的唯一实现在 `agenote inject`（`inject.py`）；`hooks/lib.mjs` 只做协议适配。状态文件 `~/.cache/agenote/injectors/zcode-<session_id>.json`。
 
 ## 预算
 
-简报 8000 / recall 4000 字符（zcode 单事件上限 24000，静默截断）；
-累计预算 24000 触顶停 recall。env 覆盖同其他宿主（见总览 README）。
+简报 8000 / recall 4000 字符（zcode 单事件上限 24000，静默截断）；累计预算 24000 触顶停 recall。env 覆盖同其他宿主（见总览 README）。
 
 ## 宿主版本（验证时）
 
@@ -42,14 +37,10 @@ printf '%s\n' '{"hook_event_name":"SessionStart","session_id":"manual","source":
 
 ## 待实装验证项
 
-- zcode UserPromptSubmit stdin 的 prompt 字段实际下发名（prompt-inject.mjs
-  防御式解析 `prompt`/`user_prompt`/`userPrompt`；若全缺则本轮不注，仅指纹
-  检查——与协议现状一致，见脚本头注）。
-- 同事件多 hook 条目的 additionalContext 合并顺序（完成信号条目 + 召回
-  条目同轮命中时）。
+- zcode UserPromptSubmit stdin 的 prompt 字段实际下发名（prompt-inject.mjs 防御式解析 `prompt`/`user_prompt`/`userPrompt`；若全缺则本轮不注，仅指纹检查——与协议现状一致，见脚本头注）。
+- 同事件多 hook 条目的 additionalContext 合并顺序（完成信号条目 + 召回条目同轮命中时）。
 - workspace hooks 首次信任准入：插件 hooks.json 变更后 zcode 可能提示确认。
 
 ## 安装前置
 
-agenote CLI 须含 `context` 子命令（旧版 CLI 静默空串 = 不注入，会话不受影响）；
-语义开关 `AGENOTE_INJECTION_ENABLED=false` 一键全关。
+agenote CLI 须含 `context` 子命令（旧版 CLI 静默空串 = 不注入，会话不受影响）；语义开关 `AGENOTE_INJECTION_ENABLED=false` 一键全关。

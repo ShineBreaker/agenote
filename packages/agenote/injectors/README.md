@@ -1,8 +1,6 @@
 # injectors/ — agenote 记忆注入器包
 
-宿主插件/hook 层实时调 `agenote context` 取记忆注入会话（设计
-`AGENOTE_INJECTION_DESIGN.md` §3 C4）。agenote 本体保持纯粹 CLI：无常驻
-进程、无调度器，注入职责全在本包 / 各宿主插件内。
+宿主插件/hook 层实时调 `agenote context` 取记忆注入会话（设计 `AGENOTE_INJECTION_DESIGN.md` §3 C4）。agenote 本体保持纯粹 CLI：无常驻进程、无调度器，注入职责全在本包 / 各宿主插件内。
 
 ## 架构（文字图）
 
@@ -26,16 +24,9 @@ agenote context --mode session|recall --query Q --budget N --host H [--format js
          （整目录可清理，无副作用；重写型宿主另有进程内指纹缓存，只省 spawn）
 ```
 
-**追加型三件套**（zcode/claude/codex/hermes 的每轮通道，防上下文累积膨胀）：
-①指纹+query 未变不重注（含被 `recall_min_score` 滤空的情况，记键零重跑）；
-②recall 门槛（prompt 有效长度 < `recall_min_query` 跳过，「继续/ok」类不注）；
-③单会话累计 ≤ 24000 字符触顶停 recall（SessionStart/compact 重置）。
-**这三项只有 `agenote inject` 一份实现**（`injectors/*` 只传事件与预算）。
-**重写型**（opencode / pi / dsh）：每请求幂等重写，只需指纹缓存。dsh 在同一份
-动态上下文快照里并置简报与召回，按「指纹 + 最近用户消息」缓存，无需累计预算。
+**追加型三件套**（zcode/claude/codex/hermes 的每轮通道，防上下文累积膨胀）： ①指纹+query 未变不重注（含被 `recall_min_score` 滤空的情况，记键零重跑）； ②recall 门槛（prompt 有效长度 < `recall_min_query` 跳过，「继续/ok」类不注）； ③单会话累计 ≤ 24000 字符触顶停 recall（SessionStart/compact 重置）。 **这三项只有 `agenote inject` 一份实现**（`injectors/*` 只传事件与预算）。 **重写型**（opencode / pi / dsh）：每请求幂等重写，只需指纹缓存。dsh 在同一份动态上下文快照里并置简报与召回，按「指纹 + 最近用户消息」缓存，无需累计预算。
 
-功能基线（每个宿主应实现哪些项、哪些豁免）见
-[`docs/PLUGIN_CAPABILITIES.md`](../../../docs/PLUGIN_CAPABILITIES.md)。
+功能基线（每个宿主应实现哪些项、哪些豁免）见 [`docs/PLUGIN_CAPABILITIES.md`](../../../docs/PLUGIN_CAPABILITIES.md)。
 
 ## 目录
 
@@ -52,18 +43,10 @@ agenote context --mode session|recall --query Q --budget N --host H [--format js
 
 ## 安装总则
 
-1. **前置**：agenote CLI 含 `inject` 子命令（旧版 CLI 静默空串 = 不注入，
-   会话永不受影响）。每次注入都带 `AGENOTE_AGENT=<host>` 归因前缀；状态机与
-   状态文件都在 CLI 内，注入器不保存任何跨轮状态（pi/opencode/dsh 的进程内
-   指纹缓存只是省 spawn 的镜像）。
+1. **前置**：agenote CLI 含 `inject` 子命令（旧版 CLI 静默空串 = 不注入，会话永不受影响）。每次注入都带 `AGENOTE_AGENT=<host>` 归因前缀；状态机与状态文件都在 CLI 内，注入器不保存任何跨轮状态（pi/opencode/dsh 的进程内指纹缓存只是省 spawn 的镜像）。
 2. **挂接**：按各宿主子目录 README 操作；注入器绝不代改宿主配置。
-3. **写侧禁用**（防双真相源，接管硬前提）：claude 关
-   `autoMemoryEnabled`+`autoDreamEnabled`；codex 保持 `[features] memories`
-   默认关；hermes 关 `memory.memory_enabled`+`user_profile_enabled`；
-   zcode 关 `features.memory`/`memory.use`。状态用 `agenote doctor` 例行检测。
-4. **验收**：先 `bash injectors/selftest.sh`（离线全量；zcode/hermes 实装在本仓
-   packages/agenote-zcode、packages/agenote-hermes，selftest 默认验证仓内源码），
-   再按各 README 的宿主内观测面复核；每个 README 标注协议来源版本（R2 漂移应对）。
+3. **写侧禁用**（防双真相源，接管硬前提）：claude 关 `autoMemoryEnabled`+`autoDreamEnabled`；codex 保持 `[features] memories` 默认关；hermes 关 `memory.memory_enabled`+`user_profile_enabled`； zcode 关 `features.memory`/`memory.use`。状态用 `agenote doctor` 例行检测。
+4. **验收**：先 `bash injectors/selftest.sh`（离线全量；zcode/hermes 实装在本仓 packages/agenote-zcode、packages/agenote-hermes，selftest 默认验证仓内源码），再按各 README 的宿主内观测面复核；每个 README 标注协议来源版本（R2 漂移应对）。
 
 ## 开关（一键全关）
 
@@ -74,9 +57,7 @@ AGENOTE_INJECTION_ENABLED=false        # 总开关：context 输出零字节 →
 AGENOTE_INJECTION_HOSTS_ZCODE_ENABLED=false   # 单宿主关闭
 ```
 
-任一开关关闭时 CLI 返回 `status: disabled` / 零字节，注入器直接不注——
-无需动插件配置。物理移除注入器（删挂接条目）是最后手段；改行为优先改
-SCHEMA（同agenote-curator skill 的「注入器与开关」节）。
+任一开关关闭时 CLI 返回 `status: disabled` / 零字节，注入器直接不注—— 无需动插件配置。物理移除注入器（删挂接条目）是最后手段；改行为优先改 SCHEMA（同agenote-curator skill 的「注入器与开关」节）。
 
 ## 可调 env（注入器侧旋钮；均有默认值，可不设）
 
@@ -91,9 +72,6 @@ SCHEMA（同agenote-curator skill 的「注入器与开关」节）。
 
 ## 与 context-select 决策核的关系（两层并列，D7）
 
-- `~/.config/agents/context-select.sh`（zcode/omp/hermes/crush 共享）注入的
-  是**原则层**：怎么做事的稳定规范（00-core/INDEX/domains），静态门控。
-- agenote 注入器注入的是**事实层**：动态、会更新会裁决的记忆（画像/项目/
-  环境/经验），指纹失效自动换新。
-- 两层并列不融合：任务规则看前者，事实记忆看后者；未来若融合，agenote
-  输出可作为 selector 的上游之一，不强制。
+- `~/.config/agents/context-select.sh`（zcode/omp/hermes/crush 共享）注入的是**原则层**：怎么做事的稳定规范（00-core/INDEX/domains），静态门控。
+- agenote 注入器注入的是**事实层**：动态、会更新会裁决的记忆（画像/项目/ 环境/经验），指纹失效自动换新。
+- 两层并列不融合：任务规则看前者，事实记忆看后者；未来若融合，agenote 输出可作为 selector 的上游之一，不强制。

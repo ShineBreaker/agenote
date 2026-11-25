@@ -1,12 +1,8 @@
 # agenote → claude-code 注入器（成品级）
 
-把 agenote 记忆简报/召回实时注入 claude-code 会话。协议形状依据官方 hooks
-文档（code.claude.com/docs/en/hooks，2026-09 核对；hookSpecificOutput.
-additionalContext；UserPromptSubmit 注入上限 10000 字符）。宿主版本漂移
-（R2）时先核对文档再改脚本。
+把 agenote 记忆简报/召回实时注入 claude-code 会话。协议形状依据官方 hooks 文档（code.claude.com/docs/en/hooks，2026-09 核对；hookSpecificOutput. additionalContext；UserPromptSubmit 注入上限 10000 字符）。宿主版本漂移（R2）时先核对文档再改脚本。
 
-宿主版本（验证时）：协议参照公开 hooks 文档 2026-09 版；验证机装有
-claude-code 2.1.278（脚本为标准 hooks 协议，不依赖特定版本特性）。
+宿主版本（验证时）：协议参照公开 hooks 文档 2026-09 版；验证机装有 claude-code 2.1.278（脚本为标准 hooks 协议，不依赖特定版本特性）。
 
 ## 挂点
 
@@ -41,10 +37,8 @@ claude-code 2.1.278（脚本为标准 hooks 协议，不依赖特定版本特性
 }
 ```
 
-- SessionStart matcher 不填 = 覆盖 `startup/resume/clear/compact` 四源；
-  compact 自动重跑即免费获得重注入（CLI 侧简报缓存命中）。
-- 两个脚本共享状态文件 `~/.cache/agenote/injectors/claude-<session_id>.json`
-  （由 `agenote inject` 读写；session_id 缺失退化为 `claude.json`；整目录可清理无副作用）。
+- SessionStart matcher 不填 = 覆盖 `startup/resume/clear/compact` 四源； compact 自动重跑即免费获得重注入（CLI 侧简报缓存命中）。
+- 两个脚本共享状态文件 `~/.cache/agenote/injectors/claude-<session_id>.json` （由 `agenote inject` 读写；session_id 缺失退化为 `claude.json`；整目录可清理无副作用）。
 
 ## 预算与三件套
 
@@ -58,8 +52,7 @@ claude-code 2.1.278（脚本为标准 hooks 协议，不依赖特定版本特性
 
 ## 安装前置（写侧禁用，防双真相源）
 
-settings.json 加 `"autoMemoryEnabled": false` + `"autoDreamEnabled": false`
-（或 env `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`）。开关状态可由 `agenote doctor` 检测。
+settings.json 加 `"autoMemoryEnabled": false` + `"autoDreamEnabled": false` （或 env `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`）。开关状态可由 `agenote doctor` 检测。
 
 ## 验收
 
@@ -81,13 +74,9 @@ bash injectors/selftest.sh
 
 ## 可调 env（均可不设）
 
-`AGENOTE_INJECTION_BRIEF_BUDGET` / `AGENOTE_INJECTION_RECALL_BUDGET` /
-`AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET` / `AGENOTE_INJECTION_MIN_QUERY` /
-`AGENOTE_INJECTOR_STATE_DIR`；语义开关在 agenote 侧
-（`AGENOTE_INJECTION_ENABLED=false` 一键全关，输出零字节即自然不注入）。
+`AGENOTE_INJECTION_BRIEF_BUDGET` / `AGENOTE_INJECTION_RECALL_BUDGET` / `AGENOTE_INJECTION_SESSION_CUMULATIVE_BUDGET` / `AGENOTE_INJECTION_MIN_QUERY` / `AGENOTE_INJECTOR_STATE_DIR`；语义开关在 agenote 侧（`AGENOTE_INJECTION_ENABLED=false` 一键全关，输出零字节即自然不注入）。
 
 ## 待实装验证项
 
-- stdin 字段名（`session_id`/`prompt`/`cwd`/`source`）以实际版本下发为准；
-  脚本对缺失字段静默降级（无 session_id 用 host 级状态文件，无 prompt 不注）。
+- stdin 字段名（`session_id`/`prompt`/`cwd`/`source`）以实际版本下发为准；脚本对缺失字段静默降级（无 session_id 用 host 级状态文件，无 prompt 不注）。
 - claude 版本更新若调整 hook 事件名/预算上限，以 `--debug` 日志为准回改。

@@ -1,10 +1,6 @@
 # agenote → codex 注入器（recipe 级模板）
 
-codex 内置 Claude 兼容 hooks 引擎（12 事件；SessionStart matcher
-startup/resume/clear/compact/fork），`additionalContext` flatten 后进
-developer 消息并**进 rollout 持久化**。本目录是模板：协议形状按 Claude
-兼容引擎写，`[hooks]` config.toml 键名以你本版 codex 文档为准（recipe 级
-不设验收门，R2 漂移自担）。
+codex 内置 Claude 兼容 hooks 引擎（12 事件；SessionStart matcher startup/resume/clear/compact/fork），`additionalContext` flatten 后进 developer 消息并**进 rollout 持久化**。本目录是模板：协议形状按 Claude 兼容引擎写，`[hooks]` config.toml 键名以你本版 codex 文档为准（recipe 级不设验收门，R2 漂移自担）。
 
 ## 挂接（示例，待实装核对）
 
@@ -25,10 +21,8 @@ UserPromptSubmit = [
 ]
 ```
 
-- **首次信任确认**：codex 的 hook 需 trust（trusted_hash）后才生效，首次
-  启动会提示确认；自动部署需走托管（managed）模式——不要绕过信任机制。
-- 预算超限行为：per-hook `additional_context_limit`（默认 2500 **tokens**）
-  超限自动 spill 到 `<temp>/hook_outputs/<thread_id>/` 并以头尾预览+路径回引。
+- **首次信任确认**：codex 的 hook 需 trust（trusted_hash）后才生效，首次启动会提示确认；自动部署需走托管（managed）模式——不要绕过信任机制。
+- 预算超限行为：per-hook `additional_context_limit`（默认 2500 **tokens**）超限自动 spill 到 `<temp>/hook_outputs/<thread_id>/` 并以头尾预览+路径回引。
 
 ## 预算与三件套
 
@@ -40,9 +34,7 @@ UserPromptSubmit = [
 
 ## 安装前置
 
-codex 自带记忆**默认已关**（`[features] memories` 默认 false）——保持关闭即
-可；若曾手动开启需关回（`codex features disable memories`），防双真相源。
-`agenote doctor` 可检测。
+codex 自带记忆**默认已关**（`[features] memories` 默认 false）——保持关闭即可；若曾手动开启需关回（`codex features disable memories`），防双真相源。 `agenote doctor` 可检测。
 
 ## 验收
 
@@ -61,6 +53,5 @@ codex debug prompt-input "测试问题"
 
 - `[hooks]` config.toml 的确切键名/结构（模板按 Claude 兼容假设写）。
 - stdin JSON 字段名、SessionStart source 取值（模板假设与 claude 相同）。
-- 输出封包用 `hookSpecificOutput.additionalContext`（claude 形状）；codex
-  是否也接受裸 `additionalContext` 字段待实测。
+- 输出封包用 `hookSpecificOutput.additionalContext`（claude 形状）；codex 是否也接受裸 `additionalContext` 字段待实测。
 - 2800 字符折算以 `codex debug prompt-input` 实测 spill 率为准。

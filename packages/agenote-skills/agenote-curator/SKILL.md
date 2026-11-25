@@ -53,9 +53,7 @@ agenote stats                           # 状态分布
 agenote gaps --stale-days 60            # 类别×类型矩阵 + 缺失组合 + 陈旧卡片
 ```
 
-`lint --fix` 只自动修**格式**问题；语义问题（enum_drift / missing_entry_type / fingerprint）
-只报告，需要你判断。`missing_sections` 是信息性提示，**不计入待修问题**——不要为凑章节编号去
-补空标题。全库报告较长时可加 `--json` 按 category 过滤，只读 format / enum_drift / fingerprint。
+`lint --fix` 只自动修**格式**问题；语义问题（enum_drift / missing_entry_type / fingerprint）只报告，需要你判断。`missing_sections` 是信息性提示，**不计入待修问题**——不要为凑章节编号去补空标题。全库报告较长时可加 `--json` 按 category 过滤，只读 format / enum_drift / fingerprint。
 
 > 这是格式债的唯一收口处：会话中写卡（`agenote add`）已在写入时自动格式化，单卡无需再校验；
 > 存量债与本轮 merge/update 产生的格式漂移，都在这里和 Step 9 收尾各清一次。
@@ -78,9 +76,7 @@ agenote archive <id...> --reason "策展: 45天未使用"   # 命中条件即批
 
 ### Step 3 — type 聚拢（agent 判断）
 
-type 的正式性是动态的：**正式 type = 种子 6 类 ∪ 非归档卡片数达晋升阈值
-（config `curation.type_promote_min`，默认 10）的 type**。CLI 门禁按同一口径实时
-计算——非正式 type 写入（add/update `--type`）会被拒绝，`--force` 逃生；聚拢决策由你执行：
+type 的正式性是动态的：**正式 type = 种子 6 类 ∪ 非归档卡片数达晋升阈值（config `curation.type_promote_min`，默认 10）的 type**。CLI 门禁按同一口径实时计算——非正式 type 写入（add/update `--type`）会被拒绝，`--force` 逃生；聚拢决策由你执行：
 
 1. `agenote fields --type` 查看各 type 计数；对可疑 type 用 `agenote list --type <t> --all` 核实**非归档**卡片数
 2. **非正式（非归档 <10 且非种子）的 type 列为聚拢候选**；≥10 已自动晋升正式（如 `note` 之于 `workflow`——一个是查到的知识，一个是做法总结），保留不动作
@@ -142,12 +138,7 @@ agenote memory --project <name>         # 项目记忆检索 + PATH/UPDATED 健�
 agenote memory --project-touch <name>   # 确认活跃的项目刷新 LAST_ACTIVE
 ```
 
-**MEMORY 单条目超限处理**（U1 入口预算）：`agenote doctor` 的
-`memory-entry-budget` 项发现行数 > `[memory].max_entry_lines`（默认 120）
-或字符数 > `[memory].max_entry_chars`（默认 6000）的条目时，只报告不自动修
-（CLI 自动修是 ADR-0004 明确禁止的语义决策）。session 简报侧已按
-`[context].session_entry_budget_chars`（默认 2000）截断超限条目并打行内标记
-`…[单条超预算已截断]`（json `truncated=true`）。处理流程：
+**MEMORY 单条目超限处理**（U1 入口预算）：`agenote doctor` 的 `memory-entry-budget` 项发现行数 > `[memory].max_entry_lines`（默认 120）或字符数 > `[memory].max_entry_chars`（默认 6000）的条目时，只报告不自动修（CLI 自动修是 ADR-0004 明确禁止的语义决策）。session 简报侧已按 `[context].session_entry_budget_chars`（默认 2000）截断超限条目并打行内标记 `…[单条超预算已截断]`（json `truncated=true`）。处理流程：
 
 1. 读超限条目全文，按主题拆成 2+ 条小条目（`memory --add` 逐条写，每条回落预算内）；
 2. 原条目确认被覆盖后归档或删除；

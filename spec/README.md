@@ -1,7 +1,6 @@
 # spec/ — 跨组件语义的单一真相源
 
-这里放**跨宿主复制**的语义：完成信号清单、时序阈值、每宿主注入预算。
-决策依据见 [`docs/adr/0005`](../docs/adr/0005-monorepo-unify-seven-components.md)。
+这里放**跨宿主复制**的语义：完成信号清单、时序阈值、每宿主注入预算。决策依据见 [`docs/adr/0005`](../docs/adr/0005-monorepo-unify-seven-components.md)。
 
 ## 为什么不放所有配置
 
@@ -13,10 +12,7 @@
 | 各插件的 Config schema 默认值 | 各包 `Config` 声明 | 宿主加载期校验用，形状随宿主而异 |
 | 卡片格式 / 写入流程 / 策展策略 | `packages/agenote-skills/*/SKILL.md` | 文档即载体，改策略不该发版 |
 
-注入器的三件套（指纹去重 / 短 prompt 门槛 / 单会话累计）曾是 bash、JS、Python
-各写一份的复制债（ADR 0005）。2026-10 起**只有 `agenote inject` 一份实现**：
-`spec` 里不再有 `[append]` 数值，修改语义改 CLI SCHEMA 或 `inject.py`，插件侧
-无需同步。
+注入器的三件套（指纹去重 / 短 prompt 门槛 / 单会话累计）曾是 bash、JS、Python 各写一份的复制债（ADR 0005）。2026-10 起**只有 `agenote inject` 一份实现**： `spec` 里不再有 `[append]` 数值，修改语义改 CLI SCHEMA 或 `inject.py`，插件侧无需同步。
 
 ## 工作流
 
@@ -32,21 +28,13 @@ python3 tools/codegen/generate.py --check && git diff --exit-code
 
 ## 三条约束
 
-1. **生成物提交进仓。** 宿主插件是独立安装的（`~/.zcode/plugins/`、omp 扩展
-   目录、hermes 插件目录），运行时不能依赖 monorepo 存在。所以生成物进版本库，
-   漂移由 CI 拦截，而不是靠开发纪律。
-2. **每个生成块有 BEGIN/END 标记。** 工具只改写两标记之间的内容，标记外的代码
-   与注释一律不碰——所以生成块可以嵌在文件中间，不要求整文件模板化。
-3. **不允许出现未登记的副本。** `check.py` 会扫出任何自行定义
-   `COMPLETION_SIGNALS` 却没有生成块标记的文件并报错。迁移前信号散落 6 处
-   （pi / dsh / zcode / hermes 四份代码 + `hooks.json` 正则 + `triggers.md`
-   散文）靠纪律同步——`agenote-zcode/hooks/hooks.json` 的预筛正则就曾漏掉
-   `完成`，该信号在 zcode 侧实际失效，正是这条纪律失效的实证。
+1. **生成物提交进仓。** 宿主插件是独立安装的（`~/.zcode/plugins/`、omp 扩展目录、hermes 插件目录），运行时不能依赖 monorepo 存在。所以生成物进版本库，漂移由 CI 拦截，而不是靠开发纪律。
+2. **每个生成块有 BEGIN/END 标记。** 工具只改写两标记之间的内容，标记外的代码与注释一律不碰——所以生成块可以嵌在文件中间，不要求整文件模板化。
+3. **不允许出现未登记的副本。** `check.py` 会扫出任何自行定义 `COMPLETION_SIGNALS` 却没有生成块标记的文件并报错。迁移前信号散落 6 处（pi / dsh / zcode / hermes 四份代码 + `hooks.json` 正则 + `triggers.md` 散文）靠纪律同步——`agenote-zcode/hooks/hooks.json` 的预筛正则就曾漏掉 `完成`，该信号在 zcode 侧实际失效，正是这条纪律失效的实证。
 
 ## 何时该新建 spec 文件
 
 先问一句：这个语义是否**跨两个以上包**复制？
 
 - 是 → 进 `spec/`，配生成块或契约校验。
-- 否 → 留在代码里，照常写注释。spec 不是垃圾桶，把只在一处用的常量塞进来
-  反而增加维护面。
+- 否 → 留在代码里，照常写注释。spec 不是垃圾桶，把只在一处用的常量塞进来反而增加维护面。

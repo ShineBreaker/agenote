@@ -2,13 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.1.4] - 2026-10-29
 
-压缩不再让注入判定失效：召回 query 与「已触发过」都改读 durable log，压缩后
-idle 兜底不会二次注入；`agenote_write` 顺带修掉最高频的一类工具失败。
+压缩不再让注入判定失效：召回 query 与「已触发过」都改读 durable log，压缩后 idle 兜底不会二次注入；`agenote_write` 顺带修掉最高频的一类工具失败。
 
 ---
 
@@ -19,9 +17,7 @@ idle 兜底不会二次注入；`agenote_write` 顺带修掉最高频的一类�
 
 ## [0.1.3] - 2026-10-20
 
-记忆简报与按最近用户消息的每轮召回进入 `systemPrompt.context` 动态上下文
-快照——DSH 侧拿到与 pi / zcode / hermes 对等的记忆注入；顺带修掉纠偏
-白名单、防抖识别与 env 名三处小坑。
+记忆简报与按最近用户消息的每轮召回进入 `systemPrompt.context` 动态上下文快照——DSH 侧拿到与 pi / zcode / hermes 对等的记忆注入；顺带修掉纠偏白名单、防抖识别与 env 名三处小坑。
 
 ---
 
@@ -56,15 +52,9 @@ idle 兜底不会二次注入；`agenote_write` 顺带修掉最高频的一类�
 
 ### Changed
 
-- **`private: true` 已移除**，本包可正式发布到 npm。此前该字段使 `npm publish`
-  被拒，等于从未真正对外分发过；tag 触发方式见 monorepo 的
-  `docs/adr/0005-monorepo-unify-seven-components.md`（`dsh-agenote-v*` → npm +
-  GitHub Release）。
+- **`private: true` 已移除**，本包可正式发布到 npm。此前该字段使 `npm publish` 被拒，等于从未真正对外分发过；tag 触发方式见 monorepo 的 `docs/adr/0005-monorepo-unify-seven-components.md`（`dsh-agenote-v*` → npm + GitHub Release）。
 - **迁入 monorepo**：目录 `packages/dsh-agenote/`，原独立仓保留完整历史。
-- **`hooks.js` 的 `COMPLETION_SIGNALS` / `DEBOUNCE_MS` / `IDLE_FALLBACK_MS` 改为
-  生成块**：真相源是仓库根 `spec/injection.toml`，由 `tools/codegen/generate.py`
-  产出并提交进仓。迁移前信号在本插件、pi、zcode、hermes 四处逐字复制。
-  数值未变（`5*60*1000` 统一写成 `300000`）。
+- **`hooks.js` 的 `COMPLETION_SIGNALS` / `DEBOUNCE_MS` / `IDLE_FALLBACK_MS` 改为生成块**：真相源是仓库根 `spec/injection.toml`，由 `tools/codegen/generate.py` 产出并提交进仓。迁移前信号在本插件、pi、zcode、hermes 四处逐字复制。数值未变（`5*60*1000` 统一写成 `300000`）。
 
 ## [0.1.0] - 2026-09-27
 

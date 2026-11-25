@@ -1,9 +1,6 @@
 # agenote → opencode 注入插件（recipe 级模板）
 
-opencode 无自带记忆子系统，无需禁写前置。注入走 plugin 的
-`experimental.chat.messages.transform`（**重写型**：每次 LLM 请求前改写全量
-messages）——每请求幂等（先剥旧 agenote 块再注缓存块），compact 后自动
-恢复，**不需要**追加型三件套（无累积风险），只需指纹缓存零 spawn 重放。
+opencode 无自带记忆子系统，无需禁写前置。注入走 plugin 的 `experimental.chat.messages.transform`（**重写型**：每次 LLM 请求前改写全量 messages）——每请求幂等（先剥旧 agenote 块再注缓存块），compact 后自动恢复，**不需要**追加型三件套（无累积风险），只需指纹缓存零 spawn 重放。
 
 ## 安装
 
@@ -12,8 +9,7 @@ cp injectors/opencode/agenote-context.ts ~/.config/opencode/plugin/
 # 或项目级：cp 到 <project>/.opencode/plugin/（需项目信任）
 ```
 
-免注册自动加载（plugin 目录任意 `*.ts`/`*.js`）。前置：agenote CLI 含
-`context` 子命令。
+免注册自动加载（plugin 目录任意 `*.ts`/`*.js`）。前置：agenote CLI 含 `context` 子命令。
 
 ## 预算与缓存
 
@@ -26,11 +22,7 @@ cp injectors/opencode/agenote-context.ts ~/.config/opencode/plugin/
 
 ## ⚠️ experimental API 漂移风险（设计 R2）
 
-模板对齐 `@opencode-ai/plugin` **1.18.18** 的
-`experimental.chat.messages.transform` 签名（`({}, output: { messages: {
-info: Message; parts: Part[] }[] }) => Promise<void>`）。experimental 前缀
-API 无稳定性承诺，升级 opencode 后失效表现为「无注入」，不影响会话；
-失效时对照新版 d.ts 迁移或等待升成品级。
+模板对齐 `@opencode-ai/plugin` **1.18.18** 的 `experimental.chat.messages.transform` 签名（`({}, output: { messages: { info: Message; parts: Part[] }[] }) => Promise<void>`）。experimental 前缀 API 无稳定性承诺，升级 opencode 后失效表现为「无注入」，不影响会话；失效时对照新版 d.ts 迁移或等待升成品级。
 
 ## 验收
 

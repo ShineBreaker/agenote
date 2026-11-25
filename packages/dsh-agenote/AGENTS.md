@@ -21,8 +21,7 @@ DeepSeek Harness（DSH）的 agenote 集成插件：Cordis bundle，纯 ESM、�
 
 ## 验证
 
-本包无独立测试框架；离线行为断言在 monorepo 的 `packages/agenote/injectors/selftest.sh`
-（dsh section）。改完源码按序执行，前一步通过才进下一步：
+本包无独立测试框架；离线行为断言在 monorepo 的 `packages/agenote/injectors/selftest.sh` （dsh section）。改完源码按序执行，前一步通过才进下一步：
 
 1. 语法：`node --check index.js hooks.js commands.js tools.js lib.js`——五个文件全部无输出退出。
 2. 配置 schema：`node --input-type=module -e "import('./index.js').then(m=>{const v=m.Config['~standard'].validate;console.log(JSON.stringify(v(undefined)));console.log(JSON.stringify(v({hooks:{debounceMs:-1}}).issues??null))})"`——第一行是全默认值配置；第二行打出 issues 数组（path 指向 `hooks.debounceMs`），把 `-1` 换成合法值则第二行为 `null`。
@@ -35,15 +34,10 @@ DeepSeek Harness（DSH）的 agenote 集成插件：Cordis bundle，纯 ESM、�
 
 ## 发布
 
-发布流程（版本号、CHANGELOG、tag、推送自查）由 monorepo 统一规定，见根
-[CODING_STANDARDS.md §发版](../../CODING_STANDARDS.md#发版)。**tag 前缀即包名**，本包
-用 `dsh-agenote-vX.Y.Z`；渠道是 **npm + GitHub Release**（`release.yml` 的
-`publish-npm` job 跑 `npm publish dist/*.tgz`），版本声明在 `package.json`。
+发布流程（版本号、CHANGELOG、tag、推送自查）由 monorepo 统一规定，见根 [CODING_STANDARDS.md §发版](../../CODING_STANDARDS.md#发版)。**tag 前缀即包名**，本包用 `dsh-agenote-vX.Y.Z`；渠道是 **npm + GitHub Release**（`release.yml` 的 `publish-npm` job 跑 `npm publish dist/*.tgz`），版本声明在 `package.json`。
 
 本包独有的三条约束：
 
-- **新增源文件必须登记进 `package.json` 的 `files`。** npm tarball 只含那 8 个条目，
-  没登记的文件不会随包发布——`build.py` 的打包产物直接来自这份列表。
-- **推送前按「验证」第 6 步冷启动一遍**（新 manifest 也要过：确认无 `failed to import`、
-  无 `incompatible-version`、行未 disabled）。运行中进程持有旧模块图，冷启动才是判据。
+- **新增源文件必须登记进 `package.json` 的 `files`。** npm tarball 只含那 8 个条目，没登记的文件不会随包发布——`build.py` 的打包产物直接来自这份列表。
+- **推送前按「验证」第 6 步冷启动一遍**（新 manifest 也要过：确认无 `failed to import`、无 `incompatible-version`、行未 disabled）。运行中进程持有旧模块图，冷启动才是判据。
 - **DSH 出新 cohort 时必须同步抬 `peerDependencies["@deepseek-ai/dsh"]` 与 `dsh.engines.dsh` 下限，两条保持一致**。0.1.7-rc.1 起安装前与启动时按该范围强制校验（`evaluatePluginCompatibility`，可在本地 app-boot 实测）：不声明则跳过检查（现状安全但无保护），声明了不匹配则安装抛 `incompatible-version`、启动整行 disabled，豁免需 `dsh plugin allow-version`。peer 是兼容性声明不是 import，不触犯禁 import 硬禁令；profile 侧 `autoInstallPeers: false` 保证它不会被平铺成第二份核心包。

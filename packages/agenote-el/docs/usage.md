@@ -1,7 +1,6 @@
 # agenote-el 使用文档
 
-本文档覆盖 agenote-el 的安装、命令参考、browse mode 与配置。
-产品定位与功能概览见 [README](README.zh.md)。
+本文档覆盖 agenote-el 的安装、命令参考、browse mode 与配置。产品定位与功能概览见 [README](README.zh.md)。
 
 ## 目录
 
@@ -81,11 +80,9 @@
 
 ## 知识库总览（browse mode）
 
-`M-x agenote-knowledge-browse` 打开双域分组总览：human 与 agenote 各显示前 20 张卡片。前 20 这个数字定义在
-`agenote-knowledge-browse--default-limits`，在分组头上按 `RET` 可以在前 20 张和全部之间切换。
+`M-x agenote-knowledge-browse` 打开双域分组总览：human 与 agenote 各显示前 20 张卡片。前 20 这个数字定义在 `agenote-knowledge-browse--default-limits`，在分组头上按 `RET` 可以在前 20 张和全部之间切换。
 
-列有状态、作者、上次使用、次数、类别、标题。作者列优先取 `source_agent`，没有则取 `owner`。
-mode-line 显示各域总数和当前过滤词。
+列有状态、作者、上次使用、次数、类别、标题。作者列优先取 `source_agent`，没有则取 `owner`。 mode-line 显示各域总数和当前过滤词。
 
 | 键      | 动作                                                          |
 | ------- | ------------------------------------------------------------- |
