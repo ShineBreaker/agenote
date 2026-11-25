@@ -39,6 +39,7 @@ COMPONENTS: dict[str, str] = {
     "agenote-zcode": "agenote-zcode",
     "agenote-hermes": "agenote-hermes",
     "agenote-skills": "agenote-skills",
+    "agenote-cindy": "agenote-cindy",
 }
 
 # 需要哪些构建工具（缺失时报错而不是静默跳过——发版漏产物比失败更糟）。
@@ -304,6 +305,43 @@ def build_tarball(pkg: str, version: str, out: Path, mtime: int) -> list[Path]:
     return [archive]
 
 
+def build_agenote_cindy(pkg: str, version: str, out: Path, mtime: int) -> list[Path]:
+    """Cindy ghost 插件：.cindy 是 zip，内容=git 跟踪的包文件（不含 .gitignore）。
+
+    zip 条目的日期时间规范化到 commit mtime（zip 纪元从 1980 起，
+    更早的 commit 时间一律截到 1980-01-01——这是格式限制不是错误），
+    同一 commit 两次构建产物 sha256 一致。
+    """
+    import zipfile
+
+    src = REPO_ROOT / "packages" / pkg
+    if not src.is_dir():
+        die(f"packages/{pkg} 不存在")
+    tracked = subprocess.run(
+        ["git", "ls-files", f"packages/{pkg}"],
+        cwd=REPO_ROOT, check=True, capture_output=True, text=True,
+    ).stdout.split()
+    files = [rel for rel in tracked if not rel.endswith("/.gitignore")]
+    if not files:
+        die(f"packages/{pkg} 下没有 git 跟踪的文件")
+    archive = out / f"agenote-{version}.cindy"
+    zi_time = max(mtime, 315532800)  # zip 纪元 1980-01-01（epoch 秒）
+    import time
+
+    dt = time.gmtime(zi_time)[:6]
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        for rel in files:
+            rel_inside = rel.split("/", 2)[2]
+            f = REPO_ROOT / rel
+            if f.is_dir():
+                continue
+            info = zipfile.ZipInfo(rel_inside, date_time=dt)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            zf.writestr(info, f.read_bytes())
+    return [archive]
+
+
 BUILDERS = {
     "agenote": build_agenote,
     "agenote-el": build_agenote_el,
@@ -312,6 +350,7 @@ BUILDERS = {
     "agenote-zcode": build_tarball,
     "agenote-hermes": build_tarball,
     "agenote-skills": build_tarball,
+    "agenote-cindy": build_agenote_cindy,
 }
 
 
