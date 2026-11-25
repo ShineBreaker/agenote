@@ -20,7 +20,7 @@
 - **MCP server**——agenote 主路径是 CLI，skill 直接指示 bash 调用。
 - **subagent 守卫**——`UserPromptSubmit` 只在主会话用户输入时触发。
 
-提交规范保障是独立关注点，单独成插件（`assisted-by-zcode`，不随本包分发）。
+提交消息规范（header 骨架、整条 ≤ 100 字符）由全局 `~/.config/git/hooks/commit-msg` 钩子负责，不在本插件内。
 
 ## 安装
 

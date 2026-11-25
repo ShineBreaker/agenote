@@ -20,7 +20,7 @@ Deliberately not ported from pi:
 - **MCP server** — agenote's primary path is the CLI; skills instruct bash invocation directly.
 - **Subagent guard** — `UserPromptSubmit` only fires on user input in the main session.
 
-Commit-trailer enforcement is a separate concern living in its own plugin (`assisted-by-zcode`, not shipped with this package).
+Commit message rules (header skeleton, total length ≤ 100 characters) are enforced by the global `~/.config/git/hooks/commit-msg` hook, not by this plugin.
 
 ## Install
 
