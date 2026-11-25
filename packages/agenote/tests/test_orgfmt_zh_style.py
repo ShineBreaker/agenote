@@ -310,3 +310,42 @@ def test_full_pipeline_ellipsis_no_change_on_second_run():
     once, ch1 = format_org(src, strict=True)
     twice, ch2 = format_org(once, strict=True)
     assert twice == once, f"第二轮仍产生文本变更: {ch2[:3]}"
+
+
+# ── 行内标记与全角标点/破折号的边界不收敛 ────────────────────────────────
+
+
+def test_comma_after_code_marker_keeps_space():
+    """~LD_LIBRARY_PATH~ ，不轻易上容器 —— 标记闭合后紧邻全角逗号时必须
+    保留半角空格：删空格（R2 全角标点）与插空格（行内标记）会永久打架，
+    而「标记后紧邻全角标点」本身不破坏 org 渲染边界。"""
+    src = "追加到 ~LD_LIBRARY_PATH~ ，不轻易上容器。"
+    out, _ = format_org(src + "\n", strict=True)
+    assert out.strip() == src
+
+
+def test_dash_after_code_marker_keeps_space():
+    """~没有给出密码~ ——私钥确实有 passphrase —— 同逗号场景：破折号规则
+    不得剥掉标记必需的空格。"""
+    src = "结果是 ~没有给出密码~ ——私钥确实有 passphrase"
+    out, _ = format_org(src + "\n", strict=True)
+    assert out.strip() == src
+
+
+def test_dash_before_code_marker_converges_without_oscillation():
+    """「keygrip ——~/path~」：空格在普通字符与破折号之间，按上游规范删除；
+    删除后标记与 —— 贴连不可渲染（只能人工改写句子），但 marker pass 已
+    在 — 处豁免、不再插回——两轮 format 必须收敛而不是振荡重报。"""
+    src = "keygrip ——~/path~ 两侧\n"
+    once, _ = format_org(src, strict=True)
+    assert once.strip() == "keygrip——~/path~ 两侧"
+    twice, ch = format_org(once, strict=True)
+    assert twice == once, f"第二轮仍变更: {ch}"
+
+
+def test_marker_punct_idempotent():
+    """含标记贴全角标点的行连续 format 两轮收敛（不变更）。"""
+    src = "追加到 ~LD_LIBRARY_PATH~ ，且报 ~/bin/bash 不存在~ ——Guix 没有。\n"
+    once, _ = format_org(src, strict=True)
+    twice, ch = format_org(once, strict=True)
+    assert once == twice, f"第二轮仍变更: {ch}"

@@ -18,10 +18,11 @@ pi 的 ExtensionAPI 不提供 MCP 调用接口，TS 插件只能 execSync 外部
 import argparse
 import sys
 
-from agenote.core import agenote_context, ensure_dirs, safe_error_message
+from agenote.core import agenote_context, safe_error_message
 from agenote.context import HOSTS, cmd_context
 from agenote.inject import cmd_inject
 from agenote.health import cmd_health
+from agenote.safeio import kb_lock
 
 
 def main() -> None:
@@ -114,12 +115,11 @@ def _main() -> None:
         cmd_inject(args, agenote_context())
         return
 
+    # health 是只读入口；不要为全新/只读 KB 创建 MEMORY/index 骨架。
     ctx = agenote_context()
-    ensure_dirs(ctx)
-
-    # cmd_health 不读 args
     ns = argparse.Namespace()
-    cmd_health(ns, ctx)
+    with kb_lock(ctx.root / ".agenote.lock", shared=True):
+        cmd_health(ns, ctx)
 
 
 if __name__ == "__main__":

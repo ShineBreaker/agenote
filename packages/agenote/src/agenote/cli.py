@@ -72,7 +72,7 @@ from agenote.curator import (
     cmd_review,
 )
 from agenote.inbox_archive import cmd_inbox_archive
-from agenote.memory import cmd_memory
+from agenote.memory import cmd_memory, memory_read_only
 from agenote.context import HOSTS, cmd_context
 from agenote.inject import cmd_inject
 from agenote.lint import cmd_lint
@@ -100,6 +100,7 @@ from agenote.memscan import SOURCES as MEMSCAN_SOURCES, cmd_scan_memories
 # agenote_cli.py（TS hooks 桥，已默认 agenote 域）。
 
 import argparse
+from contextlib import ExitStack
 import json
 import re
 import shutil
@@ -714,12 +715,71 @@ def _read_only_invocation(args: argparse.Namespace) -> bool:
     return False
 
 
-# 纯只读命令：不进 MUTATING_COMMANDS（因此不持 KB 锁），也不写 KB。只读调用
-# 跳过 ensure_dirs 的骨架自愈——只读文件系统（沙箱 / 只读挂载）上建骨架会挂掉。
+# 纯只读命令：不写 KB，但仍在主调度器中取共享锁。只读调用跳过
+# ensure_dirs 的骨架自愈——只读文件系统（沙箱 / 只读挂载）上建骨架会挂掉。
 _PURE_READ_COMMANDS = {
     "list", "search", "fields", "tags", "stats", "health", "gaps",
-    "doctor", "trace", "review", "deduplicate", "scan-memories",
+    "doctor", "trace", "review", "deduplicate", "scan-memories", "distill",
 }
+_KB_MUTATING_COMMANDS = {
+    "add", "update", "touch", "sweep", "merge", "archive", "restore", "connect",
+    "inbox", "inbox-archive", "memory", "reindex", "lint", "format", "commit",
+    "init", "reconcile", "extract",
+}
+
+
+def _needs_kb_lock(args: argparse.Namespace) -> bool:
+    """本次调用是否需要读取或写入 KB 锁保护的视图。"""
+    command = args.command
+    if command == "get":
+        return True
+    if command in _KB_MUTATING_COMMANDS:
+        if command == "memory":
+            # cmd_memory 按 --list/--get/--conflicts 优先级分支；组合参数下
+            # 不能仅凭 --export 判断，否则查询会绕过共享锁。
+            if memory_read_only(args):
+                return True
+            # --export 自己在 projector 内锁住目标 KB；外层不重复拿锁。
+            if getattr(args, "export", False):
+                return False
+        return True
+    if command in _PURE_READ_COMMANDS or command == "viz":
+        return True
+    return False
+
+
+def _lock_roots_for(args: argparse.Namespace, ctx) -> list[Path]:
+    """返回本次命令要保护的 KB 根，按稳定顺序去重。"""
+    contexts = [ctx]
+    if args.command == "search" and getattr(args, "_cross_domain", False):
+        contexts = [default_context(), agenote_context()]
+    elif args.command in ("doctor", "viz"):
+        domain = getattr(args, "domain", "all")
+        if args.command == "viz":
+            # viz 的子解析器使用 viz_domain，避免覆盖顶层 --domain；锁域
+            # 必须与 cmd_viz 的实际数据域保持一致。
+            domain = getattr(args, "viz_domain", None) or domain
+            if domain == "__auto__":
+                domain = "all"
+        domains = ["human", "agenote"] if args.command == "doctor" or domain == "all" else [domain]
+        contexts = [default_context() if d == "human" else agenote_context() for d in domains]
+        if args.command == "viz":
+            # --domain 只决定数据集；--output 仍可能落在另一棵 KB（默认
+            # kb-viz.html 在 human 根），输出路径所属域也必须纳入写锁。
+            output = Path(args.output).expanduser().resolve()
+            for candidate in (default_context(), agenote_context()):
+                if output.is_relative_to(Path(candidate.root).resolve()):
+                    contexts.append(candidate)
+    elif args.command in ("reconcile", "trace", "distill"):
+        # 这些 wrapper 读取固定的 agent 域，不使用全局 --domain 传入的 ctx。
+        contexts = [agenote_context()]
+    elif args.command == "extract":
+        # 默认 conversations/ 位于 KB_ROOT（人类域）而不是 agenote/；同时
+        # 锁住两个域，避免 extract 与任一域的卡片/输出操作并发写出混合状态。
+        contexts = [default_context(), agenote_context()]
+    roots = {Path(item.root).resolve() for item in contexts if item is not None}
+    return sorted(roots, key=str)
+
 
 
 def _read_only_kb_invocation(args: argparse.Namespace) -> bool:
@@ -732,18 +792,22 @@ def _read_only_kb_invocation(args: argparse.Namespace) -> bool:
     未识别的命令按写调用处理——宁可多建骨架，也不漏锁。注意 memory --export
     不在只读之列：它在 AGENOTE_ROOT 内读改写 `.memory-export.json`。
     """
-    if args.command in _PURE_READ_COMMANDS:
+    if args.command in _PURE_READ_COMMANDS or args.command == "context":
         return True
     if args.command == "get":
         return not getattr(args, "used", False)
     if args.command == "memory":
-        return bool(
-            getattr(args, "list", False)
-            or getattr(args, "conflicts", False)
-            or getattr(args, "get", False)
-        )
+        return memory_read_only(args)
     if args.command in ("lint", "format", "commit"):
         return _read_only_invocation(args)
+    if args.command == "sweep":
+        return not getattr(args, "apply", False)
+    if args.command == "archive":
+        return bool(
+            getattr(args, "list_cards", False) or getattr(args, "stale", False)
+        )
+    if args.command in ("reconcile", "extract"):
+        return bool(getattr(args, "dry_run", False))
     return False
 
 
@@ -1404,20 +1468,8 @@ def _main() -> None:
         print_help()
         sys.exit(0)
 
-    # 变更类子命令：dispatch 时持 KB 锁执行（读-改-写型命令的并发互斥）。
-    # review/lint 默认只读，但带 --fix 时写文件，统一加锁换取简单。
-    MUTATING_COMMANDS = {
-        "add", "update", "touch", "sweep", "merge", "archive", "restore", "connect",
-        "inbox", "inbox-archive", "memory", "reindex",
-        "lint", "format", "commit", "init",
-        "distill", "reconcile", "extract",
-    }
-    # dream 保持只读：游标写在 run_dream 内自持 kb_lock，不进全局锁。
-    # inject 同样不进：状态文件在 ~/.cache/agenote/injectors/ 而非 KB 内，
-    # kb_lock 管不到它；写盘由 inject.py 的 mkstemp 原子替换自保证。
-    if args.command == "get" and getattr(args, "used", False):
-        MUTATING_COMMANDS.add("get")
-
+    # dream 的游标由 run_dream 自持锁；inject 的状态文件在 KB 外，
+    # 由 inject.py 的 mkstemp 原子替换自保证。
     commands = {
         "add": cmd_add,
         "get": cmd_get,
@@ -1456,16 +1508,16 @@ def _main() -> None:
         "trace": cmd_trace,
         "distill": cmd_distill,
         "extract": cmd_extract,
-        # 记忆库巡检（只读，免锁）
+        # 记忆库巡检（只读，共享锁）
         "scan-memories": cmd_scan_memories,
-        # 注入简报（只读，免锁；不进 MUTATING_COMMANDS）
+        # 注入简报（只读、零写盘、免 KB 锁）
         "context": cmd_context,
         # 状态化注入决策（写注入状态缓存，不写知识库；免 KB 锁）
         "inject": cmd_inject,
     }
     if args.command in commands:
-        # 初始化上下文、确保目录和读取参数都在同一公共错误边界内；否则
-        # ensure_dirs 阶段的未知异常会绕过下面的命令级捕获。
+        # 初始化上下文与后续命令参数都在同一公共错误边界内；未知异常
+        # 统一转换为受控错误，避免 traceback 逃逸到公共终端。
         try:
             # 解析域：--domain 显式指定 → 仅该域；__auto__ → search 做跨域，其余默认 agenote
             if args.domain == "human":
@@ -1477,17 +1529,9 @@ def _main() -> None:
                 args._cross_domain = True
             else:
                 ctx = agenote_context()
-            # init 自举目录；config/completions 纯配置产物；context 只读免锁；
-            # inject 只写 KB 外状态文件——均豁免 ensure_dirs。只读调用同样豁免：
-            # 骨架自愈是写路径的前提，不能把只读命令拖成写命令（只读 KB 上
-            # 建目录/骨架会 EACCES/EROFS 直接挂掉）。
-            if (
-                ctx is not None
-                and args.command
-                not in ("init", "config", "completions", "context", "inject")
-                and not _read_only_kb_invocation(args)
-            ):
-                ensure_dirs(ctx)
+            # 目录骨架自愈放到下面的 KB 锁临界区内；只读调用、config/
+            # completions/context/inject 以及不写 KB 的 reconcile/extract 不自愈。
+            # 这样两个首次并发写者不会在拿锁前互相覆盖骨架文件。
         except SystemExit:
             raise
         except Exception as exc:
@@ -1497,19 +1541,21 @@ def _main() -> None:
         # 锁在 agent 域根，一把锁覆盖人类+agent 两域；临界区毫秒级无性能问题）
         command = commands[args.command]
         try:
-            # memory --list/--conflicts 只读不持锁；--export 按 N3 不持 KB 锁（外部目录无锁语义）；
-            # import 即使 --dry-run 仍持锁（与写路径同一临界区）；其余 memory 子动作仍走锁
-            read_only = args.command == "memory" and bool(
-                getattr(args, "list", False) or getattr(args, "conflicts", False)
-            )
-            no_lock = read_only or (
-                args.command == "memory" and bool(getattr(args, "export", False))
-            )
-            if args.command in MUTATING_COMMANDS and not no_lock:
-                with kb_lock(
-                    agenote_context().root / ".agenote.lock",
-                    shared=_read_only_kb_invocation(args),
-                ):
+            # 只读命令也取已有锁文件的共享锁，避免跨文件视图读到一半更新；
+            # 缺失锁文件时 kb_lock 不创建它，因此新/只读 KB 仍可查询。
+            if _needs_kb_lock(args):
+                with ExitStack() as locks:
+                    shared = _read_only_kb_invocation(args)
+                    for root in _lock_roots_for(args, ctx):
+                        locks.enter_context(
+                            kb_lock(root / ".agenote.lock", shared=shared)
+                        )
+                    if (
+                        not shared
+                        and args.command
+                        not in ("init", "context", "inject", "viz", "reconcile", "extract")
+                    ):
+                        ensure_dirs(ctx)
                     command(args, ctx)
             else:
                 command(args, ctx)

@@ -518,7 +518,6 @@ def cmd_inbox(args: argparse.Namespace, ctx=None) -> None:
 def cmd_stats(args: argparse.Namespace, ctx=None) -> None:
     """输出知识库的统计概览。"""
     ctx = ctx or default_context()
-    ensure_dirs(ctx)
     index = _load_index(ctx)
     cards = index["cards"]
     total = len(cards)
@@ -555,7 +554,7 @@ def cmd_stats(args: argparse.Namespace, ctx=None) -> None:
             print(f"  {k:20s} {v:3d} {bar}")
         print()
 
-    # MEMORY 统计
+    # MEMORY 统计；首次使用且尚无 MEMORY.org 时保持空库输出契约。
     if ctx.memory_org.exists():
         mem_text = ctx.memory_org.read_text(encoding="utf-8")
         fb_count = len(re.findall(r"^\*\* F\d+", mem_text, re.MULTILINE))
@@ -589,6 +588,13 @@ def cmd_stats(args: argparse.Namespace, ctx=None) -> None:
         print(f"  reference 条目数: {ref_count}")
         print(f"  deprecated 条目数: {dep_count}")
         print(f"  stale (>{STALE_DAYS}d): {stale_count}")
+    else:
+        print("── MEMORY ──")
+        print("  feedback 条目数: 0")
+        print("  project 索引数: 0")
+        print("  reference 条目数: 0")
+        print("  deprecated 条目数: 0")
+        print(f"  stale (>{STALE_DAYS}d): 0")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -60,7 +60,7 @@ pip install --user git+https://github.com/ShineBreaker/agenote.git
 
 **维护** `init` 建库，`commit` 提交 KB 变更，`config` 管配置，`doctor` 做环境自诊断（含宿主记忆开关检测与 kb-secrets 审计），`completions` 生成 Shell 补全，`viz` 出 HTML 可视化。
 
-多 agent 并发写入安全：变更类命令持进程级 KB 锁（flock，超时可配置，默认 10 s），落盘走原子写（tmp + rename），同秒 `add` 自动追加 ID 序号防覆盖。
+多 agent 并发写入安全：变更类命令持进程级 KB 独占锁（flock，超时可配置，默认 10 s），只读命令在已有锁文件时取共享锁（缺失锁文件不创建），落盘走原子写（tmp + rename），同秒 `add` 自动追加 ID 序号防覆盖。`context` 是零写盘的注入通道，保持免锁。
 
 ## 记忆注入
 
@@ -73,7 +73,7 @@ agenote context --mode recall --query "orgfmt 报错"        # BM25 召回
 
 行为要点：
 
-- 命令只读免锁，不进写锁队列。三态语义：ok 时首行输出 marker `<!-- agenote-context v1 -->`；条目不满足或注入关闭时 text 输出零字节，注入器不注入任何内容。
+- `context` 只读且免锁，不进写锁队列。其它读取 KB 的命令在已有锁文件时取共享锁；三态语义：ok 时首行输出 marker `<!-- agenote-context v1 -->`；条目不满足或注入关闭时 text 输出零字节，注入器不注入任何内容。
 - 召回带分数下限（`recall_min_score` 默认 8.0，按真实语料 600 样本标定）与最短 query 门槛。「继续」「ok」这类短 prompt 不触发召回。
 - 记忆条目按 `:PROJECT:` 分区隔离，linked worktree 与主仓共享项目身份；带 `:SENSITIVITY:` 的条目只留在 SSOT，不注入不投影。写入侧 secret 门禁扫描 `add` / `update` / `memory --add`，命中密钥形态即拒写，`--allow-secret` 显式豁免；`doctor kb-secrets` 做存量事后审计。
 - 开关的单一真相源在 agenote 侧：`AGENOTE_INJECTION_ENABLED=false` 一键全关，任何注入器随之静默。`[injection.hosts]` 下有 6 个 per-host 开关（zcode、claude、codex、pi、opencode、hermes）。

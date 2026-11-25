@@ -341,7 +341,7 @@ def _publish_write(path: Path, text: str) -> None:
     KB 内一切落盘必须走 safeio（tmp→rename 原子替换，不留半文件）；
     KB 外仅限用户显式 --output-dir / conversations_root 指向的目录
     （safeio 声明的豁免场景）。不在此处拿 kb_lock：extract/reconcile 都是
-    MUTATING_COMMANDS，CLI 层已持全局 KB 锁，锁内对同一锁文件再 flock 会自互锁。
+    CLI 的写命令，CLI 层已持全局 KB 锁，锁内对同一锁文件再 flock 会自互锁。
     """
     if path_in_kb(path):
         atomic_write(path, text)

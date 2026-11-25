@@ -6,7 +6,8 @@
 zcode/claude 聚合 Markdown + codex/pi 建议清单 + hermes 待录入清单（§切分，
 手动录入）+ reasonix 既有 slug 直写（per-entry，不动 MEMORY.md 索引）。
 KB 外写入纪律：走 safeio._atomic_replace_bytes（与 atomic_write 同机制，
-tmp+rename，不留半文件），不持 kb_lock；路径只来自 SCHEMA，不接受命令行任意路径。
+tmp+rename，不留半文件）；导出状态与投影读改写由本模块持有 KB 锁，路径只来自
+SCHEMA，不接受命令行任意路径。
 """
 
 from __future__ import annotations
@@ -345,19 +346,22 @@ def _sync_pointer(index_path: Path, aggregate: str = AGGREGATE_NAME) -> bool:
 
 
 def cmd_export(args, ctx=None) -> None:
-    """`memory --export`：幂等投影 + 漂移检测 + 双道闸。MUTATING 但不持 CLI 全局锁。
+    """`memory --export`：幂等投影 + 漂移检测 + 双道闸。
 
-    状态文件 .memory-export.json 在 KB 内，读改写自持 kb_lock（同 dream 游标
-    口径）——并发 export 整 dict 覆盖会互丢 target 记录（设计 P2）。
+    不持 CLI 外层全局锁，避免 dispatch 与 projector 重复加锁；状态文件
+    `.memory-export.json` 的读改写由本函数持有 KB 独占锁。
     """
     from agenote import memory as _mem  # lazy：memory 侧同样 lazy，避免成环
     from agenote.safeio import kb_lock
 
     ctx = ctx or _mem.default_context()
-    if not ctx.memory_org.exists():
-        print("(记忆文件不存在)")
-        return
     with kb_lock(state_path(ctx).parent / ".agenote.lock"):
+        if not ctx.memory_org.exists():
+            print("(记忆文件不存在)")
+            return
+        # CLI 负责完整 KBContext 的骨架自愈；这里允许测试/宿主传入只含
+        # memory_org/root 的轻量 context，因此只创建投影所需的根目录。
+        state_path(ctx).parent.mkdir(parents=True, exist_ok=True)
         _export_locked(args, ctx, _mem)
 
 

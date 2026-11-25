@@ -72,9 +72,9 @@ def test_lint_check_works_on_readonly_kb(readonly_kb, monkeypatch):
 
 
 def test_query_commands_work_on_readonly_kb(readonly_kb, monkeypatch):
-    """list / stats 在只读 KB 上不因骨架自愈失败而挂。"""
-    assert _run_cli(monkeypatch, ["list"]) == 0
-    assert _run_cli(monkeypatch, ["stats"]) == 0
+    """查询与健康报告在只读 KB 上不因骨架自愈失败而挂。"""
+    for command in ("list", "stats", "health", "gaps"):
+        assert _run_cli(monkeypatch, [command]) == 0
 
 
 @pytest.mark.skipif(_SKIP_READONLY_KB, reason="root 无视目录权限 / Windows 无此权限模型，模拟不了只读 KB")

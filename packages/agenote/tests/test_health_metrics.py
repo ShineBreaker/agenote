@@ -16,7 +16,6 @@ def _ctx(monkeypatch, cards, tmp_path, files=()):
     exp.mkdir(exist_ok=True)
     for name, content in files:
         (exp / name).write_text(content, encoding="utf-8")
-    monkeypatch.setattr(health, "ensure_dirs", lambda ctx: None)
     monkeypatch.setattr(health, "_load_index", lambda ctx: {"cards": cards})
     monkeypatch.setattr(health, "formal_types", lambda ctx: set())
     return types.SimpleNamespace(experiences=exp)
@@ -62,6 +61,29 @@ def test_base_metrics_empty_kb(monkeypatch, tmp_path):
     assert m["active_total"] == 0
     assert m["archive_rate"] == {"pct": 0, "by_type": {}}
     assert m["isolated"] == {"pct": 0, "count": 0, "threshold": 15, "status": "ok"}
+
+
+def test_stale_feedback_excludes_other_memory_types(monkeypatch, tmp_path):
+    """project/reference 的过期更新时间不应伪装成过期 feedback。"""
+    memory = tmp_path / "MEMORY.org"
+    today = datetime.now().strftime("%Y-%m-%d")
+    memory.write_text(
+        "* feedback\n"
+        f"** F001 新鲜反馈\n:UPDATED: [{today}]\n"
+        "* project\n"
+        "** P001 过期项目\n   :PROPERTIES:\n   :UPDATED: [2020-01-01]\n   :END:\n"
+        "* reference\n"
+        "** R001 过期参考\n:UPDATED: [2020-01-01]\n",
+        encoding="utf-8",
+    )
+    ctx = _ctx(monkeypatch, [], tmp_path)
+    ctx.memory_org = memory
+
+    assert health._memory_stats(ctx) == {
+        "feedback": 1,
+        "stale_feedback": 0,
+        "project": 1,
+    }
 
 
 def test_base_metrics_excludes_archived(monkeypatch, tmp_path):

@@ -136,3 +136,28 @@ def test_idempotent():
     for s in ("（=C-<tab>=）循环", "顶部 = *Minibuf-0* = 承载", "=* Warnings *="):
         once = _fix(s)
         assert _fix(once) == once
+
+# ── 占位缩写的合法标记对 ─────────────────────────────────────────────────
+
+
+def test_code_ending_with_ellipsis_still_a_pair():
+    """~/run/current-system/profile/lib:……~ 是真实路径缩写，省略号在标记
+    内部结尾不是错配证据——不得错拒该对、也不得让内侧空格变化。"""
+    src = "缺库优先后接 ~/run/current-system/profile/lib:……~ 到 ~LD_LIBRARY_PATH~"
+    assert _fix(src) == src
+
+
+def test_edge_clipped_placeholder_not_forced_fix():
+    """占位续写行（=RB_DATA_DIR=……RB_FIXTURE_DIR=……node x=）是排版错误，
+    但启发式无法同时不误伤合法 token——formatter 不解、也不破坏该段。"""
+    src = "见 ~RB_DATA_DIR=……RB_FIXTURE_DIR=……node tests/browser.mjs~ 结论。"
+    # 该行被判为错配后不做修复，但也绝不能产生破坏字面的修复
+    assert "RB_DATA_DIR=……RB_FIXTURE_DIR" in _fix(src)
+    assert "node tests/browser.mjs" in _fix(src)
+
+
+def test_inner_placeholder_code_still_a_pair():
+    """内部含省略号占位写法（(options ……)）仍是合法标记对，不被拒绝。"""
+    src = "见 =(options ……)= 用法。"
+    assert _fix(src) == src
+

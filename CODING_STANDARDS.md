@@ -6,8 +6,8 @@ AGENTS.md 是入口，本文件是它每条指针的目标。**按分支分节�
 
 Python CLI，唯一实现层。一切落盘的逻辑只在这里，宿主插件不重复实现。
 
-- **新增写命令**必须同时登记到 `cli.py` 的 `commands` dict **和** `MUTATING_COMMANDS` set；漏掉后者则该命令不持锁。只读命令（如 `context`）不进 `MUTATING_COMMANDS`。`MUTATING_COMMANDS` 当前成员见 `cli.py:1409`。**这条没有测试守护**——`packages/agenote/tests/` 里没有用例断言成员完整（`test_cli_readonly.py` 只覆盖只读判定），漏登记不会红。
-- **只读调用的锁与骨架自愈**：纯只读命令（`list/search/stats/health/...`，见 `cli.py` 的 `_PURE_READ_COMMANDS`）不进 `MUTATING_COMMANDS`、不持 KB 锁，也跳过 `ensure_dirs`；`MUTATING_COMMANDS` 里的检查形态（`lint` 无 `--fix`、`format --check`、`commit --dry-run`）取共享锁（`_read_only_kb_invocation` 判定）。锁文件固定在 `<KB>/.agenote.lock`——只读调用以 `O_RDONLY` 打开已存在的锁文件、不创建（不存在即免锁），否则只读 KB / 沙箱上 `O_CREAT` 会 EROFS。**不要按环境变量派生锁路径**：混合 env 的进程会各拿一把锁而静默失去互斥。
+- **写命令的锁登记**必须同时覆盖 `cli.py` 的 `commands` dict 与 `_KB_MUTATING_COMMANDS`；按参数只读的检查/预览形态由 `_read_only_kb_invocation` 判定共享锁，漏登记会失去并发互斥。只读命令（如 `context`）不进入写命令集合；`context` 还保持零写盘、免 KB 锁。
+- **只读调用的锁与骨架自愈**：纯只读命令（`list/search/stats/health/...`，见 `cli.py` 的 `_PURE_READ_COMMANDS`）不执行 `ensure_dirs`，但在已有锁文件时取共享锁；检查/预览形态（`lint` 无 `--fix`、`format --check`、`commit --dry-run`）同样取共享锁。锁文件固定在 `<KB>/.agenote.lock`——只读调用以 `O_RDONLY` 打开已存在的锁文件、不创建（不存在即免锁），不可读取已有锁文件时 fail-closed。**不要按环境变量派生锁路径**：混合 env 的进程会各拿一把锁而静默失去互斥。
 - **`ensure_dirs` 尽力而为**：只吞 EROFS/EACCES/EPERM（只读挂载 / 沙箱），其余文件系统故障照抛；写命令在真正的写点报带 errno 与目标路径的错误（`_os_error_message`）。
 - **卡片状态机**共 4 态：`done / stable / stale / archived`。Org 标题 keyword 恒为 `* DONE`，真实状态存于 `:STATUS:` 属性——标题与属性不是一回事。
 - **双域模型**：`--domain human|agenote`；搜索默认跨域。agent 域卡片权重更低，见 `CONTEXT.md` 的 KBContext。

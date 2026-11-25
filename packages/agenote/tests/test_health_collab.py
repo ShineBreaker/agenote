@@ -16,7 +16,6 @@ import agenote.health as health_mod
 
 def _ctx_with_cards(monkeypatch, cards):
     ctx = types.SimpleNamespace()
-    monkeypatch.setattr(health_mod, "ensure_dirs", lambda ctx: None)
     monkeypatch.setattr(health_mod, "_load_index", lambda ctx: {"cards": cards})
     monkeypatch.setattr(health_mod, "formal_types", lambda ctx: set())
     return ctx

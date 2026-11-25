@@ -283,10 +283,35 @@ def _iter_memory_entries(text: str) -> list[dict]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def memory_read_only(args: argparse.Namespace) -> bool:
+    """返回 memory 调用是否只读 KB。
+
+    按 ``cmd_memory`` 的分支顺序判定实际生效的动作。这样即使调用者误传
+    ``--list --touch`` 或 ``--get --export``，仍按真正执行的查询路径跳过
+    骨架自愈；查询和 ``--import --dry-run`` 不应创建 KB 骨架或要求写锁。
+    """
+    if any(getattr(args, name, False) for name in ("list", "conflicts", "get")):
+        return True
+    if getattr(args, "export", False):
+        return False
+    for name in (
+        "supersede", "touch", "archive", "archive_to_file",
+        "project_touch", "validate", "migrate", "add",
+    ):
+        if getattr(args, name, None):
+            return False
+    if getattr(args, "do_import", False):
+        return bool(getattr(args, "dry_run", False))
+    return True
+
+
 def cmd_memory(args: argparse.Namespace, ctx=None) -> None:
     """管理 MEMORY.org 中的反馈、项目和参考记忆。"""
     ctx = ctx or default_context()
-    ensure_dirs(ctx)
+    # --export 在 projector 内持有 KB 锁；由 projector 在锁内负责骨架自愈，
+    # 避免先在锁外创建 MEMORY.org/index.json 与并发写者竞态。
+    if not memory_read_only(args) and not getattr(args, "export", False):
+        ensure_dirs(ctx)
 
     # N1：--type 短字母/长名统一归一化为短字母
     mem_type = getattr(args, "type", None)
@@ -328,7 +353,7 @@ def cmd_memory(args: argparse.Namespace, ctx=None) -> None:
             print(text, end="")
         return
 
-    # --export：N3 投影（MUTATING 但不持 kb_lock，见 projector；路径只来自 SCHEMA）
+    # --export：N3 投影（projector 在自身临界区持有 kb_lock；路径只来自 SCHEMA）
     if getattr(args, "export", False):
         from agenote import projector as _projector  # lazy：projector 反向引用本模块
 

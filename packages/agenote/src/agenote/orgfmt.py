@@ -528,6 +528,10 @@ def _marker_boundary_unclear(ch: "str | None", valid: set) -> bool:
 # 真标记的内容是代码实体或文本片段，句中不会出现这些标点。
 _CJK_PUNCT_RE = re.compile(r"[，。、；：？！（）「」『』【】]")
 
+# 内容**首尾**是省略号/破折号时同样视为错配：这类字符常夹在代码实体两侧
+# 做占位续写（如 ~CMD_A=……CMD_B=……node test~ 首尾命中 `=` 会把中间整段
+# 误当标记对），而真正的代码 token 不会以省略号开头或结尾。
+# 注意不能按「包含」判：`~(options ……)~` 这类占位写法是合法标记。
 # 双星混写（Markdown 习惯渗入）：org 没有 **…** 语法，写成「**X* *」
 # 或「**X**」时整段都不渲染（* 与 * 之间夹空格同样失效）。收敛为
 # org 单星强调「 *X* 」，两侧空格按标记边界规则补齐。
@@ -558,6 +562,11 @@ def _iter_marker_pairs(line: str, pattern: re.Pattern) -> "list[re.Match]":
       2. 内容含中文句读（如「= 两个块* ：」把标题内字面等号与后对
          起点撞配）；
       3. 内容为纯空白。
+    注意：不按「内容首尾是 …/—」拒绝——合法 code 可以以省略号收尾
+    （~/run/current-system/profile/lib:……~ 是真实路径缩写），占位续写
+    错配行（=RB_DATA_DIR=……RB_FIXTURE_DIR=……node x=）本就无解：
+    中段含字母、无中文句读，任何保守启发式都会误伤合法 token，
+    交给人工改写而不是猜。
     拒绝后推进一位重扫，让被吞的真对重新成对。
     """
     matches: list[re.Match] = []
@@ -631,13 +640,17 @@ def _fix_marker_spacing(line: str, marker_char: str) -> tuple[str, int, int, int
         if not m.group(1).strip():
             continue
         start, end = m.start(), m.end()
+        # 全角标点旁禁空规则（R2/破折号）优先于标记边界：在 ——/全角标点与标记
+        # 之间插空格会被 _fix_punct_spacing/_fix_dash_spacing 立即删掉，两个
+        # pass 永久打架、lint 每轮重报（真实基线回归）。此时标记与全角标点贴
+        # 连本就不可渲染，只能人工改写句子，机器插空格不解决渲染反而制造振荡。
         if start > 0 and _marker_boundary_insert(line[start - 1], _MARKER_PRE_VALID):
-            if not any(pos == start for pos, _ in inserts):
+            if line[start - 1] not in "—" and not any(pos == start for pos, _ in inserts):
                 inserts.append((start, " "))
                 pre_count += 1
 
         if end < len(line) and _marker_boundary_insert(line[end], _MARKER_POST_VALID):
-            if not any(pos == end for pos, _ in inserts):
+            if line[end] not in "—" and not any(pos == end for pos, _ in inserts):
                 inserts.append((end, " "))
                 post_count += 1
 
@@ -1155,10 +1168,16 @@ def _skip_zh_latin_at(line: str, i: int) -> bool:
 
 
 def _fix_dash_spacing(line: str, idx: int) -> tuple[str, list[str]]:
-    """破折号前后不空格（上游：破折号前后不空格）。"""
+    """破折号前后不空格（上游：破折号前后不空格）。
+
+    例外：空格另一侧是行内标记字符（=~*）时保留——那是 Org 标记渲染
+    必需的边界间隔，与全角标点规则的豁免同理。删掉后行内标记规则
+    会再插回来，两个 pass 永久打架、lint 每轮重报（真实基线回归）。
+    """
     if "——" not in line and " — " not in line:
         return line, []
-    new = re.sub(r"[ \t]*——[ \t]*", "——", line)
+    # 负向断言只允许 ASCII 空格，避免 [=~*][ \t]* 吞掉标记前自身的空格
+    new = re.sub(r"(?<![=~* ])[ \t]*——[ \t]*(?![=~* ])", "——", line)
     if new == line:
         return line, []
     return new, [f"  行 {idx + 1}: 破折号两侧空格"]

@@ -191,6 +191,14 @@ def _load_cards_for_viz(domain_arg: str) -> tuple[list[dict], str]:
     return (all_cards, latest)
 
 
+def _viz_domain(args: argparse.Namespace) -> str:
+    """返回 viz 自己的域选项；未指定时沿用全局默认的跨域语义。"""
+    domain = getattr(args, "viz_domain", None)
+    if domain is None:
+        domain = getattr(args, "domain", "all")
+    return "all" if domain == "__auto__" else domain
+
+
 def cmd_viz(args: argparse.Namespace, ctx=None) -> None:
     """生成知识库可视化 HTML 页面。
 
@@ -202,7 +210,8 @@ def cmd_viz(args: argparse.Namespace, ctx=None) -> None:
     viz 自身按 ``args.domain``（human|agenote|all）独立解析目标域，
     不使用全局 ctx（ctx 对应的根可能不是这里要可视化的域）。
     """
-    cards, updated = _load_cards_for_viz(args.domain)
+    domain = _viz_domain(args)
+    cards, updated = _load_cards_for_viz(domain)
     if not cards:
         print("❌ 知识库索引为空。请先运行 'kb reindex' 重建索引。")
         return
@@ -225,7 +234,7 @@ def cmd_viz(args: argparse.Namespace, ctx=None) -> None:
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")  # --output 用户显式指定，保留直接写
-    domains_desc = args.domain if args.domain != "all" else "human+agenote"
+    domains_desc = domain if domain != "all" else "human+agenote"
     success = f"✅ 可视化页面已生成: {out}（{len(cards)} 张卡片，域: {domains_desc}）"
 
     if args.serve:
@@ -293,8 +302,9 @@ def add_viz_parser(subparsers) -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--domain",
+        dest="viz_domain",
         choices=["human", "agenote", "all"],
-        default="all",
+        default=None,
         help="可视化域：human（~/Documents/Org/）、agenote（agenote/子目录）、all（合并，默认）",
     )
     return p

@@ -28,7 +28,6 @@ from agenote.core import (
     DEDUP_THRESHOLD,
     STALE_DAYS,
     default_context,
-    ensure_dirs,
 )
 from agenote import config
 from agenote.orgserde import (
@@ -145,7 +144,6 @@ def _compute_base_metrics(ctx=None) -> dict:
     归档率（全库 + 按类型），保留「哪些类型淘汰得最多」这个信号。
     """
     ctx = ctx or default_context()
-    ensure_dirs(ctx)
     index = _load_index(ctx)
     cards = index["cards"]
     total = len(cards)
@@ -239,11 +237,18 @@ def _memory_stats(ctx) -> dict:
     if not mem_path or not mem_path.exists():
         return {"feedback": 0, "stale_feedback": 0, "project": 0}
     mem_text = mem_path.read_text(encoding="utf-8")
-    fb_count = len(re.findall(r"^\*\* F\d+", mem_text, re.MULTILINE))
+    # 按条目类型统计：全局扫描 UPDATED 会把 project/reference 的过期时间
+    # 错算成 stale feedback，导致健康报告误导策展流程。
+    from agenote.memory import _iter_memory_entries
+
+    entries = _iter_memory_entries(mem_text)
+    feedback = [entry for entry in entries if entry.get("type") == "F"]
+    fb_count = len(feedback)
     stale_fb = 0
-    for m in re.finditer(r":UPDATED:\s*\[(\d{4}-\d{2}-\d{2})\]", mem_text):
+    for entry in feedback:
+        raw_updated = (entry.get("props", {}).get("UPDATED") or "").strip("[] ")
         try:
-            updated = datetime.strptime(m.group(1), "%Y-%m-%d")
+            updated = datetime.strptime(raw_updated, "%Y-%m-%d")
             if (datetime.now() - updated).days > STALE_DAYS:
                 stale_fb += 1
         except ValueError:
@@ -273,7 +278,6 @@ def analyze(
     detect_duplicates 删除，复用 cards._jaccard_similarity（统一 Jaccard 算法）。
     """
     ctx = ctx or default_context()
-    ensure_dirs(ctx)
     index = _load_index(ctx)
     cards = [c for c in index["cards"] if c.get("status") != "archived"]
 
@@ -386,7 +390,6 @@ def find_gaps(ctx=None, stale_days: int = CARD_STALE_DAYS) -> dict:
     缺失组合只对正式 type 提示，不为观察期 type 制造覆盖空洞。
     """
     ctx = ctx or default_context()
-    ensure_dirs(ctx)
     index = _load_index(ctx)
     all_types = formal_types(ctx)
     cards = [c for c in index["cards"] if c.get("status") != "archived"]

@@ -9,6 +9,7 @@ import argparse
 import os
 import sys
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -170,6 +171,42 @@ def test_shared_lock_opens_existing_lock_file(tmp_path):
         pass  # 写者创建锁文件后释放
     with kb_lock(kb / ".agenote.lock", shared=True, timeout=1.0):
         pass
+
+
+def test_shared_lock_does_not_silently_bypass_unreadable_lock(tmp_path, monkeypatch):
+    """已有锁文件不可读时必须报错，不能把可能的写临界区当成无锁。"""
+    import errno
+    import agenote.safeio as safeio
+
+    lock = tmp_path / "kb" / ".agenote.lock"
+    lock.parent.mkdir()
+    lock.write_bytes(b"")
+    real_open = safeio.os.open
+
+    def deny_existing(path, flags, *args):
+        if Path(path) == lock:
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return real_open(path, flags, *args)
+
+    monkeypatch.setattr(safeio.os, "open", deny_existing)
+    with pytest.raises(PermissionError):
+        with kb_lock(lock, shared=True):
+            pass
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="平台不支持 O_NOFOLLOW")
+def test_lock_rejects_symlink(tmp_path):
+    """锁路径是 symlink 时拒绝跟随，避免把外部文件当作 KB 锁。"""
+    kb = tmp_path / "kb"
+    kb.mkdir()
+    target = tmp_path / "outside.lock"
+    target.write_bytes(b"")
+    link = kb / ".agenote.lock"
+    link.symlink_to(target)
+
+    with pytest.raises(OSError):
+        with kb_lock(link, shared=True):
+            pass
 
 
 def test_writer_blocks_shared_lock(tmp_path):

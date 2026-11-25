@@ -18,6 +18,7 @@ agenote 是单命令即时写入；跨文件读改写由调用方用 restore_tex
 from __future__ import annotations
 
 import contextlib
+import errno
 import itertools
 import os
 import stat
@@ -217,20 +218,50 @@ def kb_lock(
     不创建锁文件——只读文件系统（沙箱 / 只读挂载）上 O_CREAT 会 EROFS。锁文件
     不存在说明尚无写者建立临界区，直接免锁：单文件由 atomic_write 整文件替换
     保证不读半文件；跨文件视图在首个写者出现前可能有短暂混合窗口（取舍，见
-    CHANGELOG）。写调用仍 O_CREAT + 独占锁，在只读 KB 上由 EROFS 直接暴露。
+    CHANGELOG）。已有锁文件若因权限/IO 错误无法打开则 fail-closed，不静默绕过。
+    写调用仍 O_CREAT + 独占锁，在只读 KB 上由 EROFS 直接暴露。
     """
     if timeout is None:
         timeout = _lock_timeout_from_config()
+    # Windows 没有 O_NOFOLLOW；先拒绝现有 symlink，POSIX 再由 open 的
+    # O_NOFOLLOW 兜住 lstat→open 之间的替换竞态。
+    try:
+        lock_stat = os.lstat(lock_path)
+    except FileNotFoundError:
+        lock_stat = None
+    except OSError:
+        raise
+    if lock_stat is not None and stat.S_ISLNK(lock_stat.st_mode):
+        raise OSError(errno.ELOOP, "拒绝 symlink 锁文件", str(lock_path))
+
+    lock_nofollow = getattr(os, "O_NOFOLLOW", 0)
     if shared:
         try:
-            fd = os.open(lock_path, os.O_RDONLY)
-        except OSError:
-            # 只读免锁：锁文件不存在（尚无写者）或不可读，均不阻断读操作
-            yield
-            return
+            fd = os.open(lock_path, os.O_RDONLY | lock_nofollow)
+        except OSError as exc:
+            if exc.errno == errno.ENOENT:
+                # 锁文件不存在说明尚无写者建立临界区；不创建锁文件，
+                # 让新 KB / 只读挂载仍可查询。
+                yield
+                return
+            # 已有锁文件但无法读取时不能静默绕过：这可能正是权限隔离下
+            # 的写临界区，放行会破坏读写一致性。把 EACCES/EROFS 等原样交给
+            # CLI 的受控错误边界。
+            raise
     else:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+        fd = os.open(
+            lock_path, os.O_RDWR | os.O_CREAT | lock_nofollow, 0o644
+        )
+    # lstat 只负责拒绝已有 symlink；再次检查已打开对象，避免把目录、FIFO
+    # 或竞态替换后的非普通文件当成锁。普通文件的 flock 语义才是跨平台稳定的。
+    try:
+        opened_stat = os.fstat(fd)
+        if not stat.S_ISREG(opened_stat.st_mode):
+            raise OSError(errno.EINVAL, "锁文件不是普通文件", str(lock_path))
+    except BaseException:
+        os.close(fd)
+        raise
     deadline = time.monotonic() + timeout
     try:
         while True:
